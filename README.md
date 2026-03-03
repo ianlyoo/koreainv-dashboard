@@ -5,7 +5,7 @@
 ## Quick Start (개발 환경)
 
 ```bash
-python main.py
+python -m app.main
 ```
 
 브라우저에서 `http://127.0.0.1:8000` 접속.

@@ -1,6 +1,6 @@
 import requests
 import json
-import config
+from app import config
 import time
 
 _cached_token = None

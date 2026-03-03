@@ -20,7 +20,7 @@ from typing import Optional, Dict, Set
 import requests
 import websockets
 
-import config
+from app import config
 
 logger = logging.getLogger(__name__)
 

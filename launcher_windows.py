@@ -10,7 +10,7 @@ import webbrowser
 
 import uvicorn
 
-import runtime_paths
+from app import runtime_paths
 
 HOST = "127.0.0.1"
 PORT = 8000
@@ -53,7 +53,7 @@ def _wait_until_ready(timeout_seconds: int = 30) -> bool:
 def _run_server() -> None:
     global _server
     config = uvicorn.Config(
-        "main:app",
+        "app.main:app",
         host=HOST,
         port=PORT,
         log_level="info",

@@ -5,10 +5,13 @@ import tempfile
 from typing import Optional, Dict
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
-import runtime_paths
+from app import runtime_paths
 
 # Settings File Path (store writable data under user profile, not app bundle path)
 SETTINGS_FILE = os.path.join(runtime_paths.get_user_data_dir(), "settings.json")
+LEGACY_SETTINGS_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "settings.json"
+)
 
 # Password Hashing Context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -82,6 +85,15 @@ def verify_pin(plain_pin: str, hashed_pin: str) -> bool:
 
 def load_settings() -> Dict:
     """Load settings from JSON file"""
+    # Backward compatibility: migrate old local file if present.
+    if not os.path.exists(SETTINGS_FILE) and os.path.exists(LEGACY_SETTINGS_FILE):
+        try:
+            with open(LEGACY_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                legacy = json.load(f)
+            save_settings(legacy)
+        except Exception:
+            pass
+
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -121,10 +133,15 @@ def is_setup_complete() -> bool:
 
 def delete_settings() -> bool:
     """Delete the settings file to reset API credentials"""
+    ok = True
     if os.path.exists(SETTINGS_FILE):
         try:
             os.remove(SETTINGS_FILE)
-            return True
         except Exception:
-            return False
-    return True
+            ok = False
+    if os.path.exists(LEGACY_SETTINGS_FILE):
+        try:
+            os.remove(LEGACY_SETTINGS_FILE)
+        except Exception:
+            ok = False
+    return ok

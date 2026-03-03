@@ -2,20 +2,20 @@ from fastapi import FastAPI, HTTPException, Request, Response, Depends, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sse_starlette.sse import EventSourceResponse
-import api_client
+from app import api_client
 import yfinance as yf
 import datetime
 import asyncio
 import logging
 import cloudscraper
 from bs4 import BeautifulSoup
-import auth
+from app import auth
 import os
 import uuid
 import json
 from dataclasses import dataclass
-from ws_client import ws_manager
-import runtime_paths
+from app.ws_client import ws_manager
+from app import runtime_paths
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
@@ -753,4 +753,4 @@ async def get_asset_insight(ticker: str, market_type: str = "USA"):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

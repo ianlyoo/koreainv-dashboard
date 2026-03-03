@@ -14,9 +14,9 @@ if errorlevel 1 exit /b 1
 
 py -3 -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --name KISDashboard ^
-  --add-data "templates;templates" ^
-  --add-data "static;static" ^
-  --add-data "img;img" ^
+  --add-data "app/templates;app/templates" ^
+  --add-data "app/static;app/static" ^
+  --add-data "app/img;app/img" ^
   launcher_windows.py
 if errorlevel 1 exit /b 1
 

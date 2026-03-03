@@ -9,6 +9,9 @@ def get_app_base_dir() -> str:
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
+            app_dir = os.path.join(meipass, "app")
+            if os.path.isdir(app_dir):
+                return app_dir
             return meipass
     return os.path.dirname(os.path.abspath(__file__))
 
