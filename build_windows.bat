@@ -6,10 +6,10 @@ echo ========================================================
 echo Building KISDashboard (Windows OneDir)
 echo ========================================================
 
-py -3 -m pip install --upgrade pip
+python -m pip install --upgrade pip
 if errorlevel 1 exit /b 1
 
-py -3 -m pip install -r requirements.txt pyinstaller
+python -m pip install -r requirements.txt pyinstaller
 if errorlevel 1 exit /b 1
 
 if not exist app\static mkdir app\static
