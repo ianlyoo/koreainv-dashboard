@@ -20,6 +20,14 @@ py -3 -m PyInstaller --noconfirm --clean --windowed --onedir ^
   launcher_windows.py
 if errorlevel 1 exit /b 1
 
+py -3 -m PyInstaller --noconfirm --clean --windowed --onefile ^
+  --name KISDashboardUpdater ^
+  --distpath "dist\KISDashboard" ^
+  --workpath "build\updater" ^
+  --specpath "build" ^
+  updater_windows.py
+if errorlevel 1 exit /b 1
+
 if not exist dist\KISDashboard (
   echo Build output not found.
   exit /b 1

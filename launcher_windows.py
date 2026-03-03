@@ -1,21 +1,31 @@
 import atexit
+import ctypes
 import logging
 import os
+import re
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 import urllib.request
 import webbrowser
+import tempfile
+import shutil
 
+import requests
 import uvicorn
 
 from app import runtime_paths
+from app.version import APP_VERSION
 
 HOST = "127.0.0.1"
 PORT = 8000
 HEALTH_ENDPOINT = f"http://{HOST}:{PORT}/api/status"
 DASHBOARD_URL = f"http://{HOST}:{PORT}"
+RELEASE_REPO = os.getenv("UPDATE_REPO", "ianlyoo/koreainv-dashboard")
+CHECK_UPDATE_ON_START = os.getenv("CHECK_UPDATE_ON_START", "true").lower() == "true"
 
 _server = None
 
@@ -69,10 +79,152 @@ def _shutdown_server(*_args) -> None:
         _server.should_exit = True
 
 
+def _normalize_version(v: str) -> tuple:
+    cleaned = (v or "").strip().lower().lstrip("v")
+    parts = re.findall(r"\d+", cleaned)
+    if not parts:
+        return (0, 0, 0)
+    nums = tuple(int(x) for x in parts[:3])
+    return nums + (0,) * (3 - len(nums))
+
+
+def _confirm_update(message: str) -> bool:
+    try:
+        mb_yesno = 0x00000004
+        mb_icon_question = 0x00000020
+        res = ctypes.windll.user32.MessageBoxW(0, message, "KISDashboard 업데이트", mb_yesno | mb_icon_question)
+        return res == 6  # IDYES
+    except Exception:
+        return False
+
+
+def _latest_release_info(logger: logging.Logger) -> dict | None:
+    url = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
+    try:
+        res = requests.get(url, timeout=8)
+        if res.status_code != 200:
+            logger.warning("Release API status=%s", res.status_code)
+            return None
+        return res.json()
+    except Exception as e:
+        logger.warning("Update check failed: %s", e)
+        return None
+
+
+def _find_zip_asset(release: dict) -> dict | None:
+    assets = release.get("assets", []) or []
+    preferred = None
+    fallback = None
+    for a in assets:
+        name = str(a.get("name", "")).lower()
+        if name.endswith(".zip"):
+            fallback = fallback or a
+            if "win64" in name:
+                preferred = a
+                break
+    return preferred or fallback
+
+
+def _download_update_zip(asset: dict, logger: logging.Logger) -> str | None:
+    url = asset.get("browser_download_url")
+    name = asset.get("name") or "update.zip"
+    if not url:
+        return None
+    updates_dir = os.path.join(runtime_paths.get_user_data_dir(), "updates")
+    os.makedirs(updates_dir, exist_ok=True)
+    zip_path = os.path.join(updates_dir, name)
+    try:
+        with requests.get(url, stream=True, timeout=30) as res:
+            res.raise_for_status()
+            with open(zip_path, "wb") as f:
+                for chunk in res.iter_content(chunk_size=1024 * 128):
+                    if chunk:
+                        f.write(chunk)
+        return zip_path
+    except Exception as e:
+        logger.error("Failed to download update: %s", e)
+        return None
+
+
+def _launch_updater(zip_path: str, logger: logging.Logger) -> bool:
+    install_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+
+    if getattr(sys, "frozen", False):
+        updater_src = os.path.join(install_dir, "KISDashboardUpdater.exe")
+        if not os.path.exists(updater_src):
+            logger.error("Updater executable not found: %s", updater_src)
+            return False
+        runtime_dir = tempfile.mkdtemp(prefix="kisdash_updater_")
+        updater_bin = os.path.join(runtime_dir, "KISDashboardUpdater.exe")
+        shutil.copy2(updater_src, updater_bin)
+        cmd = [
+            updater_bin,
+            "--zip", zip_path,
+            "--install-dir", install_dir,
+            "--wait-pid", str(os.getpid()),
+            "--restart-exe", os.path.basename(sys.executable),
+        ]
+    else:
+        updater_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "updater_windows.py")
+        cmd = [
+            sys.executable,
+            updater_script,
+            "--zip", zip_path,
+            "--install-dir", install_dir,
+            "--wait-pid", str(os.getpid()),
+            "--restart-exe", "KISDashboard.exe",
+        ]
+
+    try:
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(cmd, cwd=install_dir, creationflags=creationflags)
+        return True
+    except Exception as e:
+        logger.error("Failed to start updater: %s", e)
+        return False
+
+
+def _maybe_run_auto_update(logger: logging.Logger) -> bool:
+    if not CHECK_UPDATE_ON_START:
+        return False
+
+    release = _latest_release_info(logger)
+    if not release:
+        return False
+
+    latest_tag = release.get("tag_name", "")
+    if _normalize_version(latest_tag) <= _normalize_version(APP_VERSION):
+        return False
+
+    msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
+    if not _confirm_update(msg):
+        return False
+
+    asset = _find_zip_asset(release)
+    if not asset:
+        logger.warning("No zip asset found in latest release.")
+        return False
+
+    zip_path = _download_update_zip(asset, logger)
+    if not zip_path:
+        return False
+
+    if _launch_updater(zip_path, logger):
+        logger.info("Updater launched. Exiting launcher for update.")
+        return True
+
+    return False
+
+
 def main() -> int:
     _configure_logging()
     logger = logging.getLogger("launcher")
-    logger.info("Launching KIS Dashboard")
+    logger.info("Launching KIS Dashboard (version=%s)", APP_VERSION)
+
+    if _maybe_run_auto_update(logger):
+        return 0
 
     if _is_port_in_use(HOST, PORT):
         logger.error("Port %d is already in use.", PORT)

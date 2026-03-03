@@ -27,6 +27,7 @@ python -m app.main
 
 - 최초 실행 시 Windows 방화벽 경고가 뜨면 로컬 실행 허용
 - 앱 종료는 작업 관리자에서 `KISDashboard.exe` 종료
+- 업데이트는 실행 시 GitHub Releases 기준으로 자동 확인
 
 ## Windows 빌드 (배포 제작자용)
 
