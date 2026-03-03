@@ -267,6 +267,18 @@ async def stock_search(request: Request, q: str = ""):
                     symbol = item.get("symbol", "")
                     name = item.get("shortname", "") or item.get("longname", symbol)
                     exchange = item.get("exchange", "")
+                    quote_type = str(item.get("quoteType", "")).upper()
+
+                    # Exclude options/derivatives results from autocomplete.
+                    symbol_u = str(symbol).upper()
+                    name_l = str(name).lower()
+                    is_occ_option = bool(re.match(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$", symbol_u))
+                    has_option_word = (" call" in name_l) or (" put" in name_l)
+                    if quote_type in {"OPTION", "FUTURE"} or is_occ_option or has_option_word:
+                        continue
+                    # Keep core asset types only.
+                    if quote_type and quote_type not in {"EQUITY", "ETF"}:
+                        continue
                     
                     market = "USA"
                     if exchange in ["KSC", "KOE"]:
@@ -275,7 +287,7 @@ async def stock_search(request: Request, q: str = ""):
                         market = "JPN"
                     
                     # Avoid duplicates
-                    if not any(r["ticker"] == symbol for r in results):
+                    if not any(str(r.get("ticker", "")).upper() == symbol_u for r in results):
                         results.append({
                             "ticker": symbol,
                             "name": name,
@@ -284,20 +296,27 @@ async def stock_search(request: Request, q: str = ""):
         except:
             pass
 
-        # Relevance sort: exact/partial name matches first, then ticker matches.
+        # Relevance sort: ticker-exact -> ticker-prefix -> name matches.
         q_lower = raw_query.lower()
+        market_rank = {"KOR": 0, "USA": 1, "JPN": 2}
         def relevance_key(item):
             name = str(item.get("name", "")).lower()
             ticker = str(item.get("ticker", "")).upper()
-            name_starts = name.startswith(q_lower)
-            name_contains = q_lower in name
+            ticker_exact = ticker == query_upper
             ticker_starts = ticker.startswith(query_upper)
             ticker_contains = query_upper in ticker
+            name_exact = name == q_lower
+            name_starts = name.startswith(q_lower)
+            name_contains = q_lower in name
             return (
-                0 if name_starts else 1,
-                0 if name_contains else 1,
+                0 if ticker_exact else 1,
                 0 if ticker_starts else 1,
                 0 if ticker_contains else 1,
+                0 if name_exact else 1,
+                0 if name_starts else 1,
+                0 if name_contains else 1,
+                market_rank.get(str(item.get("market", "")).upper(), 9),
+                len(ticker),
             )
 
         results.sort(key=relevance_key)
