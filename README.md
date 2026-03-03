@@ -38,3 +38,14 @@ build_windows.bat
 결과물:
 - `dist\KISDashboard\`
 - `dist\KISDashboard-win64.zip`
+
+## 자동 배포 (GitHub Actions)
+
+태그를 푸시하면 Windows 빌드와 Release 업로드가 자동 수행됩니다.
+
+```bash
+git tag v1.2.1
+git push origin v1.2.1
+```
+
+완료 후 GitHub Releases에 `KISDashboard-win64.zip`이 첨부됩니다.
