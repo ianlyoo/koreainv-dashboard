@@ -19,6 +19,8 @@ python -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --add-data "app/templates;app/templates" ^
   --add-data "app/static;app/static" ^
   --add-data "app/img;app/img" ^
+  --collect-submodules passlib.handlers ^
+  --hidden-import passlib.handlers.bcrypt ^
   launcher_windows.py
 if errorlevel 1 exit /b 1
 
