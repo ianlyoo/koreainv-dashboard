@@ -24,3 +24,8 @@ index_backup.html
 
 # Local websocket cache
 .kis_ws_key.json
+
+# Build artifacts
+build/
+dist/
+*.spec

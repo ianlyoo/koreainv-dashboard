@@ -5,10 +5,10 @@ import tempfile
 from typing import Optional, Dict
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
+import runtime_paths
 
-# Settings File Path
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SETTINGS_FILE = os.path.join(BASE_DIR, "data", "settings.json")
+# Settings File Path (store writable data under user profile, not app bundle path)
+SETTINGS_FILE = os.path.join(runtime_paths.get_user_data_dir(), "settings.json")
 
 # Password Hashing Context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -105,7 +105,11 @@ def save_settings(settings: Dict) -> bool:
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
-        os.chmod(SETTINGS_FILE, 0o600)
+        try:
+            os.chmod(SETTINGS_FILE, 0o600)
+        except OSError:
+            # Windows may not fully support POSIX chmod semantics.
+            pass
         return True
     except Exception:
         return False

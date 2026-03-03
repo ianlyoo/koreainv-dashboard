@@ -15,10 +15,11 @@ import uuid
 import json
 from dataclasses import dataclass
 from ws_client import ws_manager
+import runtime_paths
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = runtime_paths.get_app_base_dir()
 
 app = FastAPI(title="Korea Investment Dashboard")
 
