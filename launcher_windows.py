@@ -61,18 +61,36 @@ def _wait_until_ready(timeout_seconds: int = 30) -> bool:
     return False
 
 
-def _run_server() -> None:
+def _wait_until_ready_or_dead(server_thread: threading.Thread, timeout_seconds: int = 30) -> bool:
+    start = time.time()
+    while time.time() - start < timeout_seconds:
+        if not server_thread.is_alive():
+            return False
+        try:
+            with urllib.request.urlopen(HEALTH_ENDPOINT, timeout=2) as response:
+                if response.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.4)
+    return False
+
+
+def _run_server(logger: logging.Logger) -> None:
     global _server
-    config = uvicorn.Config(
-        "app.main:app",
-        host=HOST,
-        port=PORT,
-        log_level="info",
-        access_log=False,
-        reload=False,
-    )
-    _server = uvicorn.Server(config)
-    _server.run()
+    try:
+        config = uvicorn.Config(
+            "app.main:app",
+            host=HOST,
+            port=PORT,
+            log_level="info",
+            access_log=False,
+            reload=False,
+        )
+        _server = uvicorn.Server(config)
+        _server.run()
+    except Exception:
+        logger.exception("Server thread crashed before startup")
 
 
 def _shutdown_server(*_args) -> None:
@@ -298,10 +316,12 @@ def main() -> int:
         logger.error("Port %d is already in use.", PORT)
         return 1
 
-    server_thread = threading.Thread(target=_run_server, daemon=True)
+    server_thread = threading.Thread(target=_run_server, args=(logger,), daemon=True)
     server_thread.start()
 
-    if not _wait_until_ready():
+    if not _wait_until_ready_or_dead(server_thread):
+        if not server_thread.is_alive():
+            logger.error("Server thread exited unexpectedly. Check traceback above.")
         logger.error("Server did not become ready in time.")
         return 1
 
