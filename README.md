@@ -1,6 +1,6 @@
 ﻿# Korea Investment Dashboard
 
-Current release: `v1.2.7`
+Current release: `v1.2.8`
 
 ?쒓뎅?ъ옄利앷텒 API 湲곕컲 媛쒖씤 怨꾩쥖 ??쒕낫?쒖엯?덈떎.
 
@@ -46,8 +46,8 @@ build_windows.bat
 
 ## ?쒓렇 湲곕컲 ?먮룞 由대━??
 ```bash
-git tag v1.2.7
-git push origin v1.2.7
+git tag v1.2.8
+git push origin v1.2.8
 ```
 
 GitHub Actions媛 Windows 鍮뚮뱶瑜??섑뻾?섍퀬 Releases??zip???먮룞 ?낅줈?쒗빀?덈떎.

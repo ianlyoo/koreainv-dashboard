@@ -86,6 +86,7 @@ def _run_server(logger: logging.Logger) -> None:
             log_level="info",
             access_log=False,
             reload=False,
+            log_config=None,
         )
         _server = uvicorn.Server(config)
         _server.run()

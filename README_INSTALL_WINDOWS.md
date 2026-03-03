@@ -1,6 +1,6 @@
 ﻿# KISDashboard Windows ?ㅼ튂/?ㅽ뻾 媛?대뱶
 
-Current release: `v1.2.7`
+Current release: `v1.2.8`
 
 ??臾몄꽌??Python???ㅼ튂?섏뼱 ?덉? ?딆? Windows PC?먯꽌 KISDashboard瑜??ㅽ뻾?섎뒗 諛⑸쾿???덈궡?⑸땲??
 
