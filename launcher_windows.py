@@ -17,8 +17,6 @@ from pathlib import Path
 
 import requests
 import uvicorn
-import pystray
-from PIL import Image
 
 from app import runtime_paths
 from app.version import APP_VERSION
@@ -93,6 +91,15 @@ def _find_tray_icon_path() -> str | None:
 
 
 def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
+    try:
+        import pystray
+        from PIL import Image
+    except Exception as e:
+        logger.warning("Tray modules unavailable (%s). Running without tray UI.", e)
+        while server_thread.is_alive():
+            time.sleep(0.5)
+        return
+
     icon_path = _find_tray_icon_path()
     if not icon_path:
         logger.warning("Tray icon not found in app/img; running without tray UI.")
