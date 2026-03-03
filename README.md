@@ -1,59 +1,58 @@
-# Korea Investment Dashboard
+﻿# Korea Investment Dashboard
 
-Current release: `v1.2.8`
+Current release: `v1.2.9`
 
-한국투자증권 API 기반 개인 계좌 대시보드입니다.
+?쒓뎅?ъ옄利앷텒 API 湲곕컲 媛쒖씤 怨꾩쥖 ??쒕낫?쒖엯?덈떎.
 
-## 사용자용 설치 (Windows, Python 불필요)
+## ?ъ슜?먯슜 ?ㅼ튂 (Windows, Python 遺덊븘??
 
-1. [Releases](https://github.com/ianlyoo/koreainv-dashboard/releases)에서 최신 `KISDashboard-win64.zip` 다운로드
-2. 압축 해제 후 `KISDashboard.exe` 실행
-3. 브라우저에서 `http://127.0.0.1:8000` 자동 오픈 확인
-4. 첫 화면에서 `APP_KEY`, `APP_SECRET`, 계좌번호, PIN 설정
+1. [Releases](https://github.com/ianlyoo/koreainv-dashboard/releases)?먯꽌 理쒖떊 `KISDashboard-win64.zip` ?ㅼ슫濡쒕뱶
+2. ?뺤텞 ?댁젣 ??`KISDashboard.exe` ?ㅽ뻾
+3. 釉뚮씪?곗??먯꽌 `http://127.0.0.1:8000` ?먮룞 ?ㅽ뵂 ?뺤씤
+4. 泥??붾㈃?먯꽌 `APP_KEY`, `APP_SECRET`, 怨꾩쥖踰덊샇, PIN ?ㅼ젙
 
-자세한 설치 문서:
+?먯꽭???ㅼ튂 臾몄꽌:
 - `README_INSTALL_WINDOWS.md`
 
-## 자동 업데이트
+## ?먮룞 ?낅뜲?댄듃
 
-- 앱 시작 시 GitHub Releases 최신 버전을 확인합니다.
-- 새 버전이 있으면 업데이트 확인 창이 표시됩니다.
-- 승인하면 업데이트 파일을 다운로드한 뒤 앱이 자동 재시작됩니다.
+- ???쒖옉 ??GitHub Releases 理쒖떊 踰꾩쟾???뺤씤?⑸땲??
+- ??踰꾩쟾???덉쑝硫??낅뜲?댄듃 ?뺤씤 李쎌씠 ?쒖떆?⑸땲??
+- ?뱀씤?섎㈃ ?낅뜲?댄듃 ?뚯씪???ㅼ슫濡쒕뱶?????깆씠 ?먮룞 ?ъ떆?묐맗?덈떎.
 
-## 데이터 경로
+## ?곗씠??寃쎈줈
 
-- 설정 파일: `%APPDATA%\KISDashboard\settings.json`
-- 런처 로그: `%APPDATA%\KISDashboard\logs\launcher.log`
-- 업데이트 로그: `%APPDATA%\KISDashboard\logs\updater.log`
+- ?ㅼ젙 ?뚯씪: `%APPDATA%\KISDashboard\settings.json`
+- ?곗쿂 濡쒓렇: `%APPDATA%\KISDashboard\logs\launcher.log`
+- ?낅뜲?댄듃 濡쒓렇: `%APPDATA%\KISDashboard\logs\updater.log`
 
-## 개발 실행
+## 媛쒕컻 ?ㅽ뻾
 
 ```bash
 python -m app.main
 ```
 
-브라우저에서 `http://127.0.0.1:8000` 접속
+釉뚮씪?곗??먯꽌 `http://127.0.0.1:8000` ?묒냽
 
-## Windows 배포 빌드
+## Windows 諛고룷 鍮뚮뱶
 
 ```bat
 build_windows.bat
 ```
 
-결과물:
+寃곌낵臾?
 - `dist\KISDashboard\`
 - `dist\KISDashboard-win64.zip`
 
-## 태그 기반 자동 릴리스
-
+## ?쒓렇 湲곕컲 ?먮룞 由대━??
 ```bash
-git tag v1.2.8
-git push origin v1.2.8
+git tag v1.2.9
+git push origin v1.2.9
 ```
 
-GitHub Actions가 Windows 빌드를 수행하고 Releases에 zip을 자동 업로드합니다.
+GitHub Actions媛 Windows 鍮뚮뱶瑜??섑뻾?섍퀬 Releases??zip???먮룞 ?낅줈?쒗빀?덈떎.
 
-## 주의사항
+## 二쇱쓽?ы빆
 
-- 본 프로젝트는 투자 보조 도구이며 투자 손실에 대한 책임을 지지 않습니다.
-- API/계좌정보가 포함된 설정 파일은 외부로 공유하지 마세요.
+- 蹂??꾨줈?앺듃???ъ옄 蹂댁“ ?꾧뎄?대ŉ ?ъ옄 ?먯떎?????梨낆엫??吏吏 ?딆뒿?덈떎.
+- API/怨꾩쥖?뺣낫媛 ?ы븿???ㅼ젙 ?뚯씪? ?몃?濡?怨듭쑀?섏? 留덉꽭??

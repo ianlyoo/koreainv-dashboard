@@ -79,8 +79,10 @@ def _wait_until_ready_or_dead(server_thread: threading.Thread, timeout_seconds: 
 def _run_server(logger: logging.Logger) -> None:
     global _server
     try:
+        from app.main import app as fastapi_app
+
         config = uvicorn.Config(
-            "app.main:app",
+            fastapi_app,
             host=HOST,
             port=PORT,
             log_level="info",
