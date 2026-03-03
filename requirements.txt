@@ -12,3 +12,5 @@ pytz
 python-dateutil
 cryptography
 bcrypt
+pystray
+Pillow

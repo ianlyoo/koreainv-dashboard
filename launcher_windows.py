@@ -1,4 +1,4 @@
-import atexit
+﻿import atexit
 import ctypes
 import logging
 import os
@@ -13,9 +13,12 @@ import urllib.request
 import webbrowser
 import tempfile
 import shutil
+from pathlib import Path
 
 import requests
 import uvicorn
+import pystray
+from PIL import Image
 
 from app import runtime_paths
 from app.version import APP_VERSION
@@ -77,6 +80,58 @@ def _run_server() -> None:
 def _shutdown_server(*_args) -> None:
     if _server is not None:
         _server.should_exit = True
+
+
+def _find_tray_icon_path() -> str | None:
+    img_dir = Path(runtime_paths.get_app_base_dir()) / "img"
+    if not img_dir.is_dir():
+        return None
+    icons = sorted(img_dir.glob("*.ico"))
+    if not icons:
+        return None
+    return str(icons[0])
+
+
+def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
+    icon_path = _find_tray_icon_path()
+    if not icon_path:
+        logger.warning("Tray icon not found in app/img; running without tray UI.")
+        while server_thread.is_alive():
+            time.sleep(0.5)
+        return
+
+    try:
+        tray_image = Image.open(icon_path)
+    except Exception as e:
+        logger.error("Failed to load tray icon: %s", e)
+        while server_thread.is_alive():
+            time.sleep(0.5)
+        return
+
+    def on_open(icon, item):
+        webbrowser.open(DASHBOARD_URL)
+
+    def on_exit(icon, item):
+        logger.info("Tray exit requested")
+        _shutdown_server()
+        icon.stop()
+
+    menu = pystray.Menu(
+        pystray.MenuItem("대시보드 열기", on_open, default=True),
+        pystray.MenuItem("종료", on_exit),
+    )
+    icon = pystray.Icon("KISDashboard", tray_image, "KISDashboard", menu)
+
+    def watch_server():
+        while server_thread.is_alive():
+            time.sleep(0.5)
+        try:
+            icon.stop()
+        except Exception:
+            pass
+
+    threading.Thread(target=watch_server, daemon=True).start()
+    icon.run()
 
 
 def _normalize_version(v: str) -> tuple:
@@ -196,10 +251,12 @@ def _maybe_run_auto_update(logger: logging.Logger) -> bool:
 
     latest_tag = release.get("tag_name", "")
     if _normalize_version(latest_tag) <= _normalize_version(APP_VERSION):
+        logger.debug("No update required. latest=%s current=%s", latest_tag, APP_VERSION)
         return False
 
     msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
     if not _confirm_update(msg):
+        logger.info("Update declined by user. Continuing current version.")
         return False
 
     asset = _find_zip_asset(release)
@@ -227,6 +284,10 @@ def main() -> int:
         return 0
 
     if _is_port_in_use(HOST, PORT):
+        if _wait_until_ready(timeout_seconds=3):
+            logger.info("Existing server detected on port %d. Opening browser.", PORT)
+            webbrowser.open(DASHBOARD_URL)
+            return 0
         logger.error("Port %d is already in use.", PORT)
         return 1
 
@@ -245,8 +306,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _shutdown_server)
 
     try:
-        while server_thread.is_alive():
-            time.sleep(0.5)
+        _run_tray(server_thread, logger)
     except KeyboardInterrupt:
         _shutdown_server()
 
@@ -256,3 +316,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
