@@ -12,7 +12,9 @@ if errorlevel 1 exit /b 1
 py -3 -m pip install -r requirements.txt pyinstaller
 if errorlevel 1 exit /b 1
 
-py -3 -m PyInstaller --noconfirm --clean --windowed --onedir ^
+if not exist app\static mkdir app\static
+
+python -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --name KISDashboard ^
   --add-data "app/templates;app/templates" ^
   --add-data "app/static;app/static" ^
@@ -20,7 +22,7 @@ py -3 -m PyInstaller --noconfirm --clean --windowed --onedir ^
   launcher_windows.py
 if errorlevel 1 exit /b 1
 
-py -3 -m PyInstaller --noconfirm --clean --windowed --onefile ^
+python -m PyInstaller --noconfirm --clean --windowed --onefile ^
   --name KISDashboardUpdater ^
   --distpath "dist\KISDashboard" ^
   --workpath "build\updater" ^
