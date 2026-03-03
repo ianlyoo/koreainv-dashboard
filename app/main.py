@@ -1,20 +1,16 @@
 from fastapi import FastAPI, HTTPException, Request, Response, Depends, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sse_starlette.sse import EventSourceResponse
 from app import api_client
 import yfinance as yf
 import datetime
-import asyncio
 import logging
 import cloudscraper
 from bs4 import BeautifulSoup
 from app import auth
 import os
 import uuid
-import json
 from dataclasses import dataclass
-from app.ws_client import ws_manager
 from app import runtime_paths
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -210,83 +206,10 @@ async def sync_data(request: Request):
     domestic = api_client.get_domestic_balance(token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd)
     overseas = api_client.get_overseas_balance(token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd)
     
-    # Auto-start WebSocket with stock holdings
-    try:
-        domestic_codes = [item.get("ticker", "") for item in domestic.get("items", []) if item.get("ticker")]
-        def get_ws_prefix(excg_cd: str) -> str:
-            val = excg_cd.upper() if excg_cd else ""
-            if val in ("NASD", "NASDAQ"): return "DNAS"
-            if val in ("NYSE",): return "DNYS"
-            if val in ("AMEX",): return "DAMS"
-            if val in ("TKSE", "TSE", "TYO"): return "BAQS"
-            return "DNAS"
-            
-        us_codes = [get_ws_prefix(item.get("excg_cd", "")) + item.get("ticker", "") for item in overseas.get("us_items", []) if item.get("ticker")]
-        jp_codes = [get_ws_prefix(item.get("excg_cd", "TKSE")) + item.get("ticker", "") for item in overseas.get("jp_items", []) if item.get("ticker")]
-        overseas_codes = us_codes + jp_codes
-        
-        await ws_manager.start(session.app_key, session.app_secret, domestic_codes, overseas_codes)
-    except Exception as e:
-        logging.getLogger(__name__).warning("WebSocket auto-start failed: %s", e)
-    
     return {
         "status": "success",
         "domestic": domestic,
         "overseas": overseas
-    }
-
-
-@app.get("/api/realtime-prices")
-async def realtime_prices(request: Request):
-    """SSE endpoint for real-time price streaming."""
-    session_id = request.cookies.get("session")
-    if not session_id or session_id not in active_sessions:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    
-    async def event_stream():
-        queue = ws_manager.add_listener()
-        try:
-            # Send initial connection status
-            status = "connected" if ws_manager.is_connected else "disconnected"
-            yield {"data": json.dumps({'type': 'status', 'status': status})}
-            
-            # Send any cached latest prices
-            for ticker, price_data in ws_manager.latest_prices.items():
-                yield {"data": json.dumps(price_data)}
-            
-            while True:
-                # Check if client disconnected
-                if await request.is_disconnected():
-                    break
-                
-                # Wait for data with timeout
-                try:
-                    data = await asyncio.wait_for(queue.get(), timeout=10.0)
-                    yield {"data": json.dumps(data)}
-                except asyncio.TimeoutError:
-                    yield {"data": "keepalive"}
-        finally:
-            ws_manager.remove_listener(queue)
-    
-    return EventSourceResponse(
-        event_stream(),
-        ping=15,
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
-
-
-@app.get("/api/ws-status")
-async def ws_status():
-    """Check WebSocket connection status."""
-    return {
-        "connected": ws_manager.is_connected,
-        "subscribed_domestic": len(ws_manager._subscribed_domestic),
-        "subscribed_overseas": len(ws_manager._subscribed_overseas),
-        "cached_prices": len(ws_manager.latest_prices)
     }
 
 

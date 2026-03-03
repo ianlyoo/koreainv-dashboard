@@ -1318,13 +1318,15 @@
                 </div>
             </div>
 
-            <button class="btn-sync" onclick="toggleRealtime()" id="realtimeToggleBtn">
+            <button class="btn-sync" onclick="syncData(true)" id="realtimeToggleBtn">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round" id="realtimeToggleIcon">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"></path>
+                    <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"></path>
                 </svg>
-                <span id="realtimeToggleText">실시간 연결</span>
+                <span id="realtimeToggleText">새로고침</span>
             </button>
             <div class="layout-mode-switch" id="layoutModeToggle">
                 <button class="layout-mode-btn" id="layoutModeBtn1" onclick="applyLayoutMode('mode1')">확장</button>
@@ -1413,11 +1415,9 @@
                 <div class="table-header" style="justify-content: space-between;">
                     <div style="display: flex; gap: 12px; align-items: center;">
                         <span>보유 자산 상세</span>
-                        <span id="ws-status-badge"
+                        <span id="sync-status-badge"
                             style="font-size: 12px; color: var(--text-muted); font-weight: 400; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 20px; transition: all 0.3s ease;">
-                            <span id="ws-status-dot"
-                                style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-gold); margin-right: 4px;"></span>
-                            <span id="ws-status-text">서버 연결 대기</span>
+                            <span id="last-sync-text">마지막 동기화: -</span>
                         </span>
                     </div>
 
@@ -1929,10 +1929,10 @@
                 const data = await res.json();
 
                 if (data.status === "success") {
-                    const krCash = data.domestic.summary.cash_balance || 0;
-                    const usCash = data.overseas.us_summary.usd_cash_balance || 0;
+                    const krCash = data?.domestic?.summary?.cash_balance || 0;
+                    const usCash = data?.overseas?.us_summary?.usd_cash_balance || 0;
                     let exrt = 1350;
-                    if (data.overseas.us_items && data.overseas.us_items.length > 0) {
+                    if (data?.overseas?.us_items && data.overseas.us_items.length > 0) {
                         exrt = data.overseas.us_items[0].bass_exrt || 1350;
                     }
                     cachedKrCash = krCash;
@@ -1943,18 +1943,28 @@
                     document.getElementById('val_total_cash').innerText = `₩${formatNumber(Math.round(totalCashKrw))}`;
                     document.getElementById('val_krw_cash').innerText = `₩${formatNumber(Math.round(krCash))}`;
                     document.getElementById('val_usd_cash').innerText = `$${formatNumber(usCash.toFixed(2))}`;
+                    const now = new Date();
+                    const hh = String(now.getHours()).padStart(2, '0');
+                    const mm = String(now.getMinutes()).padStart(2, '0');
+                    const ss = String(now.getSeconds()).padStart(2, '0');
+                    const lastSync = document.getElementById('last-sync-text');
+                    if (lastSync) lastSync.innerText = `마지막 동기화: ${hh}:${mm}:${ss}`;
 
                     // 리스트 취합 및 원화 평가/매입금액 계산
                     let combinedItems = [];
 
-                    data.domestic.items.forEach(i => {
+                    const domesticItems = Array.isArray(data?.domestic?.items) ? data.domestic.items : [];
+                    const usItems = Array.isArray(data?.overseas?.us_items) ? data.overseas.us_items : [];
+                    const jpItems = Array.isArray(data?.overseas?.jp_items) ? data.overseas.jp_items : [];
+
+                    domesticItems.forEach(i => {
                         const evalAmt = i.qty * i.now_price;
                         const purchaseAmt = i.qty * i.avg_price;
                         const holdingRt = calcHoldingProfitRate(i.now_price, i.avg_price);
                         combinedItems.push({ ...i, type: 'KOR', evalAmtKrw: evalAmt, purchaseAmtKrw: purchaseAmt, profit_rt: holdingRt ?? 0 });
                     });
 
-                    data.overseas.us_items.forEach(i => {
+                    usItems.forEach(i => {
                         let exrt = i.bass_exrt || 1350;
                         const evalAmt = i.qty * i.now_price * exrt;
                         const purchaseAmt = i.qty * i.avg_price * exrt;
@@ -1962,7 +1972,7 @@
                         combinedItems.push({ ...i, type: 'USA', evalAmtKrw: evalAmt, purchaseAmtKrw: purchaseAmt, profit_rt: holdingRt ?? 0 });
                     });
 
-                    data.overseas.jp_items.forEach(i => {
+                    jpItems.forEach(i => {
                         let exrt = i.bass_exrt || 905;
                         const evalAmt = i.qty * i.now_price * (exrt / 100);
                         const purchaseAmt = i.qty * i.avg_price * (exrt / 100);
@@ -1997,9 +2007,7 @@
                     renderTable();
                     updateChart(combinedItems, totalEvalKrw);
 
-                    // SSE 자동 연결 시작
-                    if (!evtSource) initRealtime();
-                    updateToggleBtn(true);
+                    // Static mode only.
                 }
             } catch (err) {
                 console.error(err);
