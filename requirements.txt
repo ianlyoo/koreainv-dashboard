@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+requests
+python-dotenv
+yfinance
+beautifulsoup4
+python-jose[cryptography]
+passlib[bcrypt]
+sse-starlette
+websockets
+cloudscraper
+python-multipart
+pytz
+python-dateutil
+cryptography
+bcrypt

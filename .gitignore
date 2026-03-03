@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Secrets / local runtime state
+.env
+.env.*
+!.env.example
+data/settings.json
+
+# Local editor/project files
+.vscode/
+.DS_Store
+
+# Debug / backup artifacts
+api_dump.json
+debug_us_balance.json
+tmp_index_script.js
+index_backup.html
+
+# Local websocket cache
+.kis_ws_key.json

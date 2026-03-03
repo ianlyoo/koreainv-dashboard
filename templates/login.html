@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Korea Investment Dashboard - Login</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/img/fa82e0f8872e03ff459435036237a46d.ico">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+
+        :root {
+            /* Premium Dark Theme Palette */
+            --bg-base: #050507;
+            --bg-grad-1: #0a0b10;
+            --bg-grad-2: #12141d;
+
+            /* Glassmorphism Panels */
+            --panel-bg: rgba(22, 24, 32, 0.65);
+            --panel-border: rgba(255, 255, 255, 0.06);
+            --panel-hover: rgba(30, 33, 43, 0.8);
+
+            /* Typography */
+            --text-main: #f3f4f6;
+            --text-sub: #9ca3af;
+            --text-muted: #6b7280;
+
+            /* Accents */
+            --accent-gold: #fbbf24;
+            --accent-gold-hover: #f59e0b;
+            --accent-blue: #3b82f6;
+
+            /* Inputs */
+            --input-bg: rgba(0, 0, 0, 0.3);
+            --input-border: rgba(255, 255, 255, 0.1);
+            --input-focus: rgba(251, 191, 36, 0.5);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            background: radial-gradient(circle at center, var(--bg-grad-2) 0%, var(--bg-grad-1) 50%, var(--bg-base) 100%);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Ambient Background Effects */
+        .ambient-light {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            z-index: -1;
+            opacity: 0.15;
+            animation: float 10s infinite ease-in-out alternate;
+        }
+
+        .ambient-1 {
+            width: 40vw;
+            height: 40vw;
+            background: var(--accent-gold);
+            top: -10vw;
+            left: -10vw;
+        }
+
+        .ambient-2 {
+            width: 30vw;
+            height: 30vw;
+            background: var(--accent-blue);
+            bottom: -5vw;
+            right: -5vw;
+            animation-delay: -5s;
+        }
+
+        @keyframes float {
+            0% {
+                transform: translate(0, 0) scale(1);
+            }
+
+            100% {
+                transform: translate(50px, 30px) scale(1.1);
+            }
+        }
+
+        /* Login Container */
+        .login-container {
+            width: 100%;
+            max-width: 440px;
+            padding: 40px;
+            background: var(--panel-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            position: relative;
+            z-index: 10;
+            opacity: 0;
+            transform: translateY(20px);
+            animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes slideUpFade {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Header */
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .logo-icon {
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 16px;
+            background: linear-gradient(135deg, var(--accent-gold), #d97706);
+            border-radius: 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 8px 24px rgba(251, 191, 36, 0.25);
+            font-size: 24px;
+            color: #000;
+        }
+
+        .login-header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(to right, #ffffff, #a1a1aa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .login-header p {
+            font-size: 14px;
+            color: var(--text-sub);
+            line-height: 1.5;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+            opacity: 0;
+            transform: translateY(10px);
+            animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .form-group:nth-child(1) {
+            animation-delay: 0.1s;
+        }
+
+        .form-group:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .form-group:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+
+        .form-group:nth-child(4) {
+            animation-delay: 0.4s;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-sub);
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+
+        input {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            color: #fff;
+            padding: 14px 16px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-family: 'Pretendard', sans-serif;
+            transition: all 0.2s ease;
+            outline: none;
+        }
+
+        input::placeholder {
+            color: var(--text-muted);
+        }
+
+        input:focus {
+            border-color: var(--accent-gold);
+            box-shadow: 0 0 0 3px var(--input-focus);
+            background: rgba(0, 0, 0, 0.5);
+        }
+
+        input.pin-input {
+            letter-spacing: 4px;
+            font-weight: 700;
+            font-size: 20px;
+            text-align: center;
+        }
+
+        .btn-submit {
+            width: 100%;
+            background: linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-hover) 100%);
+            color: #000;
+            border: none;
+            padding: 16px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 8px 20px rgba(251, 191, 36, 0.25);
+            margin-top: 12px;
+            opacity: 0;
+            transform: translateY(10px);
+            animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            animation-delay: 0.5s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-submit::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transform: skewX(-20deg);
+            transition: 0.5s;
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 28px rgba(251, 191, 36, 0.35);
+        }
+
+        .btn-submit:hover::after {
+            left: 150%;
+        }
+
+        .btn-submit:active {
+            transform: translateY(0);
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0, 0, 0, 0.3);
+            border-radius: 50%;
+            border-top-color: #000;
+            animation: spin 1s ease-in-out infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .error-msg {
+            color: #ef4444;
+            font-size: 13px;
+            margin-top: 12px;
+            text-align: center;
+            font-weight: 500;
+            display: none;
+            animation: shake 0.4s;
+        }
+
+        @keyframes shake {
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-5px);
+            }
+
+            75% {
+                transform: translateX(5px);
+            }
+        }
+
+        /* View Switching (Setup vs Login) */
+        .view-section {
+            display: none;
+        }
+
+        .view-section.active {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="ambient-light ambient-1"></div>
+    <div class="ambient-light ambient-2"></div>
+
+    <div class="login-container">
+        <!-- Setup View -->
+        <div id="setup-view" class="view-section">
+            <div class="login-header">
+                <div class="logo-icon">📈</div>
+                <h1>Welcome to Dashboard</h1>
+                <p>최초 1회만 한국투자증권 API 정보와<br>간편비밀번호(PIN)를 설정합니다.</p>
+            </div>
+            <form id="setup-form" onsubmit="handleSetup(event)">
+                <div class="form-group">
+                    <label for="app_key">APP KEY</label>
+                    <input type="text" id="app_key" name="app_key" required autocomplete="off"
+                        placeholder="한국투자증권 APP KEY">
+                </div>
+                <div class="form-group">
+                    <label for="app_secret">APP SECRET</label>
+                    <input type="password" id="app_secret" name="app_secret" required autocomplete="off"
+                        placeholder="한국투자증권 APP SECRET">
+                </div>
+                <div class="form-group">
+                    <label for="cano">계좌번호 앞 8자리</label>
+                    <input type="text" id="cano" name="cano" required autocomplete="off" placeholder="ex) 12345678"
+                        maxlength="8">
+                </div>
+                <div class="form-group" style="margin-top: 32px;">
+                    <label for="setup_pin">사용할 간편비밀번호 (PIN)</label>
+                    <input type="password" id="setup_pin" name="pin" class="pin-input" required autocomplete="off"
+                        placeholder="••••••" maxlength="6">
+                </div>
+                <div class="error-msg" id="setup-error"></div>
+                <button type="submit" class="btn-submit" id="setup-btn">
+                    <span class="btn-text">설정 및 시작하기</span>
+                    <div class="spinner"></div>
+                </button>
+            </form>
+        </div>
+
+        <!-- Login View -->
+        <div id="login-view" class="view-section">
+            <div class="login-header">
+                <div class="logo-icon">📈</div>
+                <h1>Welcome Back</h1>
+                <p>설정하신 간편비밀번호(PIN)를 입력하세요.</p>
+            </div>
+            <form id="login-form" onsubmit="handleLogin(event)">
+                <div class="form-group" style="margin-top: 32px; margin-bottom: 32px;">
+                    <label for="login_pin">간편비밀번호 (PIN)</label>
+                    <input type="password" id="login_pin" name="pin" class="pin-input" required autocomplete="off"
+                        placeholder="••••••" maxlength="6" autofocus>
+                </div>
+                <div class="error-msg" id="login-error"></div>
+                <button type="submit" class="btn-submit" id="login-btn">
+                    <span class="btn-text">로그인</span>
+                    <div class="spinner"></div>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Check Status on Load
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+
+                if (data.setup_complete) {
+                    document.getElementById('login-view').classList.add('active');
+                } else {
+                    document.getElementById('setup-view').classList.add('active');
+                }
+            } catch (err) {
+                console.error("Failed to check status", err);
+            }
+        });
+
+        // Handle Setup
+        async function handleSetup(e) {
+            e.preventDefault();
+            const btn = document.getElementById('setup-btn');
+            const text = btn.querySelector('.btn-text');
+            const spinner = btn.querySelector('.spinner');
+            const errDiv = document.getElementById('setup-error');
+
+            const rawKey = document.getElementById('app_key').value.trim();
+            const rawSecret = document.getElementById('app_secret').value.trim();
+            const rawCano = document.getElementById('cano').value.trim();
+            const rawPin = document.getElementById('setup_pin').value;
+
+            // UI Loading
+            btn.disabled = true;
+            text.style.display = 'none';
+            spinner.style.display = 'block';
+            errDiv.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('app_key', rawKey);
+            formData.append('app_secret', rawSecret);
+            formData.append('cano', rawCano.substring(0, 8)); // 8자리 계좌번호
+            formData.append('acnt_prdt_cd', rawCano.substring(8) || '01');
+            formData.append('pin', rawPin);
+
+            try {
+                const res = await fetch('/api/setup', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res.ok) {
+                    sessionStorage.setItem("dashboard_auth", "true");
+                    window.location.href = '/';
+                } else {
+                    const errorData = await res.json();
+                    throw new Error(errorData.detail || "Setup failed");
+                }
+            } catch (err) {
+                errDiv.textContent = err.message;
+                errDiv.style.display = 'block';
+                btn.disabled = false;
+                text.style.display = 'block';
+                spinner.style.display = 'none';
+            }
+        }
+
+        // Handle Login
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            const text = btn.querySelector('.btn-text');
+            const spinner = btn.querySelector('.spinner');
+            const errDiv = document.getElementById('login-error');
+
+            // UI Loading
+            btn.disabled = true;
+            text.style.display = 'none';
+            spinner.style.display = 'block';
+            errDiv.style.display = 'none';
+
+            const formData = new FormData(e.target);
+
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res.ok) {
+                    sessionStorage.setItem("dashboard_auth", "true");
+                    window.location.href = '/';
+                } else {
+                    const errorData = await res.json();
+                    throw new Error(errorData.detail || "Login failed");
+                }
+            } catch (err) {
+                errDiv.textContent = '비밀번호가 올바르지 않습니다.';
+                errDiv.style.display = 'block';
+                btn.disabled = false;
+                text.style.display = 'block';
+                spinner.style.display = 'none';
+
+                // Reset PIN input
+                const pinInput = document.getElementById('login_pin');
+                pinInput.value = '';
+                pinInput.focus();
+            }
+        }
+    </script>
+
+    <!-- Footer -->
+    <div
+        style="position: fixed; bottom: 12px; width: 100%; text-align: center; color: rgba(255,255,255,0.3); font-size: 11px; z-index: 9999; pointer-events: none;">
+        © Youngin all rights reserved.
+    </div>
+</body>
+
+</html>
