@@ -1,8 +1,9 @@
-import requests
+﻿import requests
 import json
 from app import config
 import time
 import logging
+import datetime
 
 _cached_token = None
 _token_issue_time = 0
@@ -41,6 +42,66 @@ def _to_float(v):
         return float(s)
     except Exception:
         return 0.0
+
+
+def _is_kor_regular_session(now_kst: datetime.datetime | None = None) -> bool:
+    if now_kst is None:
+        now_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+    if now_kst.weekday() >= 5:
+        return False
+    hm = now_kst.hour * 60 + now_kst.minute
+    return (9 * 60) <= hm <= (15 * 60 + 30)
+
+
+def _pick_domestic_display_price(quote_output: dict, fallback_price: int) -> int:
+    # Regular-session and after-hours prices can both exist in quote output.
+    regular_keys = ["stck_prpr", "prpr"]
+    after_keys = ["ovtm_untp_prpr", "ovtm_vi_cls_prc", "ovtm_prpr"]
+
+    regular_price = 0
+    after_price = 0
+
+    for k in regular_keys:
+        v = _to_int(quote_output.get(k, 0))
+        if v > 0:
+            regular_price = v
+            break
+
+    for k in after_keys:
+        v = _to_int(quote_output.get(k, 0))
+        if v > 0:
+            after_price = v
+            break
+
+    if _is_kor_regular_session():
+        return regular_price or after_price or fallback_price
+    return after_price or regular_price or fallback_price
+
+
+def get_domestic_quote_price(token, app_key, app_secret, ticker: str) -> int | None:
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": app_key,
+        "appsecret": app_secret,
+        "tr_id": "FHKST01010100",
+    }
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": str(ticker).zfill(6),
+    }
+    url = f"{config.URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=5)
+        if res.status_code != 200:
+            return None
+        data = res.json()
+        out = data.get("output") or {}
+        if not out:
+            return None
+        return _pick_domestic_display_price(out, 0)
+    except Exception:
+        return None
 
 def _pick_orderable_value(row: dict, prefer_usd: bool = False):
     # Explicit priority only (no fuzzy matching).
@@ -161,12 +222,12 @@ def get_domestic_orderable_cash(token, app_key, app_secret, cano, acnt_prdt_cd):
 def get_access_token(app_key, app_secret):
     global _cached_token, _token_issue_time
     
-    # 1분 제한 영구 블락 방지: 토큰 발급 시도 후 60초 이내면 재시도 금지 (단, 캐시된 토큰이 있으면 반환)
+    # 1遺??쒗븳 ?곴뎄 釉붾씫 諛⑹?: ?좏겙 諛쒓툒 ?쒕룄 ??60珥??대궡硫??ъ떆??湲덉? (?? 罹먯떆???좏겙???덉쑝硫?諛섑솚)
     now = time.time()
     if _cached_token and (now - _token_issue_time) < 43200:
         return _cached_token
         
-    # 최근에 실패했다면 최소 65초 대기
+    # 理쒓렐???ㅽ뙣?덈떎硫?理쒖냼 65珥??湲?
     if not _cached_token and _token_issue_time > 0 and (now - _token_issue_time) < 65:
         return None
 
@@ -179,7 +240,7 @@ def get_access_token(app_key, app_secret):
     url = f"{config.URL_BASE}/oauth2/tokenP"
     res = requests.post(url, headers=headers, data=json.dumps(body))
     
-    _token_issue_time = now # 실패든 성공이든 마지막 시도 시간 갱신
+    _token_issue_time = now # ?ㅽ뙣???깃났?대뱺 留덉?留??쒕룄 ?쒓컙 媛깆떊
     
     if res.status_code == 200:
         _cached_token = res.json().get("access_token")
@@ -243,14 +304,20 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 "cash_balance": orderable_cash
             }
         for item in (data.get("output1") or []):
+                ticker = item.get("pdno", "")
+                fallback_now = int(_to_float(item.get("prpr", "0")))
+                quoted_now = get_domestic_quote_price(
+                    token, app_key, app_secret, ticker
+                )
+                now_price = quoted_now if (quoted_now and quoted_now > 0) else fallback_now
                 result["items"].append({
                     "name": item.get("prdt_name", "알수없음"),
-                    "ticker": item.get("pdno", ""),
+                    "ticker": ticker,
                     "qty": _to_int(item.get("hldg_qty", "0")),
                     "avg_price": int(_to_float(item.get("pchs_avg_pric", "0"))),
-                    "now_price": int(_to_float(item.get("prpr", "0"))),
+                    "now_price": now_price,
                     "profit_rt": (
-                        ((_to_float(item.get("prpr", "0")) - _to_float(item.get("pchs_avg_pric", "0"))) / _to_float(item.get("pchs_avg_pric", "0")) * 100)
+                        ((now_price - _to_float(item.get("pchs_avg_pric", "0"))) / _to_float(item.get("pchs_avg_pric", "0")) * 100)
                         if _to_float(item.get("pchs_avg_pric", "0")) > 0 else 0.0
                     )
                 })
@@ -268,11 +335,11 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
     
     result = {"us_summary": {}, "us_items": [], "jp_items": []}
     
-    # 1. 외화 기준 (02) 로 종목 정보 가져오기
+    # 1. ?명솕 湲곗? (02) 濡?醫낅ぉ ?뺣낫 媛?몄삤湲?
     params_us_foreign = {
         "CANO": cano,
         "ACNT_PRDT_CD": acnt_prdt_cd,
-        "WCRC_FRCR_DVSN_CD": "02", # 외화
+        "WCRC_FRCR_DVSN_CD": "02", # ?명솕
         "NATN_CD": "840",
         "TR_MKET_CD": "00",
         "INQR_DVSN_CD": "00",
@@ -293,7 +360,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                         if bass_exrt == 0: bass_exrt = 1
 
                         result["us_items"].append({
-                            "name": item.get("prdt_name", "알수없음"),
+                            "name": item.get("prdt_name", "?뚯닔?놁쓬"),
                             "ticker": item.get("pdno", ""),
                             "excg_cd": item.get("ovrs_excg_cd", "NASD"),
                             "qty": _to_float(item.get("ccld_qty_smtl1", "0")),
@@ -339,7 +406,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
         else:
             break
 
-    # 2. 일본 주식 외화 기준 (392)
+    # 2. ?쇰낯 二쇱떇 ?명솕 湲곗? (392)
     params_jp_foreign = params_us_foreign.copy()
     params_jp_foreign["NATN_CD"] = "392"
     params_jp_foreign["CTX_AREA_FK200"] = ""
@@ -356,7 +423,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 if bass_exrt == 0: bass_exrt = 1
 
                 result["jp_items"].append({
-                    "name": item.get("prdt_name", "알수없음"),
+                    "name": item.get("prdt_name", "?뚯닔?놁쓬"),
                     "ticker": item.get("pdno", ""),
                     "excg_cd": item.get("ovrs_excg_cd", "TKSE"),
                     "qty": _to_float(item.get("ccld_qty_smtl1", "0")),
@@ -366,6 +433,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                     "bass_exrt": bass_exrt
                 })
 
-    # 3. (삭제됨) 원화 총합계는 1번 호출의 output3에서 가져옴
+    # 3. (??젣?? ?먰솕 珥앺빀怨꾨뒗 1踰??몄텧??output3?먯꽌 媛?몄샂
                     
     return result
+

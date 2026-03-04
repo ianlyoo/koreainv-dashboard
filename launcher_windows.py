@@ -139,6 +139,9 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
     def on_open(icon, item):
         webbrowser.open(DASHBOARD_URL)
 
+    def on_version(icon, item):
+        _show_version_info()
+
     def on_exit(icon, item):
         logger.info("Tray exit requested")
         _shutdown_server()
@@ -146,6 +149,7 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
 
     menu = pystray.Menu(
         pystray.MenuItem("대시보드 열기", on_open, default=True),
+        pystray.MenuItem("버전 확인", on_version),
         pystray.MenuItem("종료", on_exit),
     )
     icon = pystray.Icon("KISDashboard", tray_image, "KISDashboard", menu)
@@ -179,6 +183,19 @@ def _confirm_update(message: str) -> bool:
         return res == 6  # IDYES
     except Exception:
         return False
+
+
+def _show_version_info() -> None:
+    try:
+        mb_icon_info = 0x00000040
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"현재 버전: v{APP_VERSION}",
+            "KISDashboard 버전 정보",
+            mb_icon_info,
+        )
+    except Exception:
+        pass
 
 
 def _latest_release_info(logger: logging.Logger) -> dict | None:
