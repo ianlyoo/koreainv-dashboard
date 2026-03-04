@@ -1,4 +1,5 @@
 import argparse
+import ctypes
 import logging
 import os
 import shutil
@@ -57,6 +58,16 @@ def _restart_app(install_dir: str, restart_exe: str) -> None:
     subprocess.Popen([target], cwd=install_dir, creationflags=creationflags)
 
 
+def _show_info_message(text: str, title: str = "KISDashboard 업데이트") -> None:
+    try:
+        mb_ok = 0x00000000
+        mb_icon_info = 0x00000040
+        mb_topmost = 0x00040000
+        ctypes.windll.user32.MessageBoxW(0, text, title, mb_ok | mb_icon_info | mb_topmost)
+    except Exception:
+        pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="KISDashboard self-updater")
     parser.add_argument("--zip", dest="zip_path", required=True)
@@ -84,6 +95,7 @@ def main() -> int:
             zf.extractall(extract_dir)
         _copy_tree(extract_dir, args.install_dir)
 
+    _show_info_message("업데이트가 완료되었습니다.\n앱을 다시 시작합니다.")
     _restart_app(args.install_dir, args.restart_exe)
     logger.info("Update completed and app restarted")
     return 0

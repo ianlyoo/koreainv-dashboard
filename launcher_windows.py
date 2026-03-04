@@ -187,12 +187,14 @@ def _confirm_update(message: str) -> bool:
 
 def _show_version_info() -> None:
     try:
+        mb_ok = 0x00000000
         mb_icon_info = 0x00000040
+        mb_topmost = 0x00040000
         ctypes.windll.user32.MessageBoxW(
             0,
             f"현재 버전: v{APP_VERSION}",
             "KISDashboard 버전 정보",
-            mb_icon_info,
+            mb_ok | mb_icon_info | mb_topmost,
         )
     except Exception:
         pass

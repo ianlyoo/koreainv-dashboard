@@ -78,7 +78,7 @@ def _pick_domestic_display_price(quote_output: dict, fallback_price: int) -> int
     return after_price or regular_price or fallback_price
 
 
-def get_domestic_quote_price(token, app_key, app_secret, ticker: str) -> int | None:
+def _get_domestic_quote_output(token, app_key, app_secret, ticker: str, market_div_code: str) -> dict | None:
     headers = {
         "content-type": "application/json; charset=utf-8",
         "authorization": f"Bearer {token}",
@@ -87,7 +87,7 @@ def get_domestic_quote_price(token, app_key, app_secret, ticker: str) -> int | N
         "tr_id": "FHKST01010100",
     }
     params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_MRKT_DIV_CODE": market_div_code,
         "FID_INPUT_ISCD": str(ticker).zfill(6),
     }
     url = f"{config.URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
@@ -99,9 +99,23 @@ def get_domestic_quote_price(token, app_key, app_secret, ticker: str) -> int | N
         out = data.get("output") or {}
         if not out:
             return None
-        return _pick_domestic_display_price(out, 0)
+        return out
     except Exception:
         return None
+
+
+def get_domestic_quote_price(token, app_key, app_secret, ticker: str) -> int | None:
+    # Market code: J=KRX, NX=NXT, UN=통합.
+    # For after-hours, prefer NXT/통합 first.
+    market_order = ["J", "UN", "NX"] if _is_kor_regular_session() else ["NX", "UN", "J"]
+    for code in market_order:
+        out = _get_domestic_quote_output(token, app_key, app_secret, ticker, code)
+        if not out:
+            continue
+        price = _pick_domestic_display_price(out, 0)
+        if price > 0:
+            return price
+    return None
 
 def _pick_orderable_value(row: dict, prefer_usd: bool = False):
     # Explicit priority only (no fuzzy matching).
