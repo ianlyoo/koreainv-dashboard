@@ -1,6 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "ICON_PATH=%CD%\app\img\fa82e0f8872e03ff459435036237a46d.ico"
 
 echo ========================================================
 echo Building KISDashboard (Windows OneDir)
@@ -16,7 +17,7 @@ if not exist app\static mkdir app\static
 
 python -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --name KISDashboard ^
-  --icon "app\img\fa82e0f8872e03ff459435036237a46d.ico" ^
+  --icon "%ICON_PATH%" ^
   --add-data "app/templates;app/templates" ^
   --add-data "app/static;app/static" ^
   --add-data "app/img;app/img" ^
@@ -27,7 +28,7 @@ if errorlevel 1 exit /b 1
 
 python -m PyInstaller --noconfirm --clean --windowed --onefile ^
   --name KISDashboardUpdater ^
-  --icon "app\img\fa82e0f8872e03ff459435036237a46d.ico" ^
+  --icon "%ICON_PATH%" ^
   --distpath "dist\KISDashboard" ^
   --workpath "build\updater" ^
   --specpath "build" ^
