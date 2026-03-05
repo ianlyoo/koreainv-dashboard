@@ -1,4 +1,6 @@
-﻿import requests
+﻿from __future__ import annotations
+
+import requests
 import json
 from app import config
 import time
@@ -11,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 def _get_ci(row: dict, wanted_key: str):
+    if not isinstance(row, dict):
+        return None, None
     wanted = str(wanted_key).lower()
     for k, v in row.items():
         if str(k).lower() == wanted:
@@ -139,6 +143,79 @@ def _pick_orderable_value(row: dict, prefer_usd: bool = False):
             if val > 0:
                 return val
     return 0.0
+
+
+def _pick_usd_orderable_from_output2(rows: list):
+    # Follow official overseas balance field semantics:
+    # prefer "frcr_use_psbl_amt" (외화사용가능금액) first, then known orderable fields.
+    usd_candidates = [
+        "frcr_use_psbl_amt",
+        "frcr_ord_psbl_amt1",
+        "frcr_ord_psbl_amt2",
+        "frcr_ord_psbl_amt",
+        "ord_psbl_frcr_amt",
+        "ovrs_ord_psbl_amt",
+        "frcr_drwg_psbl_amt_1",
+        "frcr_drwg_psbl_amt1",
+        "ord_psbl_amt",
+    ]
+    exrt = 0.0
+    usd_rows = []
+
+    for idx, row in enumerate(rows or []):
+        if not isinstance(row, dict):
+            continue
+        crcy = str(row.get("crcy_cd", "")).strip().upper()
+        if crcy != "USD":
+            continue
+
+        usd_rows.append((idx, row))
+
+        if exrt <= 0:
+            exrt = _to_float(
+                row.get("bass_exrt")
+                or row.get("frst_bltn_exrt")
+                or 0.0
+            )
+
+    if not usd_rows:
+        return 0.0, exrt, "none"
+
+    for key in usd_candidates:
+        matches = []
+        for idx, row in usd_rows:
+            raw, actual = _get_ci(row, key)
+            if actual is None:
+                continue
+            value = _to_float(raw)
+            if value > 0:
+                matches.append((value, f"output2[{idx}].{actual}"))
+        if matches:
+            # Same key may appear in multiple USD rows; pick largest available amount.
+            matches.sort(key=lambda x: x[0], reverse=True)
+            return matches[0][0], exrt, matches[0][1]
+
+    return 0.0, exrt, "none"
+
+
+def _pick_usd_orderable_from_output3(summary_row: dict):
+    if not isinstance(summary_row, dict):
+        return 0.0, "none"
+
+    candidates = [
+        "frcr_use_psbl_amt",
+        "frcr_ord_psbl_amt1",
+        "ord_psbl_frcr_amt",
+        "ovrs_ord_psbl_amt",
+    ]
+    for key in candidates:
+        raw, actual = _get_ci(summary_row, key)
+        if actual is None:
+            continue
+        value = _to_float(raw)
+        if value > 0:
+            return value, f"output3.{actual}"
+    return 0.0, "none"
 
 def _pick_domestic_orderable_cash(summary: dict):
     # Strict KRW orderable fields only.
@@ -348,6 +425,46 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
     url = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-present-balance"
     
     result = {"us_summary": {}, "us_items": [], "jp_items": []}
+
+    def _get_overseas_orderable_usd():
+        headers_ps = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {token}",
+            "appkey": app_key,
+            "appsecret": app_secret,
+            "tr_id": "TTTS3007R",
+        }
+        url_ps = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-psamount"
+        # OVRS_ORD_UNPR accepts integer-like string (e.g. "1") and still returns account-level buying power.
+        tries = [
+            ("NASD", "QQQ", "1"),
+            ("NYSE", "KO", "1"),
+        ]
+        for exch, item, unpr in tries:
+            params_ps = {
+                "CANO": cano,
+                "ACNT_PRDT_CD": acnt_prdt_cd,
+                "OVRS_EXCG_CD": exch,
+                "OVRS_ORD_UNPR": unpr,
+                "ITEM_CD": item,
+            }
+            try:
+                rr = requests.get(url_ps, headers=headers_ps, params=params_ps, timeout=8)
+                if rr.status_code != 200:
+                    continue
+                body = rr.json()
+                if str(body.get("rt_cd")) != "0":
+                    continue
+                out = body.get("output") or {}
+                ovrs_amt = _to_float(out.get("ovrs_ord_psbl_amt"))
+                if ovrs_amt > 0:
+                    return ovrs_amt, "inquire-psamount.ovrs_ord_psbl_amt"
+                ord_psbl = _to_float(out.get("ord_psbl_frcr_amt"))
+                if ord_psbl > 0:
+                    return ord_psbl, "inquire-psamount.ord_psbl_frcr_amt"
+            except Exception:
+                continue
+        return 0.0, "none"
     
     # 1. ?명솕 湲곗? (02) 濡?醫낅ぉ ?뺣낫 媛?몄삤湲?
     params_us_foreign = {
@@ -389,18 +506,25 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                     
                     usd_cash = 0.0
                     usd_exrt = 0.0
+                    usd_cash_key = "none"
                     if "output2" in data:
-                        for row in data["output2"]:
-                            crcy = str(row.get("crcy_cd", "")).strip().upper()
-                            if crcy == "USD":
-                                # Strict: use orderable USD cash only.
-                                usd_cash = _pick_orderable_value(row, prefer_usd=True)
-                                usd_exrt = _to_float(
-                                    row.get("bass_exrt")
-                                    or row.get("frst_bltn_exrt")
-                                    or 0.0
-                                )
-                                break
+                        usd_cash, usd_exrt, usd_cash_key = _pick_usd_orderable_from_output2(data["output2"])
+                    if usd_cash <= 0:
+                        fallback_cash, fallback_key = _pick_usd_orderable_from_output3(out3)
+                        if fallback_cash > 0:
+                            usd_cash = fallback_cash
+                            usd_cash_key = fallback_key
+
+                    ps_cash, ps_key = _get_overseas_orderable_usd()
+                    if ps_cash > 0:
+                        usd_cash = ps_cash
+                        usd_cash_key = ps_key
+
+                    logger.info(
+                        "Overseas USD cash selected: key=%s, value=%s",
+                        usd_cash_key,
+                        usd_cash,
+                    )
                     
                     result["us_summary"] = {
                         "krw_purchase_amt": _to_float(out3.get("pchs_amt_smtl_amt", 0)),
@@ -450,4 +574,3 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
     # 3. (??젣?? ?먰솕 珥앺빀怨꾨뒗 1踰??몄텧??output3?먯꽌 媛?몄샂
                     
     return result
-

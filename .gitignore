@@ -29,3 +29,4 @@ index_backup.html
 build/
 dist/
 *.spec
+*.app/

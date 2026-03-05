@@ -198,19 +198,28 @@ async def sync_data(request: Request):
     session = active_sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        token = api_client.get_access_token(session.app_key, session.app_secret)
+        if not token:
+            raise HTTPException(status_code=500, detail="Failed to get access token from API")
 
-    token = api_client.get_access_token(session.app_key, session.app_secret)
-    if not token:
-        raise HTTPException(status_code=500, detail="Failed to get access token from API")
-        
-    domestic = api_client.get_domestic_balance(token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd)
-    overseas = api_client.get_overseas_balance(token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd)
-    
-    return {
-        "status": "success",
-        "domestic": domestic,
-        "overseas": overseas
-    }
+        domestic = api_client.get_domestic_balance(
+            token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd
+        )
+        overseas = api_client.get_overseas_balance(
+            token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd
+        )
+
+        return {
+            "status": "success",
+            "domestic": domestic,
+            "overseas": overseas
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("sync_data failed")
+        raise HTTPException(status_code=500, detail="sync_data_failed")
 
 
 
