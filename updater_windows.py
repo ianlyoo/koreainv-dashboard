@@ -95,7 +95,7 @@ def main() -> int:
             zf.extractall(extract_dir)
         _copy_tree(extract_dir, args.install_dir)
 
-    _show_info_message("업데이트가 완료되었습니다.\n앱을 다시 시작합니다.")
+    _show_info_message("업데이트 완료했습니다.\n앱을 다시 시작합니다.")
     _restart_app(args.install_dir, args.restart_exe)
     logger.info("Update completed and app restarted")
     return 0

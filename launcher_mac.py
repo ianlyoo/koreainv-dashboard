@@ -1,9 +1,9 @@
-import atexit
+from __future__ import annotations
+
 import logging
 import os
 import platform
 import re
-import signal
 import socket
 import subprocess
 import sys
@@ -15,6 +15,15 @@ from pathlib import Path
 
 import requests
 import uvicorn
+from AppKit import (
+    NSApp,
+    NSApplication,
+    NSApplicationActivationPolicyRegular,
+    NSMenu,
+    NSMenuItem,
+    NSTerminateNow,
+)
+from Foundation import NSObject
 
 from app import runtime_paths
 from app.version import APP_VERSION
@@ -197,7 +206,6 @@ def _get_app_bundle_path() -> str | None:
         return None
 
     exe = Path(sys.executable).resolve()
-    # .../KISDashboard.app/Contents/MacOS/KISDashboard
     if exe.parent.name != "MacOS":
         return None
 
@@ -299,37 +307,105 @@ def _maybe_run_auto_update(logger: logging.Logger, manual: bool = False) -> bool
     return False
 
 
+class AppDelegate(NSObject):
+    def initWithLogger_(self, logger):
+        self = self.init()
+        if self is None:
+            return None
+        self.logger = logger
+        self.server_thread = None
+        return self
+
+    def applicationDidFinishLaunching_(self, _notification):
+        self._setup_menu()
+        threading.Thread(target=self._startup_worker, daemon=True).start()
+
+    def applicationShouldTerminate_(self, _sender):
+        _shutdown_server()
+        return NSTerminateNow
+
+    def _setup_menu(self):
+        main_menu = NSMenu.alloc().init()
+        app_menu_item = NSMenuItem.alloc().init()
+        main_menu.addItem_(app_menu_item)
+
+        app_menu = NSMenu.alloc().init()
+
+        item_open = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("대시보드 열기", "onOpenDashboard:", "o")
+        item_open.setTarget_(self)
+        app_menu.addItem_(item_open)
+
+        item_version = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("버전 확인", "onVersionInfo:", "v")
+        item_version.setTarget_(self)
+        app_menu.addItem_(item_version)
+
+        item_update = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("업데이트 확인", "onCheckUpdate:", "u")
+        item_update.setTarget_(self)
+        app_menu.addItem_(item_update)
+
+        app_menu.addItem_(NSMenuItem.separatorItem())
+
+        item_quit = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("종료", "onQuit:", "q")
+        item_quit.setTarget_(self)
+        app_menu.addItem_(item_quit)
+
+        app_menu_item.setSubmenu_(app_menu)
+        NSApp.setMainMenu_(main_menu)
+
+    def _startup_worker(self):
+        self.logger.info("Launcher start (version=%s)", APP_VERSION)
+
+        if _maybe_run_auto_update(self.logger, manual=False):
+            NSApp.terminate_(None)
+            return
+
+        if _is_port_in_use(HOST, PORT):
+            self.logger.info("Port %s already in use, opening dashboard only", PORT)
+            webbrowser.open(DASHBOARD_URL)
+            return
+
+        self.server_thread = threading.Thread(target=_run_server, args=(self.logger,), daemon=True)
+        self.server_thread.start()
+
+        if not _wait_until_ready_or_dead(self.server_thread):
+            self.logger.error("Server failed to start or crashed during startup")
+            _show_info_message("서버 실행에 실패했습니다.")
+            NSApp.terminate_(None)
+            return
+
+        webbrowser.open(DASHBOARD_URL)
+
+        def monitor_server():
+            while self.server_thread and self.server_thread.is_alive():
+                time.sleep(0.5)
+            NSApp.terminate_(None)
+
+        threading.Thread(target=monitor_server, daemon=True).start()
+
+    def onOpenDashboard_(self, _sender):
+        webbrowser.open(DASHBOARD_URL)
+
+    def onVersionInfo_(self, _sender):
+        latest = _latest_release_info(self.logger)
+        latest_tag = latest.get("tag_name", "확인 실패") if latest else "확인 실패"
+        _show_info_message(f"현재 버전: v{APP_VERSION}\n최신 버전: {latest_tag}", "KISDashboard 버전")
+
+    def onCheckUpdate_(self, _sender):
+        if _maybe_run_auto_update(self.logger, manual=True):
+            NSApp.terminate_(None)
+
+    def onQuit_(self, _sender):
+        NSApp.terminate_(None)
+
+
 def main() -> int:
     logger = _configure_logging()
-    logger.info("Launcher start (version=%s)", APP_VERSION)
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
 
-    if _maybe_run_auto_update(logger, manual=False):
-        return 0
-
-    if _is_port_in_use(HOST, PORT):
-        logger.info("Port %s already in use, opening dashboard only", PORT)
-        webbrowser.open(DASHBOARD_URL)
-        return 0
-
-    server_thread = threading.Thread(target=_run_server, args=(logger,), daemon=True)
-    server_thread.start()
-
-    if not _wait_until_ready_or_dead(server_thread):
-        logger.error("Server failed to start or crashed during startup")
-        return 1
-
-    webbrowser.open(DASHBOARD_URL)
-
-    atexit.register(_shutdown_server)
-    signal.signal(signal.SIGTERM, _shutdown_server)
-    signal.signal(signal.SIGINT, _shutdown_server)
-
-    try:
-        while server_thread.is_alive():
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        _shutdown_server()
-
+    delegate = AppDelegate.alloc().initWithLogger_(logger)
+    app.setDelegate_(delegate)
+    app.run()
     return 0
 
 

@@ -135,7 +135,7 @@ def main() -> int:
 
             _replace_app(extracted_app, args.app_path, logger)
 
-        _show_info_message("업데이트가 완료되었습니다. 앱을 다시 시작합니다.")
+        _show_info_message("업데이트 완료했습니다. 앱을 다시 시작합니다.")
         _restart_app(args.app_path)
         logger.info("Update completed and app restarted")
         return 0

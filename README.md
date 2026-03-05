@@ -1,6 +1,6 @@
 ﻿# Korea Investment Dashboard
 
-Current release: `v1.2.14`
+Current release: `v1.2.15`
 
 ?쒓뎅?ъ옄利앷텒 API 湲곕컲 媛쒖씤 怨꾩쥖 ??쒕낫?쒖엯?덈떎.
 

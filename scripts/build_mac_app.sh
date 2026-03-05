@@ -10,8 +10,27 @@ APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
 UPDATER_BIN="$DIST_DIR/KISDashboardUpdater"
 ARCH="$(uname -m)"
 ZIP_PATH="$DIST_DIR/${APP_NAME}-mac-${ARCH}.zip"
+ICON_SRC="$PROJECT_DIR/app/img/fa82e0f8872e03ff459435036237a46d.ico"
+ICONSET_DIR="$PROJECT_DIR/build/.tmp_${APP_NAME}.iconset"
+ICON_ICNS="$PROJECT_DIR/build/${APP_NAME}.icns"
 
 mkdir -p app/static
+mkdir -p "$PROJECT_DIR/build"
+
+if [ ! -f "$ICON_SRC" ]; then
+  echo "[ERROR] Missing icon source: $ICON_SRC" >&2
+  exit 1
+fi
+
+rm -rf "$ICONSET_DIR"
+mkdir -p "$ICONSET_DIR"
+sips -s format png "$ICON_SRC" --out "$ICONSET_DIR/base.png" >/dev/null
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$ICONSET_DIR/base.png" --out "$ICONSET_DIR/icon_${size}x${size}.png" >/dev/null
+  retina=$((size * 2))
+  sips -z "$retina" "$retina" "$ICONSET_DIR/base.png" --out "$ICONSET_DIR/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET_DIR" -o "$ICON_ICNS"
 
 echo "========================================================"
 echo "Building ${APP_NAME} (macOS PyInstaller)"
@@ -32,6 +51,7 @@ fi
 
 python3 -m PyInstaller --noconfirm --clean --windowed \
   --name "$APP_NAME" \
+  --icon "$ICON_ICNS" \
   --add-data "app/templates:app/templates" \
   --add-data "app/static:app/static" \
   --add-data "app/img:app/img" \
@@ -52,6 +72,7 @@ codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
 rm -f "$ZIP_PATH"
 ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+rm -rf "$ICONSET_DIR"
 
 echo
 echo "Build complete:"

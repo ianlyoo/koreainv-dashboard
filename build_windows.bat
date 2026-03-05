@@ -16,6 +16,7 @@ if not exist app\static mkdir app\static
 
 python -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --name KISDashboard ^
+  --icon "app\img\fa82e0f8872e03ff459435036237a46d.ico" ^
   --add-data "app/templates;app/templates" ^
   --add-data "app/static;app/static" ^
   --add-data "app/img;app/img" ^
@@ -26,6 +27,7 @@ if errorlevel 1 exit /b 1
 
 python -m PyInstaller --noconfirm --clean --windowed --onefile ^
   --name KISDashboardUpdater ^
+  --icon "app\img\fa82e0f8872e03ff459435036237a46d.ico" ^
   --distpath "dist\KISDashboard" ^
   --workpath "build\updater" ^
   --specpath "build" ^
