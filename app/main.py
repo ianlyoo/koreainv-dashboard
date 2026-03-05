@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import FastAPI, HTTPException, Request, Response, Depends, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -80,13 +82,27 @@ async def read_root(request: Request):
         return RedirectResponse(url="/login")
         
     with open(os.path.join(BASE_DIR, "templates", "index.html"), "r", encoding="utf-8") as f:
-        return f.read()
+        return HTMLResponse(
+            content=f.read(),
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
 @app.get("/login", response_class=HTMLResponse)
 async def read_login():
     try:
         with open(os.path.join(BASE_DIR, "templates", "login.html"), "r", encoding="utf-8") as f:
-            return f.read()
+            return HTMLResponse(
+                content=f.read(),
+                headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
     except FileNotFoundError:
         return HTMLResponse(content="<h1>Login Page Needs to be created</h1>", status_code=404)
 
@@ -589,34 +605,127 @@ async def get_asset_insight(ticker: str, market_type: str = "USA"):
         try:
             opts = tc.options
             if opts:
+                def _sum_metric(df, col: str) -> int:
+                    if df is None or df.empty or col not in df.columns:
+                        return 0
+                    try:
+                        return int(df[col].fillna(0).clip(lower=0).sum())
+                    except Exception:
+                        return 0
+
+                OI_TRUST_MIN = 100
                 nearest_date = opts[0]
                 chain = tc.option_chain(nearest_date)
-                
-                # We must cast numpy data types to standard Python ints for JSON serialization
-                calls_vol = int(chain.calls['volume'].sum()) if 'volume' in chain.calls else 0
-                calls_oi = int(chain.calls['openInterest'].sum()) if 'openInterest' in chain.calls else 0
-                puts_vol = int(chain.puts['volume'].sum()) if 'volume' in chain.puts else 0
-                puts_oi = int(chain.puts['openInterest'].sum()) if 'openInterest' in chain.puts else 0
-                
+                calls_vol = _sum_metric(getattr(chain, "calls", None), "volume")
+                puts_vol = _sum_metric(getattr(chain, "puts", None), "volume")
+                calls_oi = _sum_metric(getattr(chain, "calls", None), "openInterest")
+                puts_oi = _sum_metric(getattr(chain, "puts", None), "openInterest")
+
                 # Additional metrics
                 import numpy as np
-                max_call_oi_strike = float(chain.calls.loc[chain.calls['openInterest'].idxmax()]['strike']) if not chain.calls.empty and 'openInterest' in chain.calls and not chain.calls['openInterest'].isnull().all() else 0
-                max_put_oi_strike = float(chain.puts.loc[chain.puts['openInterest'].idxmax()]['strike']) if not chain.puts.empty and 'openInterest' in chain.puts and not chain.puts['openInterest'].isnull().all() else 0
-                
-                # Max Pain Calculation
+                price_ref = float(current_price or 0) if current_price else 0.0
+                # Short-term options view should focus near spot and recent activity.
+                low_band = price_ref * 0.85 if price_ref > 0 else 0.0
+                high_band = price_ref * 1.15 if price_ref > 0 else float("inf")
+                recent_cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=45)
+                STRIKE_NEAR_LIMIT = 24
+
+                def _prepare_filtered(df, side: str):
+                    if df is None or df.empty:
+                        return df
+                    work = df.copy()
+                    if "strike" not in work.columns:
+                        return work
+                    if "openInterest" not in work.columns:
+                        work["openInterest"] = 0
+                    if "volume" not in work.columns:
+                        work["volume"] = 0
+                    work["strike"] = work["strike"].fillna(0)
+                    work["openInterest"] = work["openInterest"].fillna(0).clip(lower=0)
+                    work["volume"] = work["volume"].fillna(0).clip(lower=0)
+
+                    # Remove stale contracts when last trade is too old.
+                    if "lastTradeDate" in work.columns:
+                        try:
+                            last_trade = work["lastTradeDate"]
+                            dt = last_trade
+                            if getattr(last_trade, "dt", None) is None:
+                                import pandas as pd
+                                dt = pd.to_datetime(last_trade, utc=True, errors="coerce")
+                            recent = work[(dt.isna()) | (dt >= recent_cutoff)]
+                            if not recent.empty and (float(recent["openInterest"].sum()) > 0 or float(recent["volume"].sum()) > 0):
+                                work = recent
+                        except Exception:
+                            pass
+
+                    if price_ref > 0:
+                        # Near-spot band
+                        near = work[(work["strike"] >= low_band) & (work["strike"] <= high_band)]
+                        if not near.empty and (float(near["openInterest"].sum()) > 0 or float(near["volume"].sum()) > 0):
+                            work = near
+
+                        # Directional filter for intuitive short-term support/resistance:
+                        # calls: at/above spot, puts: at/below spot.
+                        if side == "call":
+                            directional = work[work["strike"] >= price_ref]
+                        else:
+                            directional = work[work["strike"] <= price_ref]
+
+                        if not near.empty and (float(near["openInterest"].sum()) > 0 or float(near["volume"].sum()) > 0):
+                            chosen = directional if (not directional.empty and (float(directional["openInterest"].sum()) > 0 or float(directional["volume"].sum()) > 0)) else work
+                            # Keep only nearest strikes to spot to avoid far-tail distortions.
+                            chosen = chosen.assign(_dist=(chosen["strike"] - price_ref).abs())
+                            chosen = chosen.sort_values("_dist", ascending=True).head(STRIKE_NEAR_LIMIT).drop(columns=["_dist"])
+                            return chosen
+                    return work
+
+                calls_for_metrics = _prepare_filtered(chain.calls, "call")
+                puts_for_metrics = _prepare_filtered(chain.puts, "put")
+
+                def _max_strike_by_metric(df, prefer_oi: bool):
+                    if df is None or df.empty or "strike" not in df.columns:
+                        return 0
+                    work = df.copy()
+                    if "openInterest" not in work.columns:
+                        work["openInterest"] = 0
+                    if "volume" not in work.columns:
+                        work["volume"] = 0
+                    work["openInterest"] = work["openInterest"].fillna(0).clip(lower=0)
+                    work["volume"] = work["volume"].fillna(0).clip(lower=0)
+
+                    metric = work["openInterest"] if prefer_oi else work["volume"]
+                    if float(metric.sum()) <= 0:
+                        # Fallback to the other metric if preferred one is unavailable.
+                        metric = work["volume"]
+                        if not prefer_oi:
+                            metric = work["openInterest"] if float(work["openInterest"].sum()) > 0 else work["volume"]
+                    if float(metric.sum()) <= 0:
+                        return 0
+
+                    idx = metric.idxmax()
+                    return float(work.loc[idx]["strike"])
+
+                oi_reliable = calls_oi >= OI_TRUST_MIN and puts_oi >= OI_TRUST_MIN
+                max_call_oi_strike = _max_strike_by_metric(calls_for_metrics, prefer_oi=oi_reliable)
+                max_put_oi_strike = _max_strike_by_metric(puts_for_metrics, prefer_oi=oi_reliable)
+                strike_basis = "OI" if oi_reliable else "Volume"
+
+                # Max Pain Calculation (use OI-based pain only when OI exists)
                 max_pain = 0
-                call_strikes = chain.calls['strike'].values if not chain.calls.empty else []
-                put_strikes = chain.puts['strike'].values if not chain.puts.empty else []
+                call_strikes = calls_for_metrics["strike"].values if calls_for_metrics is not None and not calls_for_metrics.empty and "strike" in calls_for_metrics.columns else []
+                put_strikes = puts_for_metrics["strike"].values if puts_for_metrics is not None and not puts_for_metrics.empty and "strike" in puts_for_metrics.columns else []
                 strikes = np.unique(np.concatenate((call_strikes, put_strikes)))
-                
-                if len(strikes) > 0:
-                    min_loss = float('inf')
+
+                if len(strikes) > 0 and oi_reliable:
+                    calls_oi_series = calls_for_metrics["openInterest"].fillna(0).clip(lower=0) if calls_for_metrics is not None and "openInterest" in calls_for_metrics.columns else 0
+                    puts_oi_series = puts_for_metrics["openInterest"].fillna(0).clip(lower=0) if puts_for_metrics is not None and "openInterest" in puts_for_metrics.columns else 0
+                    min_loss = float("inf")
                     for strike in strikes:
-                        loss = 0
-                        if not chain.calls.empty:
-                            loss += ((chain.calls['strike'] < strike) * (strike - chain.calls['strike']) * chain.calls['openInterest']).sum()
-                        if not chain.puts.empty:
-                            loss += ((chain.puts['strike'] > strike) * (chain.puts['strike'] - strike) * chain.puts['openInterest']).sum()
+                        loss = 0.0
+                        if calls_for_metrics is not None and not calls_for_metrics.empty and "strike" in calls_for_metrics.columns and "openInterest" in calls_for_metrics.columns:
+                            loss += ((calls_for_metrics["strike"] < strike) * (strike - calls_for_metrics["strike"]) * calls_oi_series).sum()
+                        if puts_for_metrics is not None and not puts_for_metrics.empty and "strike" in puts_for_metrics.columns and "openInterest" in puts_for_metrics.columns:
+                            loss += ((puts_for_metrics["strike"] > strike) * (puts_for_metrics["strike"] - strike) * puts_oi_series).sum()
                         if loss < min_loss:
                             min_loss = loss
                             max_pain = float(strike)
@@ -632,16 +741,29 @@ async def get_asset_insight(ticker: str, market_type: str = "USA"):
                 except:
                     pass
                 
+                pcr_volume = round(puts_vol / calls_vol, 2) if calls_vol > 0 else (None if puts_vol == 0 else "High")
+                pcr_oi = round(puts_oi / calls_oi, 2) if calls_oi > 0 else (None if puts_oi == 0 else "High")
+                pcr_basis = "OI" if oi_reliable else "Volume"
+                pcr = pcr_oi if pcr_basis == "OI" else pcr_volume
+                oi_available = (calls_oi + puts_oi) > 0
+
                 options_data = {
                     "date": nearest_date,
                     "calls_volume": calls_vol,
                     "calls_oi": calls_oi,
                     "puts_volume": puts_vol,
                     "puts_oi": puts_oi,
+                    "oi_available": oi_available,
                     "max_pain": max_pain,
                     "max_call_oi_strike": max_call_oi_strike,
                     "max_put_oi_strike": max_put_oi_strike,
-                    "atm_iv": atm_iv
+                    "strike_basis": strike_basis,
+                    "oi_reliable": oi_reliable,
+                    "atm_iv": atm_iv,
+                    "pcr": pcr,
+                    "pcr_basis": pcr_basis,
+                    "pcr_oi": pcr_oi,
+                    "pcr_volume": pcr_volume,
                 }
         except Exception as e:
             print(f"Options parsing error: {e}")

@@ -2455,8 +2455,21 @@
                         const total = callVol + putVol;
                         const callPct = total > 0 ? Math.round((callVol / total) * 100) : 50;
                         const putPct = total > 0 ? 100 - callPct : 50;
-                        const pcr = callVol > 0 ? (putVol / callVol).toFixed(2) : (putVol > 0 ? 'High' : 'N/A');
+                        const pcrRaw = opt.pcr;
+                        const pcr = Number.isFinite(pcrRaw) ? Number(pcrRaw).toFixed(2) : (pcrRaw === 'High' ? 'High' : 'N/A');
+                        const pcrBasis = opt.pcr_basis || 'Volume';
+                        const callsOiNum = Number(opt.calls_oi || 0);
+                        const putsOiNum = Number(opt.puts_oi || 0);
+                        const oiAvailable = opt.oi_available === true || (callsOiNum + putsOiNum) > 0;
+                        const inferredStrikeBasis = (callsOiNum > 0 && putsOiNum > 0) ? 'OI' : 'Volume';
+                        const strikeBasis = opt.strike_basis || inferredStrikeBasis;
                         const ivText = opt.atm_iv ? opt.atm_iv + '%' : 'N/A';
+                        const strikePrefix = fin.currency ? `${fin.currency} ` : '';
+                        const maxCallLabel = strikeBasis === 'OI' ? 'Max OI Call' : 'Max Vol Call';
+                        const maxPutLabel = strikeBasis === 'OI' ? 'Max OI Put' : 'Max Vol Put';
+                        const oiCallText = oiAvailable ? `${formatNumber(opt.calls_oi)}계약` : '데이터 미제공';
+                        const oiPutText = oiAvailable ? `${formatNumber(opt.puts_oi)}계약` : '데이터 미제공';
+                        const oiHint = oiAvailable ? '' : `<div style="font-size:10px; color:var(--text-muted); margin-top:6px; text-align:right;">OI 데이터 미제공 (공급원 기준)</div>`;
 
                         optHtml = `
                             <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 18px;">
@@ -2473,9 +2486,9 @@
                                 
                                 <div>
                                     <div style="display:flex; justify-content:space-between; font-size:12px; font-weight: 500; margin-bottom:6px;">
-                                        <span style="color:var(--profit);">콜 ${callPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(callVol)})</span></span>
-                                        <span style="font-size:11px; color:var(--text-muted);">PCR ${pcr}</span>
-                                        <span style="color:var(--loss);">풋 ${putPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(putVol)})</span></span>
+                                        <span style="color:var(--profit);">콜 ${callPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(callVol)}계약)</span></span>
+                                        <span style="font-size:11px; color:var(--text-muted);">PCR(${pcrBasis}) ${pcr}</span>
+                                        <span style="color:var(--loss);">풋 ${putPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(putVol)}계약)</span></span>
                                     </div>
                                     <div style="width:100%; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; display:flex; overflow:hidden;">
                                         <div style="width:${callPct}%; background:var(--profit);"></div>
@@ -2486,26 +2499,27 @@
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
                                     <div>
                                         <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Call)</div>
-                                        <div style="font-size:14px; font-weight:700; color:#fff;">${formatNumber(opt.calls_oi)}</div>
+                                        <div style="font-size:14px; font-weight:700; color:#fff;">${oiCallText}</div>
                                     </div>
                                     <div style="text-align:right;">
                                         <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Put)</div>
-                                        <div style="font-size:14px; font-weight:700; color:#fff;">${formatNumber(opt.puts_oi)}</div>
+                                        <div style="font-size:14px; font-weight:700; color:#fff;">${oiPutText}</div>
                                     </div>
                                 </div>
+                                ${oiHint}
 
                                 <div style="display:flex; flex-direction: column; gap:6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <div style="font-size:11px; color:var(--text-muted);">Max Pain</div>
-                                        <div style="font-size:13px; font-weight:700; color:#eab308;">${opt.max_pain ? '$' + formatNumber(opt.max_pain) : 'N/A'}</div>
+                                        <div style="font-size:13px; font-weight:700; color:#eab308;">${opt.max_pain ? strikePrefix + formatNumber(opt.max_pain) : 'N/A'}</div>
                                     </div>
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div style="font-size:11px; color:var(--text-muted);">Max OI Call</div>
-                                        <div style="font-size:13px; font-weight:700; color:var(--profit);">${opt.max_call_oi_strike ? '$' + formatNumber(opt.max_call_oi_strike) : 'N/A'}</div>
+                                        <div style="font-size:11px; color:var(--text-muted);">${maxCallLabel}</div>
+                                        <div style="font-size:13px; font-weight:700; color:var(--profit);">${opt.max_call_oi_strike ? strikePrefix + formatNumber(opt.max_call_oi_strike) : 'N/A'}</div>
                                     </div>
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div style="font-size:11px; color:var(--text-muted);">Max OI Put</div>
-                                        <div style="font-size:13px; font-weight:700; color:var(--loss);">${opt.max_put_oi_strike ? '$' + formatNumber(opt.max_put_oi_strike) : 'N/A'}</div>
+                                        <div style="font-size:11px; color:var(--text-muted);">${maxPutLabel}</div>
+                                        <div style="font-size:13px; font-weight:700; color:var(--loss);">${opt.max_put_oi_strike ? strikePrefix + formatNumber(opt.max_put_oi_strike) : 'N/A'}</div>
                                     </div>
                                 </div>
                             </div>
