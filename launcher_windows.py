@@ -154,23 +154,39 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
             time.sleep(0.5)
         return
 
+    def run_deferred(action, delay_seconds: float = 0.15) -> None:
+        def worker():
+            time.sleep(delay_seconds)
+            try:
+                action()
+            except Exception:
+                logger.exception("Tray action failed")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def on_open(icon, item):
-        webbrowser.open(DASHBOARD_URL)
+        run_deferred(lambda: webbrowser.open(DASHBOARD_URL), delay_seconds=0.05)
 
     def on_version(icon, item):
-        release = _latest_release_info(logger)
-        latest_tag = release.get("tag_name", "확인 실패") if release else "확인 실패"
-        policy = _update_policy(release) if release else "unknown"
-        policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
-        _show_info_message(
-            f"현재 버전: {_display_version(APP_VERSION)}\n최신 버전: {_display_version(latest_tag)}\n업데이트 정책: {policy_text}",
-            "KISDashboard 버전 정보",
-        )
+        def show_version_dialog():
+            release = _latest_release_info(logger)
+            latest_tag = release.get("tag_name", "확인 실패") if release else "확인 실패"
+            policy = _update_policy(release) if release else "unknown"
+            policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
+            _show_info_message(
+                f"현재 버전: {_display_version(APP_VERSION)}\n최신 버전: {_display_version(latest_tag)}\n업데이트 정책: {policy_text}",
+                "KISDashboard 버전 정보",
+            )
+
+        run_deferred(show_version_dialog)
 
     def on_check_update(icon, item):
-        if _maybe_run_auto_update(logger, manual=True):
-            _shutdown_server()
-            icon.stop()
+        def start_manual_update():
+            if _maybe_run_auto_update(logger, manual=True):
+                _shutdown_server()
+                icon.stop()
+
+        run_deferred(start_manual_update)
 
     def on_exit(icon, item):
         logger.info("Tray exit requested")
@@ -210,7 +226,14 @@ def _confirm_update(message: str) -> bool:
     try:
         mb_yesno = 0x00000004
         mb_icon_question = 0x00000020
-        res = ctypes.windll.user32.MessageBoxW(0, message, "KISDashboard 업데이트", mb_yesno | mb_icon_question)
+        mb_topmost = 0x00040000
+        mb_setforeground = 0x00010000
+        res = ctypes.windll.user32.MessageBoxW(
+            0,
+            message,
+            "KISDashboard 업데이트",
+            mb_yesno | mb_icon_question | mb_topmost | mb_setforeground,
+        )
         return res == 6  # IDYES
     except Exception:
         return False
@@ -236,7 +259,8 @@ def _show_info_message(text: str, title: str = "KISDashboard") -> None:
         mb_ok = 0x00000000
         mb_icon_info = 0x00000040
         mb_topmost = 0x00040000
-        ctypes.windll.user32.MessageBoxW(0, text, title, mb_ok | mb_icon_info | mb_topmost)
+        mb_setforeground = 0x00010000
+        ctypes.windll.user32.MessageBoxW(0, text, title, mb_ok | mb_icon_info | mb_topmost | mb_setforeground)
     except Exception:
         pass
 
