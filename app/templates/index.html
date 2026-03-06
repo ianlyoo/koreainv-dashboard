@@ -491,20 +491,32 @@
         .profit-month-nav button {
             width: 24px;
             height: 24px;
-            border-radius: 999px;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            background: rgba(255, 255, 255, 0.06);
-            color: #fff;
+            padding: 0;
+            border: none;
+            background: transparent;
+            color: inherit;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            transition: background 0.18s ease, border-color 0.18s ease, opacity 0.18s ease;
+            appearance: none;
+            -webkit-appearance: none;
         }
 
-        .profit-month-nav button:hover:not(:disabled) {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.2);
+        .profit-month-nav button span {
+            display: inline-block;
+            color: rgba(255, 255, 255, 0.88);
+            transition: color 0.18s ease, opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .profit-month-nav button:hover:not(:disabled) span,
+        .profit-month-nav button:focus-visible:not(:disabled) span {
+            color: #fff;
+            transform: translateY(-1px);
+        }
+
+        .profit-month-nav button:focus-visible {
+            outline: none;
         }
 
         .profit-month-nav button:disabled {
@@ -1877,9 +1889,9 @@
                                 실현 손익
                                 <span class="summary-label-spacer"></span>
                                 <div class="profit-month-nav" onclick="event.stopPropagation()">
-                                    <button type="button" id="realizedProfitPrevMonthBtn" onclick="changeRealizedProfitMonth(-1, event)" aria-label="이전 월">◀</button>
+                                    <button type="button" id="realizedProfitPrevMonthBtn" onclick="changeRealizedProfitMonth(-1, event)" aria-label="이전 월"><span aria-hidden="true">◀</span></button>
                                     <span class="profit-month-label" id="val_realized_profit_month_label">2026.03</span>
-                                    <button type="button" id="realizedProfitNextMonthBtn" onclick="changeRealizedProfitMonth(1, event)" aria-label="다음 월">▶</button>
+                                    <button type="button" id="realizedProfitNextMonthBtn" onclick="changeRealizedProfitMonth(1, event)" aria-label="다음 월"><span aria-hidden="true">▶</span></button>
                                 </div>
                             </div>
                             <div class="summary-value" id="val_realized_profit_month">조회 중...</div>
