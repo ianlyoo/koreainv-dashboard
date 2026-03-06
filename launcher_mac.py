@@ -34,6 +34,14 @@ HEALTH_ENDPOINT = f"http://{HOST}:{PORT}/api/status"
 DASHBOARD_URL = f"http://{HOST}:{PORT}"
 RELEASE_REPO = os.getenv("UPDATE_REPO", "ianlyoo/koreainv-dashboard")
 CHECK_UPDATE_ON_START = os.getenv("CHECK_UPDATE_ON_START", "true").lower() == "true"
+MANDATORY_POLICY_TOKENS = (
+    "[mandatory-update]",
+    "mandatory-update",
+    "update_policy: mandatory",
+    "업데이트정책:필수",
+    "업데이트 정책: 필수",
+    "필수 업데이트",
+)
 
 _server = None
 
@@ -141,6 +149,16 @@ def _latest_release_info(logger: logging.Logger) -> dict | None:
     except Exception as e:
         logger.warning("Update check failed: %s", e)
         return None
+
+
+def _update_policy(release: dict) -> str:
+    body = str(release.get("body") or "").lower()
+    compact = re.sub(r"\s+", "", body)
+    for token in MANDATORY_POLICY_TOKENS:
+        token_l = token.lower()
+        if token_l in body or re.sub(r"\s+", "", token_l) in compact:
+            return "mandatory"
+    return "recommended"
 
 
 def _mac_arch_tokens() -> set[str]:
@@ -283,10 +301,20 @@ def _maybe_run_auto_update(logger: logging.Logger, manual: bool = False) -> bool
             _show_info_message(f"이미 최신 버전입니다. (v{APP_VERSION})")
         return False
 
-    msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
-    if not _confirm_update(msg):
-        logger.info("Update declined by user.")
+    policy = _update_policy(release)
+    is_mandatory = policy == "mandatory"
+
+    if not manual and not is_mandatory:
+        logger.info("Recommended update %s available, skipping auto prompt.", latest_tag)
         return False
+
+    if not is_mandatory:
+        msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
+        if not _confirm_update(msg):
+            logger.info("Update declined by user.")
+            return False
+    else:
+        _show_info_message(f"필수 업데이트(v{latest_tag})를 적용합니다.", "KISDashboard 업데이트")
 
     asset = _find_mac_zip_asset(release)
     if not asset:
@@ -388,7 +416,12 @@ class AppDelegate(NSObject):
     def onVersionInfo_(self, _sender):
         latest = _latest_release_info(self.logger)
         latest_tag = latest.get("tag_name", "확인 실패") if latest else "확인 실패"
-        _show_info_message(f"현재 버전: v{APP_VERSION}\n최신 버전: {latest_tag}", "KISDashboard 버전")
+        policy = _update_policy(latest) if latest else "unknown"
+        policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
+        _show_info_message(
+            f"현재 버전: v{APP_VERSION}\n최신 버전: {latest_tag}\n업데이트 정책: {policy_text}",
+            "KISDashboard 버전",
+        )
 
     def onCheckUpdate_(self, _sender):
         if _maybe_run_auto_update(self.logger, manual=True):

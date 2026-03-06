@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-import zipfile
 from pathlib import Path
 
 APP_NAME = "KISDashboard"
@@ -124,8 +123,12 @@ def main() -> int:
             extract_dir = os.path.join(tmp, "extract")
             os.makedirs(extract_dir, exist_ok=True)
 
-            with zipfile.ZipFile(args.zip_path, "r") as zf:
-                zf.extractall(extract_dir)
+            # Use ditto to preserve symlinks and app bundle metadata.
+            # Python's zipfile can flatten symlinks into plain files, which corrupts .app frameworks.
+            subprocess.run(
+                ["ditto", "-x", "-k", args.zip_path, extract_dir],
+                check=True,
+            )
 
             extracted_app = _find_extracted_app(extract_dir)
             if not extracted_app:

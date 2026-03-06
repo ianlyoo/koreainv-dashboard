@@ -1,6 +1,6 @@
 # Korea Investment Dashboard
 
-Current release: `v1.2.16`
+Current release: `v1.2.17`
 
 한국투자증권 API 기반 개인 계좌 대시보드입니다.  
 설치 후 실행하면 로컬에서 대시보드가 열리고, 계좌/종목 데이터를 한 화면에서 확인할 수 있습니다.
@@ -22,10 +22,16 @@ Current release: `v1.2.16`
   - 로그아웃 시 기기 내 API/PIN 설정 초기화
 - 자동 업데이트:
   - 실행 시 최신 릴리스 확인
+  - 릴리스 본문에 `mandatory-update`(또는 `update_policy: mandatory`, `필수 업데이트`)를 포함하면 필수 업데이트로 동작
+  - 필수 업데이트: 앱 시작 시 OS 관계없이 즉시 업데이트(건너뛰기 불가)
+  - 권장 업데이트(기본값): 앱 시작 시 팝업 없음, 앱 메뉴 `업데이트 확인`에서만 선택 가능
   - 업데이트 완료 후 `업데이트 완료했습니다. 앱을 다시 시작합니다.` 안내
 - 버전 확인:
   - Windows 트레이 메뉴 `버전 확인`
   - macOS Dock 앱 메뉴 `버전 확인`
+- 수동 업데이트 확인:
+  - Windows 트레이 메뉴 `업데이트 확인`
+  - macOS Dock 앱 메뉴 `업데이트 확인`
 
 ## 다운로드 및 설치
 
@@ -91,6 +97,6 @@ build_windows.bat
 ```
 
 ```bash
-git tag v1.2.16
-git push origin v1.2.16
+git tag v1.2.17
+git push origin v1.2.17
 ```

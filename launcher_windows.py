@@ -1,4 +1,6 @@
-﻿import atexit
+﻿from __future__ import annotations
+
+import atexit
 import ctypes
 import logging
 import os
@@ -27,6 +29,14 @@ HEALTH_ENDPOINT = f"http://{HOST}:{PORT}/api/status"
 DASHBOARD_URL = f"http://{HOST}:{PORT}"
 RELEASE_REPO = os.getenv("UPDATE_REPO", "ianlyoo/koreainv-dashboard")
 CHECK_UPDATE_ON_START = os.getenv("CHECK_UPDATE_ON_START", "true").lower() == "true"
+MANDATORY_POLICY_TOKENS = (
+    "[mandatory-update]",
+    "mandatory-update",
+    "update_policy: mandatory",
+    "업데이트정책:필수",
+    "업데이트 정책: 필수",
+    "필수 업데이트",
+)
 
 _server = None
 
@@ -140,7 +150,19 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
         webbrowser.open(DASHBOARD_URL)
 
     def on_version(icon, item):
-        _show_version_info()
+        release = _latest_release_info(logger)
+        latest_tag = release.get("tag_name", "확인 실패") if release else "확인 실패"
+        policy = _update_policy(release) if release else "unknown"
+        policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
+        _show_info_message(
+            f"현재 버전: v{APP_VERSION}\n최신 버전: {latest_tag}\n업데이트 정책: {policy_text}",
+            "KISDashboard 버전 정보",
+        )
+
+    def on_check_update(icon, item):
+        if _maybe_run_auto_update(logger, manual=True):
+            _shutdown_server()
+            icon.stop()
 
     def on_exit(icon, item):
         logger.info("Tray exit requested")
@@ -150,6 +172,7 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
     menu = pystray.Menu(
         pystray.MenuItem("대시보드 열기", on_open, default=True),
         pystray.MenuItem("버전 확인", on_version),
+        pystray.MenuItem("업데이트 확인", on_check_update),
         pystray.MenuItem("종료", on_exit),
     )
     icon = pystray.Icon("KISDashboard", tray_image, "KISDashboard", menu)
@@ -200,6 +223,16 @@ def _show_version_info() -> None:
         pass
 
 
+def _show_info_message(text: str, title: str = "KISDashboard") -> None:
+    try:
+        mb_ok = 0x00000000
+        mb_icon_info = 0x00000040
+        mb_topmost = 0x00040000
+        ctypes.windll.user32.MessageBoxW(0, text, title, mb_ok | mb_icon_info | mb_topmost)
+    except Exception:
+        pass
+
+
 def _latest_release_info(logger: logging.Logger) -> dict | None:
     url = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
     try:
@@ -211,6 +244,16 @@ def _latest_release_info(logger: logging.Logger) -> dict | None:
     except Exception as e:
         logger.warning("Update check failed: %s", e)
         return None
+
+
+def _update_policy(release: dict) -> str:
+    body = str(release.get("body") or "").lower()
+    compact = re.sub(r"\s+", "", body)
+    for token in MANDATORY_POLICY_TOKENS:
+        token_l = token.lower()
+        if token_l in body or re.sub(r"\s+", "", token_l) in compact:
+            return "mandatory"
+    return "recommended"
 
 
 def _find_zip_asset(release: dict) -> dict | None:
@@ -288,37 +331,56 @@ def _launch_updater(zip_path: str, logger: logging.Logger) -> bool:
         return False
 
 
-def _maybe_run_auto_update(logger: logging.Logger) -> bool:
-    if not CHECK_UPDATE_ON_START:
+def _maybe_run_auto_update(logger: logging.Logger, manual: bool = False) -> bool:
+    if not manual and not CHECK_UPDATE_ON_START:
         return False
 
     release = _latest_release_info(logger)
     if not release:
+        if manual:
+            _show_info_message("최신 버전 확인에 실패했습니다.", "KISDashboard 업데이트")
         return False
 
     latest_tag = release.get("tag_name", "")
     if _normalize_version(latest_tag) <= _normalize_version(APP_VERSION):
-        logger.debug("No update required. latest=%s current=%s", latest_tag, APP_VERSION)
+        if manual:
+            _show_info_message(f"이미 최신 버전입니다. (v{APP_VERSION})", "KISDashboard 업데이트")
         return False
 
-    msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
-    if not _confirm_update(msg):
-        logger.info("Update declined by user. Continuing current version.")
+    policy = _update_policy(release)
+    is_mandatory = policy == "mandatory"
+
+    if not manual and not is_mandatory:
+        logger.info("Recommended update %s available, skipping auto prompt.", latest_tag)
         return False
+
+    if not is_mandatory:
+        msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
+        if not _confirm_update(msg):
+            logger.info("Update declined by user. Continuing current version.")
+            return False
+    else:
+        _show_info_message(f"필수 업데이트(v{latest_tag})를 적용합니다.", "KISDashboard 업데이트")
 
     asset = _find_zip_asset(release)
     if not asset:
         logger.warning("No zip asset found in latest release.")
+        if manual:
+            _show_info_message("업데이트 파일을 찾지 못했습니다.", "KISDashboard 업데이트")
         return False
 
     zip_path = _download_update_zip(asset, logger)
     if not zip_path:
+        if manual:
+            _show_info_message("업데이트 파일 다운로드에 실패했습니다.", "KISDashboard 업데이트")
         return False
 
     if _launch_updater(zip_path, logger):
         logger.info("Updater launched. Exiting launcher for update.")
         return True
 
+    if manual:
+        _show_info_message("업데이트 실행에 실패했습니다.", "KISDashboard 업데이트")
     return False
 
 
@@ -327,7 +389,7 @@ def main() -> int:
     logger = logging.getLogger("launcher")
     logger.info("Launching KIS Dashboard (version=%s)", APP_VERSION)
 
-    if _maybe_run_auto_update(logger):
+    if _maybe_run_auto_update(logger, manual=False):
         return 0
 
     if _is_port_in_use(HOST, PORT):
@@ -365,4 +427,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
