@@ -1622,6 +1622,74 @@
             border-color: rgba(251, 191, 36, 0.26);
         }
 
+        .profit-detail-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            position: relative;
+        }
+
+        .profit-tax-trigger {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-sub);
+            border-radius: 999px;
+            padding: 9px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+        }
+
+        .profit-tax-trigger:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.16);
+            color: #fff;
+        }
+
+        .profit-tax-popover {
+            position: absolute;
+            top: calc(100% + 10px);
+            right: 48px;
+            width: min(320px, calc(100vw - 64px));
+            padding: 16px 18px;
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(16, 20, 31, 0.98), rgba(11, 14, 22, 0.98));
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.38);
+            opacity: 0;
+            transform: translateY(-6px);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+            z-index: 20;
+        }
+
+        .profit-tax-popover.active {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .profit-tax-popover-title {
+            font-size: 13px;
+            color: #d6dae6;
+            margin-bottom: 8px;
+        }
+
+        .profit-tax-popover-value {
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: -0.4px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .profit-tax-popover-note {
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+            color: var(--text-sub);
+        }
+
         .profit-detail-market-filter {
             display: flex;
             gap: 8px;
@@ -1674,6 +1742,42 @@
 
         .profit-detail-empty.active {
             display: block;
+        }
+
+        .profit-table-pagination {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .profit-table-pagination.hidden {
+            display: none;
+        }
+
+        .profit-table-pagination button {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            color: #fff;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .profit-table-pagination button:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+
+        .profit-table-pagination span {
+            min-width: 72px;
+            text-align: center;
+            color: var(--text-sub);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
         }
 
         .profit-detail-loading {
@@ -2070,6 +2174,11 @@
         let realizedProfitDetailCache = new Map();
         let realizedProfitSummaryLoading = false;
         let realizedProfitDetailLoading = false;
+        let currentRealizedProfitDetail = null;
+        let realizedProfitTaxEstimate = null;
+        let realizedProfitTaxPopoverOpen = false;
+        let realizedProfitBuyPage = 1;
+        let realizedProfitSellPage = 1;
         let activeRealizedPreset = 'thisMonth';
         let activeProfitModalTab = 'buy';
         let activeProfitMarketFilter = 'all';
@@ -2077,6 +2186,9 @@
             const today = new Date();
             return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
         })();
+        const CAPITAL_GAINS_TAX_THRESHOLD_KRW = 2500000;
+        const CAPITAL_GAINS_TAX_RATE = 0.22;
+        const REALIZED_PROFIT_PAGE_SIZE = 10;
         let cachedTotalEvalKrw = 0;
         let cachedDomesticEvalKrw = 0;
         let cachedForeignEvalUsd = 0;
@@ -2738,6 +2850,8 @@
 
         function setRealizedPreset(preset, shouldFetch = false) {
             activeRealizedPreset = preset;
+            realizedProfitBuyPage = 1;
+            realizedProfitSellPage = 1;
             const presetButtons = document.querySelectorAll('[data-profit-preset]');
             presetButtons.forEach((button) => {
                 button.classList.toggle('active', button.dataset.profitPreset === preset);
@@ -2746,6 +2860,7 @@
             let range;
             if (preset === 'lastMonth') range = getLastMonthRange();
             else if (preset === 'threeMonths') range = getRecentMonthsRange(3);
+            else if (preset === 'sixMonths') range = getRecentMonthsRange(6);
             else range = getThisMonthRange();
 
             document.getElementById('realizedProfitStart').value = range.start;
@@ -2753,6 +2868,146 @@
 
             if (shouldFetch) {
                 loadRealizedProfitDetail(range.start, range.end);
+            }
+        }
+
+        function renderCapitalGainsTaxEstimate() {
+            const valueEl = document.getElementById('realizedProfitTaxPopupValue');
+            const noteEl = document.getElementById('realizedProfitTaxPopupNote');
+            if (!valueEl || !noteEl) return;
+
+            if (!realizedProfitTaxEstimate) {
+                valueEl.innerText = '-';
+                valueEl.className = 'profit-tax-popover-value';
+                noteEl.innerText = `총 실현 손익이 ${formatPlainKrw(CAPITAL_GAINS_TAX_THRESHOLD_KRW)}를 넘는지 확인한 뒤 계산합니다.`;
+                return;
+            }
+
+            valueEl.innerText = formatPlainKrw(realizedProfitTaxEstimate.tax_krw);
+            valueEl.className = `profit-tax-popover-value ${profitClassName(-Math.abs(realizedProfitTaxEstimate.tax_krw))}`.trim();
+
+            if (realizedProfitTaxEstimate.tax_krw > 0) {
+                noteEl.innerText = `${realizedProfitTaxEstimate.year}년 누적 실현 손익 ${formatSignedKrw(realizedProfitTaxEstimate.total_profit_krw)} × 22% 기준 추정치입니다.`;
+            } else {
+                noteEl.innerText = `${realizedProfitTaxEstimate.year}년 누적 실현 손익이 ${formatPlainKrw(CAPITAL_GAINS_TAX_THRESHOLD_KRW)} 이하라서 양도소득세를 0원으로 표시합니다.`;
+            }
+        }
+
+        function setCapitalGainsTaxPopover(open) {
+            realizedProfitTaxPopoverOpen = !!open;
+            const popover = document.getElementById('realizedProfitTaxPopover');
+            if (!popover) return;
+            popover.classList.toggle('active', realizedProfitTaxPopoverOpen);
+        }
+
+        function paginateTrades(trades, page) {
+            const totalPages = Math.max(1, Math.ceil((trades?.length || 0) / REALIZED_PROFIT_PAGE_SIZE));
+            const safePage = Math.min(Math.max(1, page || 1), totalPages);
+            const startIndex = (safePage - 1) * REALIZED_PROFIT_PAGE_SIZE;
+            return {
+                page: safePage,
+                totalPages,
+                items: (trades || []).slice(startIndex, startIndex + REALIZED_PROFIT_PAGE_SIZE),
+            };
+        }
+
+        function renderTradePagination(prefix, totalItems, page, totalPages) {
+            const root = document.getElementById(`${prefix}HistoryPagination`);
+            const label = document.getElementById(`${prefix}HistoryPageLabel`);
+            const prev = document.getElementById(`${prefix}HistoryPrevPage`);
+            const next = document.getElementById(`${prefix}HistoryNextPage`);
+            if (!root || !label || !prev || !next) return;
+
+            if (!totalItems || totalPages <= 1) {
+                root.classList.add('hidden');
+                label.innerText = '';
+                prev.disabled = true;
+                next.disabled = true;
+                return;
+            }
+
+            root.classList.remove('hidden');
+            label.innerText = `${page} / ${totalPages}`;
+            prev.disabled = page <= 1;
+            next.disabled = page >= totalPages;
+        }
+
+        function changeTradeHistoryPage(kind, delta) {
+            if (kind === 'sell') {
+                realizedProfitSellPage = Math.max(1, realizedProfitSellPage + delta);
+            } else {
+                realizedProfitBuyPage = Math.max(1, realizedProfitBuyPage + delta);
+            }
+            renderRealizedProfitDetail(currentRealizedProfitDetail);
+        }
+
+        async function getRealizedProfitDetailPayload(start, end, force = false) {
+            const cacheKey = `${start}:${end}`;
+            if (!force && realizedProfitDetailCache.has(cacheKey)) {
+                return realizedProfitDetailCache.get(cacheKey);
+            }
+
+            const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+            if (res.status === 401) {
+                window.location.href = '/login';
+                return null;
+            }
+            const data = await res.json();
+            realizedProfitDetailCache.set(cacheKey, data);
+            return data;
+        }
+
+        async function calculateCapitalGainsTax() {
+            if (!currentRealizedProfitDetail || currentRealizedProfitDetail.status !== 'success') {
+                realizedProfitTaxEstimate = null;
+                renderCapitalGainsTaxEstimate();
+                setCapitalGainsTaxPopover(true);
+                return;
+            }
+
+            const valueEl = document.getElementById('realizedProfitTaxPopupValue');
+            const noteEl = document.getElementById('realizedProfitTaxPopupNote');
+            const endInput = document.getElementById('realizedProfitEnd')?.value || '';
+            const startInput = document.getElementById('realizedProfitStart')?.value || '';
+            const baseDate = endInput || startInput || getTodayIso();
+            const year = String(baseDate).slice(0, 4);
+            const currentYear = String(new Date().getFullYear());
+            const yearStart = `${year}-01-01`;
+            const yearEnd = year === currentYear ? getTodayIso() : `${year}-12-31`;
+            setCapitalGainsTaxPopover(true);
+
+            if (valueEl && noteEl) {
+                valueEl.innerText = '계산 중...';
+                valueEl.className = 'profit-tax-popover-value';
+                noteEl.innerText = `${year}년 전체 실현 손익을 불러오는 중입니다.`;
+            }
+
+            try {
+                const yearPayload = await getRealizedProfitDetailPayload(yearStart, yearEnd);
+                if (!yearPayload || yearPayload.status !== 'success') {
+                    realizedProfitTaxEstimate = null;
+                    renderCapitalGainsTaxEstimate();
+                    if (noteEl) {
+                        noteEl.innerText = `${year}년 양도소득세 계산에 필요한 데이터를 불러오지 못했습니다.`;
+                    }
+                    return;
+                }
+
+                const totalProfit = Number(yearPayload.summary?.total_realized_profit_krw || 0);
+                const taxable = totalProfit > CAPITAL_GAINS_TAX_THRESHOLD_KRW;
+                realizedProfitTaxEstimate = {
+                    year,
+                    total_profit_krw: totalProfit,
+                    tax_krw: taxable ? Math.round(totalProfit * CAPITAL_GAINS_TAX_RATE) : 0,
+                };
+                renderCapitalGainsTaxEstimate();
+            } catch (err) {
+                console.error('calculateCapitalGainsTax error', err);
+                realizedProfitTaxEstimate = null;
+                renderCapitalGainsTaxEstimate();
+                if (noteEl) {
+                    noteEl.innerText = `${year}년 양도소득세 계산 중 오류가 발생했습니다.`;
+                }
             }
         }
 
@@ -2766,6 +3021,10 @@
             const buyEmptyEl = document.getElementById('buyHistoryEmpty');
             const sellRowsEl = document.getElementById('sellHistoryRows');
             const sellEmptyEl = document.getElementById('sellHistoryEmpty');
+            currentRealizedProfitDetail = detailPayload;
+            realizedProfitTaxEstimate = null;
+            renderCapitalGainsTaxEstimate();
+            setCapitalGainsTaxPopover(false);
 
             if (!detailPayload || detailPayload.status !== 'success') {
                 totalEl.innerText = '조회 실패';
@@ -2778,7 +3037,9 @@
                 buyRowsEl.innerHTML = '';
                 sellRowsEl.innerHTML = '';
                 buyEmptyEl.classList.add('active');
+                renderTradePagination('buy', 0, 1, 1);
                 sellEmptyEl.classList.add('active');
+                renderTradePagination('sell', 0, 1, 1);
                 buyEmptyEl.innerText = '매수 거래내역을 불러오지 못했습니다.';
                 sellEmptyEl.innerText = '매도 거래내역을 불러오지 못했습니다.';
                 return;
@@ -2810,13 +3071,18 @@
             const sellTrades = marketFilteredTrades.filter((trade) => trade.side === '매도');
             const marketLabel = activeProfitMarketFilter === 'domestic' ? '국내' : activeProfitMarketFilter === 'overseas' ? '해외' : '선택한 조건';
 
+            const buyPageData = paginateTrades(buyTrades, realizedProfitBuyPage);
+            const sellPageData = paginateTrades(sellTrades, realizedProfitSellPage);
+            realizedProfitBuyPage = buyPageData.page;
+            realizedProfitSellPage = sellPageData.page;
+
             if (!buyTrades.length) {
                 buyRowsEl.innerHTML = '';
                 buyEmptyEl.classList.add('active');
                 buyEmptyEl.innerText = `${marketLabel} 매수 거래내역이 없습니다.`;
             } else {
                 buyEmptyEl.classList.remove('active');
-                buyRowsEl.innerHTML = buyTrades.map((trade) => `
+                buyRowsEl.innerHTML = buyPageData.items.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
                         <td>${trade.ticker || trade.symbol || '-'}</td>
@@ -2826,6 +3092,7 @@
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
                     </tr>
                 `).join('');
+                renderTradePagination('buy', buyTrades.length, buyPageData.page, buyPageData.totalPages);
             }
 
             if (!sellTrades.length) {
@@ -2834,7 +3101,7 @@
                 sellEmptyEl.innerText = `${marketLabel} 매도 거래내역이 없습니다.`;
             } else {
                 sellEmptyEl.classList.remove('active');
-                sellRowsEl.innerHTML = sellTrades.map((trade) => `
+                sellRowsEl.innerHTML = sellPageData.items.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
                         <td>${trade.ticker || trade.symbol || '-'}</td>
@@ -2846,31 +3113,19 @@
                         <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '-' : formatSignedPercent(trade.realized_return_rate)}</td>
                     </tr>
                 `).join('');
+                renderTradePagination('sell', sellTrades.length, sellPageData.page, sellPageData.totalPages);
             }
         }
 
         async function loadRealizedProfitDetail(start, end, force = false) {
             const loadingEl = document.getElementById('realizedProfitLoading');
-            const cacheKey = `${start}:${end}`;
-
-            if (!force && realizedProfitDetailCache.has(cacheKey)) {
-                renderRealizedProfitDetail(realizedProfitDetailCache.get(cacheKey));
-                return realizedProfitDetailCache.get(cacheKey);
-            }
-
             realizedProfitDetailLoading = true;
             loadingEl.classList.add('active');
             document.getElementById('buyHistoryEmpty').classList.remove('active');
             document.getElementById('sellHistoryEmpty').classList.remove('active');
 
             try {
-                const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
-                if (res.status === 401) {
-                    window.location.href = '/login';
-                    return null;
-                }
-                const data = await res.json();
-                realizedProfitDetailCache.set(cacheKey, data);
+                const data = await getRealizedProfitDetailPayload(start, end, force);
                 renderRealizedProfitDetail(data);
                 return data;
             } catch (err) {
@@ -2901,6 +3156,7 @@
         }
 
         function closeRealizedProfitModal() {
+            setCapitalGainsTaxPopover(false);
             document.getElementById('realizedProfitModal').classList.remove('active');
         }
 
@@ -2910,14 +3166,24 @@
             }
         }
 
+        function handleRealizedProfitModalClick(event) {
+            if (!realizedProfitTaxPopoverOpen) return;
+            if (event.target.closest('.profit-detail-header-actions')) return;
+            setCapitalGainsTaxPopover(false);
+        }
+
         function onRealizedRangeInputChange() {
             activeRealizedPreset = 'custom';
             const presetButtons = document.querySelectorAll('[data-profit-preset]');
             presetButtons.forEach((button) => button.classList.remove('active'));
+            realizedProfitBuyPage = 1;
+            realizedProfitSellPage = 1;
         }
 
         function setProfitModalTab(tab) {
             activeProfitModalTab = tab === 'sell' ? 'sell' : 'buy';
+            if (activeProfitModalTab === 'sell') realizedProfitSellPage = 1;
+            else realizedProfitBuyPage = 1;
             document.querySelectorAll('[data-profit-tab]').forEach((button) => {
                 button.classList.toggle('active', button.dataset.profitTab === activeProfitModalTab);
             });
@@ -2927,6 +3193,8 @@
 
         function setProfitMarketFilter(filter) {
             activeProfitMarketFilter = ['domestic', 'overseas'].includes(filter) ? filter : 'all';
+            realizedProfitBuyPage = 1;
+            realizedProfitSellPage = 1;
             document.querySelectorAll('[data-profit-market]').forEach((button) => {
                 button.classList.toggle('active', button.dataset.profitMarket === activeProfitMarketFilter);
             });
@@ -3560,13 +3828,21 @@
     </div>
 
     <div class="profit-detail-overlay" id="realizedProfitModal" onclick="handleRealizedProfitOverlayClick(event)">
-        <div class="profit-detail-modal">
+        <div class="profit-detail-modal" onclick="handleRealizedProfitModalClick(event)">
             <div class="profit-detail-header">
                 <div class="profit-detail-title-wrap">
                     <h2>거래내역</h2>
                     <p id="realizedProfitPeriodLabel">기간을 선택해 실현 손익을 조회합니다.</p>
                 </div>
-                <button class="profit-detail-close" onclick="closeRealizedProfitModal()" aria-label="실현 손익 상세 닫기">&times;</button>
+                <div class="profit-detail-header-actions">
+                    <button type="button" class="profit-tax-trigger" onclick="calculateCapitalGainsTax()">양도소득세 계산</button>
+                    <div class="profit-tax-popover" id="realizedProfitTaxPopover">
+                        <div class="profit-tax-popover-title">양도소득세(추정)</div>
+                        <div class="profit-tax-popover-value" id="realizedProfitTaxPopupValue">-</div>
+                        <div class="profit-tax-popover-note" id="realizedProfitTaxPopupNote">총 실현 손익 기준으로 계산합니다.</div>
+                    </div>
+                    <button class="profit-detail-close" onclick="closeRealizedProfitModal()" aria-label="실현 손익 상세 닫기">&times;</button>
+                </div>
             </div>
             <div class="profit-detail-body">
                 <div class="profit-detail-toolbar">
@@ -3574,6 +3850,7 @@
                         <button type="button" data-profit-preset="thisMonth" class="active" onclick="setRealizedPreset('thisMonth', true)">이번 달</button>
                         <button type="button" data-profit-preset="lastMonth" onclick="setRealizedPreset('lastMonth', true)">지난 달</button>
                         <button type="button" data-profit-preset="threeMonths" onclick="setRealizedPreset('threeMonths', true)">최근 3개월</button>
+                        <button type="button" data-profit-preset="sixMonths" onclick="setRealizedPreset('sixMonths', true)">지난 6개월</button>
                     </div>
                     <div class="profit-range-inputs">
                         <input type="date" id="realizedProfitStart" onchange="onRealizedRangeInputChange()">
@@ -3629,6 +3906,11 @@
                             <tbody id="buyHistoryRows"></tbody>
                         </table>
                     </div>
+                    <div class="profit-table-pagination hidden" id="buyHistoryPagination">
+                        <button type="button" id="buyHistoryPrevPage" onclick="changeTradeHistoryPage('buy', -1)">이전</button>
+                        <span id="buyHistoryPageLabel"></span>
+                        <button type="button" id="buyHistoryNextPage" onclick="changeTradeHistoryPage('buy', 1)">다음</button>
+                    </div>
                     <div class="profit-detail-empty" id="buyHistoryEmpty">선택한 기간에 매수 거래내역이 없습니다.</div>
                 </div>
 
@@ -3649,6 +3931,11 @@
                             </thead>
                             <tbody id="sellHistoryRows"></tbody>
                         </table>
+                    </div>
+                    <div class="profit-table-pagination hidden" id="sellHistoryPagination">
+                        <button type="button" id="sellHistoryPrevPage" onclick="changeTradeHistoryPage('sell', -1)">이전</button>
+                        <span id="sellHistoryPageLabel"></span>
+                        <button type="button" id="sellHistoryNextPage" onclick="changeTradeHistoryPage('sell', 1)">다음</button>
                     </div>
                     <div class="profit-detail-empty" id="sellHistoryEmpty">선택한 기간에 매도 거래내역이 없습니다.</div>
                 </div>
