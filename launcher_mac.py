@@ -12,6 +12,7 @@ import time
 import urllib.request
 import webbrowser
 from pathlib import Path
+from typing import Optional
 
 import requests
 import uvicorn
@@ -111,6 +112,13 @@ def _normalize_version(v: str) -> tuple[int, int, int]:
     return nums + (0,) * (3 - len(nums))
 
 
+def _display_version(version: str) -> str:
+    cleaned = str(version or "").strip()
+    if not cleaned:
+        return "v0.0.0"
+    return cleaned if cleaned.lower().startswith("v") else f"v{cleaned}"
+
+
 def _osascript(script: str) -> tuple[bool, str]:
     try:
         res = subprocess.run(["osascript", "-e", script], check=False, capture_output=True, text=True)
@@ -138,7 +146,7 @@ def _confirm_update(message: str) -> bool:
     return ok and "업데이트" in out
 
 
-def _latest_release_info(logger: logging.Logger) -> dict | None:
+def _latest_release_info(logger: logging.Logger) -> Optional[dict]:
     url = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
     try:
         res = requests.get(url, timeout=8)
@@ -170,10 +178,10 @@ def _mac_arch_tokens() -> set[str]:
     return {machine}
 
 
-def _find_mac_zip_asset(release: dict) -> dict | None:
+def _find_mac_zip_asset(release: dict) -> Optional[dict]:
     assets = release.get("assets", []) or []
     arch_tokens = _mac_arch_tokens()
-    best: tuple[int, dict] | None = None
+    best: Optional[tuple[int, dict]] = None
 
     for asset in assets:
         name = str(asset.get("name", "")).lower()
@@ -196,7 +204,7 @@ def _find_mac_zip_asset(release: dict) -> dict | None:
     return best[1] if best else None
 
 
-def _download_update_zip(asset: dict, logger: logging.Logger) -> str | None:
+def _download_update_zip(asset: dict, logger: logging.Logger) -> Optional[str]:
     url = asset.get("browser_download_url")
     name = asset.get("name") or "kisdashboard-mac-update.zip"
     if not url:
@@ -219,7 +227,7 @@ def _download_update_zip(asset: dict, logger: logging.Logger) -> str | None:
         return None
 
 
-def _get_app_bundle_path() -> str | None:
+def _get_app_bundle_path() -> Optional[str]:
     if not getattr(sys, "frozen", False):
         return None
 
@@ -298,7 +306,7 @@ def _maybe_run_auto_update(logger: logging.Logger, manual: bool = False) -> bool
     latest_tag = release.get("tag_name", "")
     if _normalize_version(latest_tag) <= _normalize_version(APP_VERSION):
         if manual:
-            _show_info_message(f"이미 최신 버전입니다. (v{APP_VERSION})")
+            _show_info_message(f"이미 최신 버전입니다. ({_display_version(APP_VERSION)})")
         return False
 
     policy = _update_policy(release)
@@ -309,12 +317,12 @@ def _maybe_run_auto_update(logger: logging.Logger, manual: bool = False) -> bool
         return False
 
     if not is_mandatory:
-        msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
+        msg = f"새 버전({_display_version(latest_tag)})이 있습니다.\n지금 업데이트할까요?"
         if not _confirm_update(msg):
             logger.info("Update declined by user.")
             return False
     else:
-        _show_info_message(f"필수 업데이트(v{latest_tag})를 적용합니다.", "KISDashboard 업데이트")
+        _show_info_message(f"필수 업데이트({_display_version(latest_tag)})를 적용합니다.", "KISDashboard 업데이트")
 
     asset = _find_mac_zip_asset(release)
     if not asset:
@@ -419,7 +427,7 @@ class AppDelegate(NSObject):
         policy = _update_policy(latest) if latest else "unknown"
         policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
         _show_info_message(
-            f"현재 버전: v{APP_VERSION}\n최신 버전: {latest_tag}\n업데이트 정책: {policy_text}",
+            f"현재 버전: {_display_version(APP_VERSION)}\n최신 버전: {_display_version(latest_tag)}\n업데이트 정책: {policy_text}",
             "KISDashboard 버전",
         )
 

@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 APP_NAME = "KISDashboard"
 
@@ -56,7 +57,7 @@ def _show_info_message(message: str, title: str = "KISDashboard 업데이트") -
         pass
 
 
-def _find_extracted_app(extract_dir: str) -> str | None:
+def _find_extracted_app(extract_dir: str) -> Optional[str]:
     root = Path(extract_dir)
     preferred = root / "KISDashboard.app"
     if preferred.exists():
@@ -94,8 +95,9 @@ def _replace_app(new_app_path: str, target_app_path: str, logger: logging.Logger
         raise
 
 
-def _restart_app(app_path: str) -> None:
-    subprocess.Popen(["open", app_path], start_new_session=True)
+def _restart_app(app_path: str, logger: logging.Logger) -> None:
+    subprocess.Popen(["open", "-n", app_path], start_new_session=True)
+    logger.info("Requested app restart via open -n: %s", app_path)
 
 
 def main() -> int:
@@ -137,9 +139,11 @@ def main() -> int:
                 return 1
 
             _replace_app(extracted_app, args.app_path, logger)
+            subprocess.run(["xattr", "-cr", args.app_path], check=False)
+            logger.info("Replaced app bundle: %s", args.app_path)
 
         _show_info_message("업데이트 완료했습니다. 앱을 다시 시작합니다.")
-        _restart_app(args.app_path)
+        _restart_app(args.app_path, logger)
         logger.info("Update completed and app restarted")
         return 0
     except PermissionError:

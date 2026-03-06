@@ -5,6 +5,15 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_policy:
+        description: "Update policy for the release"
+        required: false
+        default: "recommended"
+        type: choice
+        options:
+          - recommended
+          - mandatory
 
 permissions:
   contents: write
@@ -61,6 +70,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release policy
+        id: policy
+        env:
+          INPUT_POLICY: ${{ github.event.inputs.release_policy }}
+        run: |
+          policy="${INPUT_POLICY:-}"
+          if [ -z "$policy" ]; then
+            tag_message="$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)')"
+            compact="$(printf '%s' "$tag_message" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            if printf '%s' "$compact" | grep -q '\[mandatory-update\]\|mandatory-update\|update_policy:mandatory\|필수업데이트'; then
+              policy="mandatory"
+            else
+              policy="recommended"
+            fi
+          fi
+          echo "policy=$policy" >> "$GITHUB_OUTPUT"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -72,3 +103,15 @@ jobs:
           files: |
             release-assets/**/*.zip
           generate_release_notes: true
+
+      - name: Mark mandatory update in release body
+        if: steps.policy.outputs.policy == 'mandatory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="$(gh release view "${GITHUB_REF_NAME}" --json body --jq '.body')"
+          case "$body" in
+            *"[mandatory-update]"*) exit 0 ;;
+          esac
+          new_body=$'[mandatory-update]\n필수 업데이트\n\n'"$body"
+          gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME} - 필수 업데이트" --notes "$new_body"

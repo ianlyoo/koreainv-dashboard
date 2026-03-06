@@ -16,6 +16,7 @@ import webbrowser
 import tempfile
 import shutil
 from pathlib import Path
+from typing import Optional
 
 import requests
 import uvicorn
@@ -111,7 +112,7 @@ def _shutdown_server(*_args) -> None:
         _server.should_exit = True
 
 
-def _find_tray_icon_path() -> str | None:
+def _find_tray_icon_path() -> Optional[str]:
     img_dir = Path(runtime_paths.get_app_base_dir()) / "img"
     if not img_dir.is_dir():
         return None
@@ -119,6 +120,13 @@ def _find_tray_icon_path() -> str | None:
     if not icons:
         return None
     return str(icons[0])
+
+
+def _display_version(version: str) -> str:
+    cleaned = str(version or "").strip()
+    if not cleaned:
+        return "v0.0.0"
+    return cleaned if cleaned.lower().startswith("v") else f"v{cleaned}"
 
 
 def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
@@ -155,7 +163,7 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
         policy = _update_policy(release) if release else "unknown"
         policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
         _show_info_message(
-            f"현재 버전: v{APP_VERSION}\n최신 버전: {latest_tag}\n업데이트 정책: {policy_text}",
+            f"현재 버전: {_display_version(APP_VERSION)}\n최신 버전: {_display_version(latest_tag)}\n업데이트 정책: {policy_text}",
             "KISDashboard 버전 정보",
         )
 
@@ -215,7 +223,7 @@ def _show_version_info() -> None:
         mb_topmost = 0x00040000
         ctypes.windll.user32.MessageBoxW(
             0,
-            f"현재 버전: v{APP_VERSION}",
+            f"현재 버전: {_display_version(APP_VERSION)}",
             "KISDashboard 버전 정보",
             mb_ok | mb_icon_info | mb_topmost,
         )
@@ -233,7 +241,7 @@ def _show_info_message(text: str, title: str = "KISDashboard") -> None:
         pass
 
 
-def _latest_release_info(logger: logging.Logger) -> dict | None:
+def _latest_release_info(logger: logging.Logger) -> Optional[dict]:
     url = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
     try:
         res = requests.get(url, timeout=8)
@@ -256,7 +264,7 @@ def _update_policy(release: dict) -> str:
     return "recommended"
 
 
-def _find_zip_asset(release: dict) -> dict | None:
+def _find_zip_asset(release: dict) -> Optional[dict]:
     assets = release.get("assets", []) or []
     preferred = None
     for a in assets:
@@ -272,7 +280,7 @@ def _find_zip_asset(release: dict) -> dict | None:
     return preferred
 
 
-def _download_update_zip(asset: dict, logger: logging.Logger) -> str | None:
+def _download_update_zip(asset: dict, logger: logging.Logger) -> Optional[str]:
     url = asset.get("browser_download_url")
     name = asset.get("name") or "update.zip"
     if not url:
@@ -346,7 +354,7 @@ def _maybe_run_auto_update(logger: logging.Logger, manual: bool = False) -> bool
     latest_tag = release.get("tag_name", "")
     if _normalize_version(latest_tag) <= _normalize_version(APP_VERSION):
         if manual:
-            _show_info_message(f"이미 최신 버전입니다. (v{APP_VERSION})", "KISDashboard 업데이트")
+            _show_info_message(f"이미 최신 버전입니다. ({_display_version(APP_VERSION)})", "KISDashboard 업데이트")
         return False
 
     policy = _update_policy(release)
@@ -357,12 +365,12 @@ def _maybe_run_auto_update(logger: logging.Logger, manual: bool = False) -> bool
         return False
 
     if not is_mandatory:
-        msg = f"새 버전({latest_tag})이 있습니다.\n지금 업데이트할까요?"
+        msg = f"새 버전({_display_version(latest_tag)})이 있습니다.\n지금 업데이트할까요?"
         if not _confirm_update(msg):
             logger.info("Update declined by user. Continuing current version.")
             return False
     else:
-        _show_info_message(f"필수 업데이트(v{latest_tag})를 적용합니다.", "KISDashboard 업데이트")
+        _show_info_message(f"필수 업데이트({_display_version(latest_tag)})를 적용합니다.", "KISDashboard 업데이트")
 
     asset = _find_zip_asset(release)
     if not asset:

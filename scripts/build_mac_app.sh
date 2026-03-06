@@ -10,6 +10,7 @@ APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
 UPDATER_BIN="$DIST_DIR/KISDashboardUpdater"
 ARCH="$(uname -m)"
 ZIP_PATH="$DIST_DIR/${APP_NAME}-mac-${ARCH}.zip"
+APP_VERSION="$(python3 -c 'from app.version import APP_VERSION; print(APP_VERSION)')"
 ICON_SRC="$PROJECT_DIR/app/img/fa82e0f8872e03ff459435036237a46d.ico"
 ICONSET_DIR="$PROJECT_DIR/build/.tmp_${APP_NAME}.iconset"
 ICON_ICNS="$PROJECT_DIR/build/${APP_NAME}.icns"
@@ -63,6 +64,13 @@ python3 -m PyInstaller --noconfirm --clean --windowed \
 if [ ! -d "$APP_BUNDLE" ]; then
   echo "[ERROR] Build output not found: $APP_BUNDLE" >&2
   exit 1
+fi
+
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_BUNDLE/Contents/Info.plist" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$APP_BUNDLE/Contents/Info.plist"
+fi
+if ! /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$APP_BUNDLE/Contents/Info.plist" >/dev/null 2>&1; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $APP_VERSION" "$APP_BUNDLE/Contents/Info.plist"
 fi
 
 # Free-tier signing: enforce ad-hoc deep signing for stable local verification.

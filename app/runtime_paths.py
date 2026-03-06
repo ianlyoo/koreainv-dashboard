@@ -18,11 +18,14 @@ def get_app_base_dir() -> str:
 
 def get_user_data_dir() -> str:
     """Return writable per-user application data directory."""
-    appdata = os.getenv("APPDATA")
-    if appdata:
-        base = appdata
+    if sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
     else:
-        base = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            base = appdata
+        else:
+            base = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
 
     path = os.path.join(base, APP_NAME)
     os.makedirs(path, exist_ok=True)
