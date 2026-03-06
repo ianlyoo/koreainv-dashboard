@@ -157,8 +157,9 @@
 
         .controls {
             display: flex;
-            gap: 16px;
+            gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
 
         /* Toggles & Buttons */
@@ -209,21 +210,39 @@
             transform: translateX(100%);
         }
 
+        .btn-history,
+        .btn-sync,
+        .btn-reset,
+        .btn-logout {
+            height: 40px;
+            border-radius: 10px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .btn-history svg,
+        .btn-sync svg,
+        .btn-reset svg,
+        .btn-logout svg {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
         .btn-sync {
             background: linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-hover) 100%);
             color: #000;
             border: none;
             padding: 0 24px;
-            height: 40px;
-            border-radius: 10px;
-            cursor: pointer;
             font-size: 14px;
             font-weight: 700;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
             box-shadow: 0 4px 12px rgba(251, 191, 36, 0.2);
+            line-height: 1;
         }
 
         .btn-sync:hover {
@@ -235,26 +254,13 @@
             transform: translateY(0);
         }
 
-        .btn-sync svg {
-            width: 16px;
-            height: 16px;
-            fill: currentColor;
-        }
-
         .btn-logout {
             background: rgba(239, 68, 68, 0.1);
             color: #ef4444;
             border: 1px solid rgba(239, 68, 68, 0.2);
             padding: 0 16px;
-            height: 40px;
-            border-radius: 10px;
-            cursor: pointer;
             font-size: 13px;
-            font-weight: 600;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            font-weight: 700;
         }
 
         .btn-logout:hover {
@@ -265,11 +271,7 @@
         .layout-mode-switch {
             display: flex;
             align-items: center;
-            gap: 4px;
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            padding: 4px;
+            gap: 2px;
             height: 40px;
         }
 
@@ -283,22 +285,28 @@
         }
 
         .layout-mode-btn {
-            height: 30px;
+            height: 40px;
             border: none;
-            border-radius: 8px;
-            padding: 0 10px;
+            border-radius: 10px;
+            padding: 0 12px;
             background: transparent;
             color: var(--text-sub);
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 700;
             cursor: pointer;
             transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .layout-mode-btn:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.06);
         }
 
         .layout-mode-btn.active {
             background: rgba(251, 191, 36, 0.15);
             color: var(--accent-gold);
-            box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.3);
+            box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.22);
         }
 
         .layout-grid {
@@ -376,6 +384,10 @@
             gap: 8px;
         }
 
+        .summary-label-spacer {
+            flex: 1;
+        }
+
         .summary-value {
             font-size: 26px;
             font-weight: 700;
@@ -388,6 +400,143 @@
             font-size: 14px;
             font-weight: 500;
             margin-top: 4px;
+        }
+
+        .profit-card {
+            cursor: pointer;
+            perspective: 1200px;
+        }
+
+        .profit-card:hover,
+        .flip-card:hover {
+            border-color: rgba(251, 191, 36, 0.25);
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+        }
+
+        .flip-card {
+            cursor: pointer;
+            perspective: 1200px;
+        }
+
+        .profit-card-inner,
+        .flip-card-inner {
+            position: relative;
+            width: 100%;
+            min-height: 70px;
+            transform-style: preserve-3d;
+            transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .profit-card.is-flipped .profit-card-inner,
+        .flip-card.is-flipped .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+
+        .profit-card-face,
+        .flip-card-face {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+
+        .profit-card-back,
+        .flip-card-back {
+            position: absolute;
+            inset: 0;
+            transform: rotateY(180deg);
+        }
+
+        .asset-card-back-content {
+            display: grid;
+            gap: 8px;
+            margin-top: 2px;
+        }
+
+        .asset-card-row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .asset-card-row .label {
+            font-size: 13px;
+            color: var(--text-sub);
+        }
+
+        .asset-card-row .value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.3px;
+        }
+
+        .profit-card-meta {
+            font-size: 12px;
+            color: var(--text-sub);
+            margin-top: 2px;
+        }
+
+        .profit-month-nav {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: auto;
+            color: var(--text-sub);
+        }
+
+        .profit-month-nav button {
+            width: 24px;
+            height: 24px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.18s ease, border-color 0.18s ease, opacity 0.18s ease;
+        }
+
+        .profit-month-nav button:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .profit-month-nav button:disabled {
+            opacity: 0.38;
+            cursor: default;
+        }
+
+        .profit-month-label {
+            min-width: 56px;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            color: #fff;
+        }
+
+        .header-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-history {
+            background: rgba(255, 255, 255, 0.06);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 0 16px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .btn-history:hover {
+            transform: translateY(-1px);
+            background: rgba(255, 255, 255, 0.1);
         }
 
         /* Middle: Chart Area */
@@ -1143,15 +1292,8 @@
             color: var(--text-muted);
             border: 1px solid rgba(255, 255, 255, 0.1);
             padding: 0 16px;
-            height: 40px;
-            border-radius: 10px;
-            cursor: pointer;
             font-size: 13px;
-            font-weight: 600;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            font-weight: 700;
         }
 
         .btn-reset:hover {
@@ -1280,6 +1422,292 @@
             background: #dc2626;
             transform: translateY(-2px);
         }
+
+        .profit-detail-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 2100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 24px;
+        }
+
+        .profit-detail-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .profit-detail-modal {
+            width: min(980px, 100%);
+            max-height: min(88vh, 860px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            background: rgba(14, 16, 22, 0.96);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 22px;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+            transform: translateY(12px) scale(0.98);
+            transition: transform 0.25s ease;
+        }
+
+        .profit-detail-overlay.active .profit-detail-modal {
+            transform: translateY(0) scale(1);
+        }
+
+        .profit-detail-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 24px 24px 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .profit-detail-title-wrap h2 {
+            margin: 0;
+            font-size: 22px;
+            letter-spacing: -0.4px;
+        }
+
+        .profit-detail-title-wrap p {
+            margin: 6px 0 0;
+            color: var(--text-sub);
+            font-size: 13px;
+        }
+
+        .profit-detail-close {
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            cursor: pointer;
+            font-size: 20px;
+            line-height: 1;
+        }
+
+        .profit-detail-close:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .profit-detail-body {
+            padding: 20px 24px 24px;
+            overflow: auto;
+        }
+
+        .profit-detail-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+        }
+
+        .profit-quick-range {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .profit-quick-range button,
+        .profit-range-fetch {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .profit-quick-range button.active,
+        .profit-range-fetch {
+            background: rgba(251, 191, 36, 0.16);
+            border-color: rgba(251, 191, 36, 0.28);
+            color: #fbbf24;
+        }
+
+        .profit-range-inputs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .profit-range-inputs input {
+            width: auto;
+            min-width: 150px;
+            padding: 10px 12px;
+            font-size: 13px;
+        }
+
+        .profit-detail-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .profit-stat-card {
+            padding: 16px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .profit-stat-label {
+            font-size: 12px;
+            color: var(--text-sub);
+            margin-bottom: 8px;
+        }
+
+        .profit-stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .profit-detail-table-wrap {
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .profit-detail-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .profit-detail-tab {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-sub);
+            border-radius: 999px;
+            padding: 9px 14px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .profit-detail-tab.active {
+            color: #fff;
+            background: rgba(251, 191, 36, 0.14);
+            border-color: rgba(251, 191, 36, 0.26);
+        }
+
+        .profit-detail-panel {
+            display: none;
+        }
+
+        .profit-detail-panel.active {
+            display: block;
+        }
+
+        .profit-detail-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .profit-detail-table th,
+        .profit-detail-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            text-align: right;
+            font-size: 13px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .profit-detail-table th:first-child,
+        .profit-detail-table td:first-child {
+            text-align: left;
+        }
+
+        .profit-detail-table th {
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-sub);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+
+        .profit-detail-empty {
+            display: none;
+            padding: 48px 20px;
+            text-align: center;
+            color: var(--text-sub);
+            font-size: 14px;
+        }
+
+        .profit-detail-empty.active {
+            display: block;
+        }
+
+        .profit-detail-loading {
+            display: none;
+            margin-bottom: 14px;
+            color: var(--text-sub);
+            font-size: 13px;
+        }
+
+        .profit-detail-loading.active {
+            display: block;
+        }
+
+        .trade-history-table td:nth-child(4),
+        .trade-history-table td:nth-child(5),
+        .trade-history-table td:nth-child(6),
+        .trade-history-table td:nth-child(7),
+        .trade-history-table td:nth-child(8) {
+            white-space: nowrap;
+        }
+
+        @media (max-width: 900px) {
+            .profit-detail-summary-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 720px) {
+            .profit-detail-overlay {
+                padding: 14px;
+            }
+
+            .profit-detail-modal {
+                max-height: 92vh;
+            }
+
+            .profit-detail-header,
+            .profit-detail-body {
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+
+            .profit-detail-summary-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header-meta {
+                flex-wrap: wrap;
+            }
+
+            .profit-range-inputs input {
+                min-width: 0;
+                flex: 1 1 100%;
+            }
+        }
     </style>
 </head>
 
@@ -1290,24 +1718,30 @@
         <div style="color: #fff; font-weight: 600; letter-spacing: 1px;">자산 동기화 중...</div>
     </div>
 
-    <div class="header animate-enter">
-        <div style="display:flex; align-items:center;">
-            <h1>Dashboard</h1>
-            <div class="today-date" id="today_date">2026년 03월 01일 (일)</div>
-        </div>
+        <div class="header animate-enter">
+            <div style="display:flex; align-items:center;">
+                <h1>Dashboard</h1>
+                <div class="header-meta">
+                    <div class="today-date" id="today_date">2026년 03월 01일 (일)</div>
+                </div>
+            </div>
 
-        <div class="controls">
-            <!-- 종목 검색 -->
-            <div style="position:relative;">
-                <div style="display:flex; align-items:center; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:4px 12px; gap:6px; transition:border-color 0.2s;"
-                    id="searchWrapper">
+            <div class="controls">
+                <!-- 종목 검색 -->
+                <div class="layout-mode-switch" id="layoutModeToggle">
+                    <button class="layout-mode-btn" id="layoutModeBtn1" onclick="applyLayoutMode('mode1')">확장</button>
+                    <button class="layout-mode-btn" id="layoutModeBtn2" onclick="applyLayoutMode('mode2')">기본</button>
+                </div>
+                <div style="position:relative;">
+                    <div style="display:flex; align-items:center; height:40px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:0 12px; gap:6px; transition:border-color 0.2s;"
+                        id="searchWrapper">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted); flex-shrink:0;">
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
                     <input type="text" id="stockSearchInput" placeholder="종목 검색..." autocomplete="off"
-                        style="background:transparent; border:none; outline:none; color:#fff; font-size:13px; width:140px; padding:4px 0;"
+                        style="background:transparent; border:none; outline:none; color:#fff; font-size:13px; width:140px; padding:0;"
                         oninput="searchStock(this.value)"
                         onkeydown="handleSearchKeydown(event)"
                         onfocus="document.getElementById('searchWrapper').style.borderColor='var(--accent-gold)'"
@@ -1317,21 +1751,24 @@
                     style="display:none; position:absolute; top:100%; left:0; right:0; margin-top:4px; background:rgba(7, 11, 20, 0.98); border:1px solid rgba(255,255,255,0.14); border-radius:10px; max-height:240px; overflow-y:auto; z-index:100; box-shadow:0 12px 36px rgba(0,0,0,0.65); backdrop-filter: blur(12px);">
                 </div>
             </div>
-
-            <button class="btn-sync" onclick="syncData(true)" id="realtimeToggleBtn">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round" id="realtimeToggleIcon">
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <polyline points="1 20 1 14 7 14"></polyline>
-                    <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"></path>
-                    <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"></path>
+            <button class="btn-history" type="button" onclick="openRealizedProfitModal()">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 3v18h18"></path>
+                    <path d="M7 14l4-4 3 3 5-6"></path>
                 </svg>
-                <span id="realtimeToggleText">새로고침</span>
+                거래내역
             </button>
-            <div class="layout-mode-switch" id="layoutModeToggle">
-                <button class="layout-mode-btn" id="layoutModeBtn1" onclick="applyLayoutMode('mode1')">확장</button>
-                <button class="layout-mode-btn" id="layoutModeBtn2" onclick="applyLayoutMode('mode2')">기본</button>
-            </div>
+
+            <button class="btn-sync" onclick="syncData()" id="syncBtn">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" id="syncIcon">
+                    <path d="M20 11a8 8 0 0 0-14.85-4"></path>
+                    <path d="M4 13a8 8 0 0 0 14.85 4"></path>
+                    <polyline points="5 3 5 7 9 7"></polyline>
+                    <polyline points="19 21 19 17 15 17"></polyline>
+                </svg>
+                <span id="syncText">새로고침</span>
+            </button>
             <button class="btn-reset" onclick="lockScreen()" id="lockBtn" title="화면 잠금">
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
                     stroke-linecap="round" stroke-linejoin="round">
@@ -1358,35 +1795,88 @@
         <!-- 1. LEFT COLUMN -->
         <div class="col-panel col-left">
             <div class="summary-grid">
-                <div class="glass-card summary-card animate-enter">
-                    <div class="summary-label">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
-                            <path d="M12 12h.01"></path>
-                            <path d="M17 12h.01"></path>
-                            <path d="M7 12h.01"></path>
-                        </svg>
-                        총 평가금액
-                    </div>
-                    <div class="summary-value" id="val_total_assets">₩204,466,770</div>
-                    <div class="summary-sub" style="color: var(--text-muted);">매입금액: <span
-                            id="val_purchase">₩198,883,755</span>
+                <div class="glass-card summary-card flip-card animate-enter" id="assetSummaryCard"
+                    onclick="toggleAssetCard()" onkeydown="handleAssetCardKeydown(event)"
+                    role="button" tabindex="0" aria-label="총 평가금액 통화 상세 전환">
+                    <div class="flip-card-inner">
+                        <div class="flip-card-face flip-card-front">
+                            <div class="summary-label">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                                    <path d="M12 12h.01"></path>
+                                    <path d="M17 12h.01"></path>
+                                    <path d="M7 12h.01"></path>
+                                </svg>
+                                총 평가금액
+                            </div>
+                            <div class="summary-value" id="val_total_assets">₩204,466,770</div>
+                            <div class="summary-sub" style="color: var(--text-muted);">매입금액: <span
+                                    id="val_purchase">₩198,883,755</span>
+                            </div>
+                        </div>
+                        <div class="flip-card-face flip-card-back">
+                            <div class="summary-label">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                                    <path d="M12 12h.01"></path>
+                                    <path d="M17 12h.01"></path>
+                                    <path d="M7 12h.01"></path>
+                                </svg>
+                                통화 기준 평가금액
+                            </div>
+                            <div class="asset-card-back-content">
+                                <div class="asset-card-row">
+                                    <span class="label">달러 자산</span>
+                                    <span class="value" id="val_total_assets_usd">$151,456.87</span>
+                                </div>
+                                <div class="asset-card-row">
+                                    <span class="label">원화 자산</span>
+                                    <span class="value" id="val_total_assets_krw">₩204,466,770</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Header & Date moved back up -->
 
-                <div class="glass-card summary-card animate-enter" style="animation-delay: 0.25s;">
-                    <div class="summary-label">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-                        </svg>
-                        총 평가손익
+                <div class="glass-card summary-card profit-card animate-enter" style="animation-delay: 0.25s;"
+                    id="profitSummaryCard" onclick="toggleProfitCard()" onkeydown="handleProfitCardKeydown(event)"
+                    role="button" tabindex="0" aria-label="총 평가손익과 이번 달 실현손익 전환">
+                    <div class="profit-card-inner">
+                        <div class="profit-card-face profit-card-front">
+                            <div class="summary-label">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                                </svg>
+                                총 평가손익
+                            </div>
+                            <div class="summary-value profit-plus" id="val_total_profit">+₩5,583,015</div>
+                            <div class="summary-sub" id="val_total_rt"><span class="profit-badge bg-plus">+2.81%</span></div>
+                        </div>
+                        <div class="profit-card-face profit-card-back">
+                            <div class="summary-label">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 20V10"></path>
+                                    <path d="M18 20V4"></path>
+                                    <path d="M6 20v-6"></path>
+                                </svg>
+                                실현 손익
+                                <span class="summary-label-spacer"></span>
+                                <div class="profit-month-nav" onclick="event.stopPropagation()">
+                                    <button type="button" id="realizedProfitPrevMonthBtn" onclick="changeRealizedProfitMonth(-1, event)" aria-label="이전 월">◀</button>
+                                    <span class="profit-month-label" id="val_realized_profit_month_label">2026.03</span>
+                                    <button type="button" id="realizedProfitNextMonthBtn" onclick="changeRealizedProfitMonth(1, event)" aria-label="다음 월">▶</button>
+                                </div>
+                            </div>
+                            <div class="summary-value" id="val_realized_profit_month">조회 중...</div>
+                            <div class="summary-sub" id="val_realized_profit_month_sub">이번 달 누적 기준</div>
+                        </div>
                     </div>
-                    <div class="summary-value profit-plus" id="val_total_profit">+₩5,583,015</div>
-                    <div class="summary-sub" id="val_total_rt"><span class="profit-badge bg-plus">+2.81%</span></div>
                 </div>
 
                 <!-- NEW CASH PANEL -->
@@ -1553,6 +2043,21 @@
         let currentTradingViewWidget = null;
         let currentLayoutMode = 'mode2';
         let rightPaneState = 'widgets';
+        let assetCardShowingForeign = false;
+        let profitCardShowingRealized = false;
+        let realizedProfitSummaryCache = new Map();
+        let realizedProfitDetailCache = new Map();
+        let realizedProfitSummaryLoading = false;
+        let realizedProfitDetailLoading = false;
+        let activeRealizedPreset = 'thisMonth';
+        let activeProfitModalTab = 'buy';
+        let activeRealizedSummaryMonth = (() => {
+            const today = new Date();
+            return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        })();
+        let cachedTotalEvalKrw = 0;
+        let cachedDomesticEvalKrw = 0;
+        let cachedForeignEvalUsd = 0;
 
         const LAYOUT_STORAGE_KEY = 'dashboard_layout_mode';
 
@@ -1565,6 +2070,79 @@
         // 숫자 포맷
         function formatNumber(num) {
             return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        }
+
+        function formatSignedKrw(value) {
+            const amount = Number(value || 0);
+            const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+            return `${sign}₩${formatNumber(Math.round(Math.abs(amount)))}`;
+        }
+
+        function formatUsd(value) {
+            const amount = Number(value || 0);
+            return `$${formatNumber(amount.toFixed(2))}`;
+        }
+
+        function formatPlainKrw(value) {
+            return `₩${formatNumber(Math.round(Math.abs(Number(value || 0))))}`;
+        }
+
+        function profitClassName(value) {
+            const amount = Number(value || 0);
+            if (amount > 0) return 'profit-plus';
+            if (amount < 0) return 'profit-minus';
+            return '';
+        }
+
+        function getTodayIso() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function toIsoDate(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function getThisMonthRange() {
+            const today = new Date();
+            return {
+                start: toIsoDate(new Date(today.getFullYear(), today.getMonth(), 1)),
+                end: getTodayIso(),
+            };
+        }
+
+        function getLastMonthRange() {
+            const today = new Date();
+            const firstDay = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+            const lastDay = new Date(today.getFullYear(), today.getMonth(), 0);
+            return {
+                start: toIsoDate(firstDay),
+                end: toIsoDate(lastDay),
+            };
+        }
+
+        function getRecentMonthsRange(monthCount) {
+            const today = new Date();
+            return {
+                start: toIsoDate(new Date(today.getFullYear(), today.getMonth() - (monthCount - 1), 1)),
+                end: getTodayIso(),
+            };
+        }
+
+        function formatDisplayDate(isoDate) {
+            if (!isoDate) return '-';
+            if (/^\d{8}$/.test(isoDate)) {
+                return `${isoDate.slice(0, 4)}.${isoDate.slice(4, 6)}.${isoDate.slice(6, 8)}`;
+            }
+            const parts = isoDate.split('-');
+            if (parts.length !== 3) return isoDate;
+            return `${parts[0]}.${parts[1]}.${parts[2]}`;
         }
 
         // 수익률 포맷 및 배지 생성
@@ -1584,6 +2162,12 @@
             return isBadge
                 ? `<span class="profit-badge" style="background: rgba(255,255,255,0.1); color: #fff;">0.00%</span>`
                 : `<span style="color: var(--text-sub);">0.00%</span>`;
+        }
+
+        function formatSignedPercent(value) {
+            const amount = Number(value || 0);
+            const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+            return `${sign}${Math.abs(amount).toFixed(2)}%`;
         }
 
         function normalizeTicker(value) {
@@ -1759,60 +2343,6 @@
         }
 
 
-        function updateRealtimeRows(changedTickers) {
-            const tbody = document.getElementById('all_list');
-            if (!tbody || !changedTickers || changedTickers.size === 0) return;
-
-            changedTickers.forEach((tickerKey) => {
-                const item = cachedItems.find((x) => normalizeTicker(x.ticker) === tickerKey);
-                if (!item) return;
-
-                const row = tbody.querySelector(`tr[data-ticker="${tickerKey.replace(/"/g, '\"')}"]`);
-                if (!row) return;
-
-                let pricePrefix = '';
-                let dp = 0;
-                let displayNow = item.now_price;
-                let totalValLocal = item.now_price * item.qty;
-                let profitPct = calcHoldingProfitRate(item.now_price, item.avg_price);
-                if (profitPct === null) profitPct = 0;
-
-                if (item.type === 'KOR') {
-                    pricePrefix = 'KRW ';
-                    dp = 0;
-                } else if (item.type === 'USA') {
-                    if (currentCurrencyMode === 'krw') {
-                        let exrt = item.bass_exrt || 1350;
-                        displayNow = item.now_price * exrt;
-                        totalValLocal = item.now_price * item.qty * exrt;
-                        pricePrefix = 'KRW ';
-                        dp = 0;
-                    } else {
-                        pricePrefix = '$';
-                        dp = 2;
-                    }
-                } else if (item.type === 'JPN') {
-                    if (currentCurrencyMode === 'krw') {
-                        let exrt = item.bass_exrt || 905;
-                        displayNow = item.now_price * (exrt / 100);
-                        totalValLocal = item.now_price * item.qty * (exrt / 100);
-                        pricePrefix = 'KRW ';
-                        dp = 0;
-                    } else {
-                        pricePrefix = 'JPY ';
-                        dp = 2;
-                    }
-                }
-
-                const evalCell = row.querySelector('.js-eval');
-                const nowCell = row.querySelector('.js-now');
-                const profitCell = row.querySelector('.js-profit');
-                if (evalCell) evalCell.textContent = `${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}`;
-                if (nowCell) nowCell.textContent = `${pricePrefix}${formatNumber(displayNow.toFixed(dp))}`;
-                if (profitCell) profitCell.innerHTML = formatProfit(profitPct, false);
-            });
-        }
-
         // 차트 및 비중 리스트 업데이트
         function updateChart(items, totalEval) {
             const ctx = document.getElementById('portfolioChart').getContext('2d');
@@ -1983,12 +2513,23 @@
                     // 요약 수치도 종목 합산 기준으로 통일
                     const totalEvalKrw = combinedItems.reduce((acc, item) => acc + (item.evalAmtKrw || 0), 0);
                     const totalPurchaseKrw = combinedItems.reduce((acc, item) => acc + (item.purchaseAmtKrw || 0), 0);
+                    const domesticEvalKrw = domesticItems.reduce((acc, item) => acc + ((item.qty || 0) * (item.now_price || 0)), 0);
+                    const usEvalUsd = usItems.reduce((acc, item) => acc + ((item.qty || 0) * (item.now_price || 0)), 0);
+                    const jpEvalUsd = jpItems.reduce((acc, item) => {
+                        const exrt = item.bass_exrt || 905;
+                        const evalKrw = (item.qty || 0) * (item.now_price || 0) * (exrt / 100);
+                        return acc + (cachedExrt > 0 ? (evalKrw / cachedExrt) : 0);
+                    }, 0);
+                    cachedTotalEvalKrw = totalEvalKrw;
+                    cachedDomesticEvalKrw = domesticEvalKrw;
+                    cachedForeignEvalUsd = usEvalUsd + jpEvalUsd;
                     const totalProfitAmt = totalEvalKrw - totalPurchaseKrw;
                     const totalProfitRt = totalPurchaseKrw > 0 ? (totalProfitAmt / totalPurchaseKrw) * 100 : 0;
 
                     // 요약 카드 업데이트
                     document.getElementById('val_total_assets').innerText = `₩${formatNumber(Math.round(totalEvalKrw))}`;
                     document.getElementById('val_purchase').innerText = `₩${formatNumber(Math.round(totalPurchaseKrw))}`;
+                    renderAssetCardValues();
 
                     const profitSign = totalProfitAmt > 0 ? '+' : '';
                     const profitClass = totalProfitAmt > 0 ? 'profit-plus' : (totalProfitAmt < 0 ? 'profit-minus' : '');
@@ -2017,149 +2558,353 @@
             }
         }
 
-        // SSE (Server-Sent Events) 실시간 가격 수신
-        let evtSource = null;
+        function renderRealizedProfitSummary(summaryPayload) {
+            const valueEl = document.getElementById('val_realized_profit_month');
+            const subEl = document.getElementById('val_realized_profit_month_sub');
+            if (!valueEl || !subEl) return;
 
-        function initRealtime() {
-            if (evtSource) {
-                evtSource.close();
+            renderRealizedProfitMonthNav();
+
+            if (!summaryPayload || summaryPayload.status !== 'success') {
+                valueEl.innerText = '조회 실패';
+                valueEl.className = 'summary-value';
+                subEl.innerText = '실현 손익을 가져오지 못했습니다';
+                return;
             }
 
-            evtSource = new EventSource('/api/realtime-prices');
-            const statusDot = document.getElementById('ws-status-dot');
-            const statusText = document.getElementById('ws-status-text');
-
-            evtSource.onmessage = function (e) {
-                // keepalive 체크
-                if (e.data.trim() === 'keepalive' || e.data.trim() === '') return;
-
-                try {
-                    const data = JSON.parse(e.data);
-
-                    // 상태 업데이트
-                    if (data.type === 'status') {
-                        if (data.status === 'connected') {
-                            statusDot.style.background = 'var(--profit)';
-                            statusText.innerText = '실시간 스트리밍 중';
-                        } else if (data.status === 'reconnecting') {
-                            statusDot.style.background = 'var(--accent-gold)';
-                            statusText.innerText = '재연결 시도 중...';
-                        } else {
-                            statusDot.style.background = 'var(--loss)';
-                            statusText.innerText = '웹소켓 오프라인';
-                        }
-                        return;
-                    }
-
-                    // 가격 업데이트
-                    if (data.type === 'price') {
-                        let updated = false;
-                        let totalEvalKrw = 0;
-                        let totalPurchaseKrw = 0;
-                        const incomingTicker = normalizeTicker(data.ticker);
-                        const fallbackTicker = normalizeTicker(data.raw_symbol);
-                        const changedTickers = new Set();
-
-                        // 기존 cachedItems에 가격 반영
-                        cachedItems.forEach(item => {
-                            const itemTicker = normalizeTicker(item.ticker);
-                            const isMatch = itemTicker === incomingTicker || (fallbackTicker && itemTicker === fallbackTicker);
-                            if (isMatch) {
-                                item.now_price = data.price;
-
-                                // 평가금액 재계산
-                                let exrt = 1;
-                                if (item.type === 'USA') exrt = item.bass_exrt || 1350;
-                                else if (item.type === 'JPN') exrt = (item.bass_exrt || 905) / 100;
-
-                                item.evalAmtKrw = item.qty * item.now_price * exrt;
-                                // 수익률 재계산 (국내 기준, 해주는 좋겠지만 일단 가격만 변동)
-                                const holdingProfitRt = calcHoldingProfitRate(item.now_price, item.avg_price);
-                                item.profit_rt = holdingProfitRt ?? 0;
-                                updated = true;
-                                changedTickers.add(itemTicker);
-                            }
-
-                            totalEvalKrw += item.evalAmtKrw;
-
-                            let exrt = 1;
-                            if (item.type === 'USA') exrt = item.bass_exrt || 1350;
-                            else if (item.type === 'JPN') exrt = (item.bass_exrt || 905) / 100;
-                            totalPurchaseKrw += (item.qty * item.avg_price) * exrt;
-                        });
-
-                        // 업데이트된 항목이 있다면 화면 휨 갱신
-                        if (updated) {
-                            updateRealtimeRows(changedTickers);
-                            updateChart(cachedItems, totalEvalKrw);
-
-                            // 요약 카드 업데이트
-                            document.getElementById('val_total_assets').innerText = `₩${formatNumber(Math.round(totalEvalKrw))}`;
-
-                            const totalProfitAmt = totalEvalKrw - totalPurchaseKrw;
-                            const totalProfitRt = totalPurchaseKrw > 0 ? (totalProfitAmt / totalPurchaseKrw) * 100 : 0;
-
-                            const profitSign = totalProfitAmt > 0 ? '+' : '';
-                            const profitClass = totalProfitAmt > 0 ? 'profit-plus' : (totalProfitAmt < 0 ? 'profit-minus' : '');
-
-                            const profitElem = document.getElementById('val_total_profit');
-                            profitElem.innerText = `${profitSign}₩${formatNumber(Math.round(Math.abs(totalProfitAmt)))}`;
-                            profitElem.className = `summary-value ${profitClass}`;
-                            document.getElementById('val_total_rt').innerHTML = formatProfit(totalProfitRt, true);
-                        }
-                    }
-                } catch (err) {
-                    console.error('SSE Error processing msg:', err);
-                }
-            };
-
-            evtSource.onerror = function (err) {
-                console.error("EventSource failed:", err);
-                statusDot.style.background = 'var(--loss)';
-                statusText.innerText = '서버 연결 대기';
-            };
+            const total = Number(summaryPayload.summary?.total_realized_profit_krw || 0);
+            valueEl.innerText = formatSignedKrw(total);
+            valueEl.className = `summary-value ${profitClassName(total)}`.trim();
+            subEl.innerText = `${formatDisplayDate(summaryPayload.period.start)} ~ ${formatDisplayDate(summaryPayload.period.end)} 누적`;
         }
 
-        // 실시간 연결 토글
-        let realtimeActive = false;
+        function getTodayMonthKey() {
+            const today = new Date();
+            return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        }
 
-        function updateToggleBtn(active) {
-            realtimeActive = active;
-            const btn = document.getElementById('realtimeToggleBtn');
-            const text = document.getElementById('realtimeToggleText');
-            const icon = document.getElementById('realtimeToggleIcon');
-            if (active) {
-                text.innerText = '실시간 해제';
-                btn.style.background = 'rgba(251, 191, 36, 0.12)';
-                btn.style.borderColor = 'rgba(251, 191, 36, 0.3)';
-                btn.style.color = '#fbbf24';
-                icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>';
-            } else {
-                text.innerText = '실시간 연결';
-                btn.style.background = '';
-                btn.style.borderColor = '';
-                btn.style.color = '';
-                icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+        function formatSummaryMonthLabel(monthKey) {
+            if (!monthKey || !/^\d{4}-\d{2}$/.test(monthKey)) return '';
+            return monthKey.replace('-', '.');
+        }
+
+        function shiftSummaryMonth(monthKey, offset) {
+            const [year, month] = monthKey.split('-').map(Number);
+            const shifted = new Date(year, month - 1 + offset, 1);
+            return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        function renderRealizedProfitMonthNav() {
+            const labelEl = document.getElementById('val_realized_profit_month_label');
+            const nextBtn = document.getElementById('realizedProfitNextMonthBtn');
+            if (labelEl) {
+                labelEl.innerText = formatSummaryMonthLabel(activeRealizedSummaryMonth);
+            }
+            if (nextBtn) {
+                nextBtn.disabled = activeRealizedSummaryMonth >= getTodayMonthKey();
             }
         }
 
-        function toggleRealtime() {
-            if (realtimeActive) {
-                // 연결 해제
-                if (evtSource) {
-                    evtSource.close();
-                    evtSource = null;
-                }
-                const statusDot = document.getElementById('ws-status-dot');
-                const statusText = document.getElementById('ws-status-text');
-                statusDot.style.background = 'var(--text-muted)';
-                statusText.innerText = '실시간 꺼짐';
-                updateToggleBtn(false);
-            } else {
-                // 연결 시작
-                initRealtime();
-                updateToggleBtn(true);
+        function changeRealizedProfitMonth(offset, event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
             }
+            const nextMonth = shiftSummaryMonth(activeRealizedSummaryMonth, offset);
+            if (nextMonth > getTodayMonthKey()) {
+                return;
+            }
+            activeRealizedSummaryMonth = nextMonth;
+            fetchRealizedProfitSummary();
+        }
+
+        async function fetchRealizedProfitSummary(force = false) {
+            const month = activeRealizedSummaryMonth;
+            if (realizedProfitSummaryLoading) return realizedProfitSummaryCache.get(month) || null;
+            if (realizedProfitSummaryCache.has(month) && !force) {
+                const cached = realizedProfitSummaryCache.get(month);
+                renderRealizedProfitSummary(cached);
+                return cached;
+            }
+
+            realizedProfitSummaryLoading = true;
+            document.getElementById('val_realized_profit_month').innerText = '조회 중...';
+            document.getElementById('val_realized_profit_month').className = 'summary-value';
+            document.getElementById('val_realized_profit_month_sub').innerText = '실현 손익을 불러오는 중입니다';
+            renderRealizedProfitMonthNav();
+
+            try {
+                const res = await fetch(`/api/realized-profit/summary?month=${month}`);
+                if (res.status === 401) {
+                    window.location.href = '/login';
+                    return null;
+                }
+                const data = await res.json();
+                realizedProfitSummaryCache.set(month, data);
+                renderRealizedProfitSummary(data);
+                return data;
+            } catch (err) {
+                console.error('fetchRealizedProfitSummary error', err);
+                const errorPayload = { status: 'error' };
+                realizedProfitSummaryCache.set(month, errorPayload);
+                renderRealizedProfitSummary(errorPayload);
+                return errorPayload;
+            } finally {
+                realizedProfitSummaryLoading = false;
+            }
+        }
+
+        function setProfitCardFace(showRealized) {
+            const card = document.getElementById('profitSummaryCard');
+            if (!card) return;
+            profitCardShowingRealized = !!showRealized;
+            card.classList.toggle('is-flipped', profitCardShowingRealized);
+            if (profitCardShowingRealized) {
+                const cached = realizedProfitSummaryCache.get(activeRealizedSummaryMonth);
+                if (!cached) {
+                    fetchRealizedProfitSummary();
+                } else if (cached.status === 'error') {
+                    fetchRealizedProfitSummary(true);
+                } else {
+                    renderRealizedProfitSummary(cached);
+                }
+            }
+        }
+
+        function toggleProfitCard() {
+            setProfitCardFace(!profitCardShowingRealized);
+        }
+
+        function handleProfitCardKeydown(event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleProfitCard();
+            }
+        }
+
+        function renderAssetCardValues() {
+            const krwEl = document.getElementById('val_total_assets_krw');
+            const usdEl = document.getElementById('val_total_assets_usd');
+            if (krwEl) {
+                krwEl.innerText = `₩${formatNumber(Math.round(cachedDomesticEvalKrw || 0))}`;
+            }
+            if (usdEl) {
+                usdEl.innerText = formatUsd(cachedForeignEvalUsd);
+            }
+        }
+
+        function setAssetCardFace(showForeign) {
+            const card = document.getElementById('assetSummaryCard');
+            if (!card) return;
+            assetCardShowingForeign = !!showForeign;
+            card.classList.toggle('is-flipped', assetCardShowingForeign);
+            if (assetCardShowingForeign) {
+                renderAssetCardValues();
+            }
+        }
+
+        function toggleAssetCard() {
+            setAssetCardFace(!assetCardShowingForeign);
+        }
+
+        function handleAssetCardKeydown(event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleAssetCard();
+            }
+        }
+
+        function setRealizedPreset(preset, shouldFetch = false) {
+            activeRealizedPreset = preset;
+            const presetButtons = document.querySelectorAll('[data-profit-preset]');
+            presetButtons.forEach((button) => {
+                button.classList.toggle('active', button.dataset.profitPreset === preset);
+            });
+
+            let range;
+            if (preset === 'lastMonth') range = getLastMonthRange();
+            else if (preset === 'threeMonths') range = getRecentMonthsRange(3);
+            else range = getThisMonthRange();
+
+            document.getElementById('realizedProfitStart').value = range.start;
+            document.getElementById('realizedProfitEnd').value = range.end;
+
+            if (shouldFetch) {
+                loadRealizedProfitDetail(range.start, range.end);
+            }
+        }
+
+        function renderRealizedProfitDetail(detailPayload) {
+            const totalEl = document.getElementById('realizedProfitTotal');
+            const domesticEl = document.getElementById('realizedProfitDomestic');
+            const overseasEl = document.getElementById('realizedProfitOverseas');
+            const rateEl = document.getElementById('realizedProfitRate');
+            const captionEl = document.getElementById('realizedProfitPeriodLabel');
+            const buyRowsEl = document.getElementById('buyHistoryRows');
+            const buyEmptyEl = document.getElementById('buyHistoryEmpty');
+            const sellRowsEl = document.getElementById('sellHistoryRows');
+            const sellEmptyEl = document.getElementById('sellHistoryEmpty');
+
+            if (!detailPayload || detailPayload.status !== 'success') {
+                totalEl.innerText = '조회 실패';
+                totalEl.className = 'profit-stat-value';
+                domesticEl.innerText = '-';
+                overseasEl.innerText = '-';
+                rateEl.innerText = '-';
+                rateEl.className = 'profit-stat-value';
+                captionEl.innerText = '기간 정보를 불러오지 못했습니다.';
+                buyRowsEl.innerHTML = '';
+                sellRowsEl.innerHTML = '';
+                buyEmptyEl.classList.add('active');
+                sellEmptyEl.classList.add('active');
+                buyEmptyEl.innerText = '매수 거래내역을 불러오지 못했습니다.';
+                sellEmptyEl.innerText = '매도 거래내역을 불러오지 못했습니다.';
+                return;
+            }
+
+            const summary = detailPayload.summary || {};
+            const total = Number(summary.total_realized_profit_krw || 0);
+            const domestic = Number(summary.domestic_realized_profit_krw || 0);
+            const overseas = Number(summary.overseas_realized_profit_krw || 0);
+            const totalRate = Number(summary.total_realized_return_rate || 0);
+
+            totalEl.innerText = formatSignedKrw(total);
+            totalEl.className = `profit-stat-value ${profitClassName(total)}`.trim();
+            domesticEl.innerText = formatSignedKrw(domestic);
+            domesticEl.className = `profit-stat-value ${profitClassName(domestic)}`.trim();
+            overseasEl.innerText = formatSignedKrw(overseas);
+            overseasEl.className = `profit-stat-value ${profitClassName(overseas)}`.trim();
+            rateEl.innerText = formatSignedPercent(totalRate);
+            rateEl.className = `profit-stat-value ${profitClassName(totalRate)}`.trim();
+            captionEl.innerText = `${formatDisplayDate(detailPayload.period.start)} ~ ${formatDisplayDate(detailPayload.period.end)}`;
+
+            const trades = Array.isArray(detailPayload.trades) ? detailPayload.trades : [];
+            const buyTrades = trades.filter((trade) => trade.side === '매수');
+            const sellTrades = trades.filter((trade) => trade.side === '매도');
+
+            if (!buyTrades.length) {
+                buyRowsEl.innerHTML = '';
+                buyEmptyEl.classList.add('active');
+                buyEmptyEl.innerText = '선택한 기간에 매수 거래내역이 없습니다.';
+            } else {
+                buyEmptyEl.classList.remove('active');
+                buyRowsEl.innerHTML = buyTrades.map((trade) => `
+                    <tr>
+                        <td>${formatDisplayDate(trade.date)}</td>
+                        <td>${trade.market || '-'}</td>
+                        <td>${trade.name || trade.symbol || '-'}</td>
+                        <td>${formatNumber(Number(trade.quantity || 0))}</td>
+                        <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
+                        <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
+                    </tr>
+                `).join('');
+            }
+
+            if (!sellTrades.length) {
+                sellRowsEl.innerHTML = '';
+                sellEmptyEl.classList.add('active');
+                sellEmptyEl.innerText = '선택한 기간에 매도 거래내역이 없습니다.';
+            } else {
+                sellEmptyEl.classList.remove('active');
+                sellRowsEl.innerHTML = sellTrades.map((trade) => `
+                    <tr>
+                        <td>${formatDisplayDate(trade.date)}</td>
+                        <td>${trade.market || '-'}</td>
+                        <td>${trade.name || trade.symbol || '-'}</td>
+                        <td>${formatNumber(Number(trade.quantity || 0))}</td>
+                        <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
+                        <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
+                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : formatSignedKrw(trade.realized_profit_krw)}</td>
+                        <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '-' : formatSignedPercent(trade.realized_return_rate)}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        async function loadRealizedProfitDetail(start, end, force = false) {
+            const loadingEl = document.getElementById('realizedProfitLoading');
+            const cacheKey = `${start}:${end}`;
+
+            if (!force && realizedProfitDetailCache.has(cacheKey)) {
+                renderRealizedProfitDetail(realizedProfitDetailCache.get(cacheKey));
+                return realizedProfitDetailCache.get(cacheKey);
+            }
+
+            realizedProfitDetailLoading = true;
+            loadingEl.classList.add('active');
+            document.getElementById('buyHistoryEmpty').classList.remove('active');
+            document.getElementById('sellHistoryEmpty').classList.remove('active');
+
+            try {
+                const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+                if (res.status === 401) {
+                    window.location.href = '/login';
+                    return null;
+                }
+                const data = await res.json();
+                realizedProfitDetailCache.set(cacheKey, data);
+                renderRealizedProfitDetail(data);
+                return data;
+            } catch (err) {
+                console.error('loadRealizedProfitDetail error', err);
+                const errorData = { status: 'error' };
+                renderRealizedProfitDetail(errorData);
+                return errorData;
+            } finally {
+                realizedProfitDetailLoading = false;
+                loadingEl.classList.remove('active');
+            }
+        }
+
+        function openRealizedProfitModal(event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+
+            const overlay = document.getElementById('realizedProfitModal');
+            overlay.classList.add('active');
+            setProfitModalTab(activeProfitModalTab || 'buy');
+            if (!realizedProfitSummaryCache.get(activeRealizedSummaryMonth)) {
+                fetchRealizedProfitSummary();
+            }
+            setRealizedPreset(activeRealizedPreset || 'thisMonth', true);
+        }
+
+        function closeRealizedProfitModal() {
+            document.getElementById('realizedProfitModal').classList.remove('active');
+        }
+
+        function handleRealizedProfitOverlayClick(event) {
+            if (event.target.id === 'realizedProfitModal') {
+                closeRealizedProfitModal();
+            }
+        }
+
+        function onRealizedRangeInputChange() {
+            activeRealizedPreset = 'custom';
+            const presetButtons = document.querySelectorAll('[data-profit-preset]');
+            presetButtons.forEach((button) => button.classList.remove('active'));
+        }
+
+        function setProfitModalTab(tab) {
+            activeProfitModalTab = tab === 'sell' ? 'sell' : 'buy';
+            document.querySelectorAll('[data-profit-tab]').forEach((button) => {
+                button.classList.toggle('active', button.dataset.profitTab === activeProfitModalTab);
+            });
+            document.getElementById('buyHistoryPanel').classList.toggle('active', activeProfitModalTab === 'buy');
+            document.getElementById('sellHistoryPanel').classList.toggle('active', activeProfitModalTab === 'sell');
+        }
+
+        function fetchRealizedProfitFromInputs() {
+            const start = document.getElementById('realizedProfitStart').value;
+            const end = document.getElementById('realizedProfitEnd').value;
+            if (!start || !end) return;
+            if (start > end) {
+                alert('조회 시작일은 종료일보다 늦을 수 없습니다.');
+                return;
+            }
+            loadRealizedProfitDetail(start, end, true);
         }
 
         // ========== 종목 검색 ==========
@@ -2752,6 +3497,7 @@
 
             fetchMarketCalendar();
             syncData();
+            fetchRealizedProfitSummary();
         });
     </script>
 
@@ -2764,6 +3510,98 @@
             <div class="modal-actions">
                 <button class="btn-modal btn-cancel" onclick="closeModal()">취소</button>
                 <button class="btn-modal" id="modalConfirmBtn" onclick="executeModalConfirm()">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="profit-detail-overlay" id="realizedProfitModal" onclick="handleRealizedProfitOverlayClick(event)">
+        <div class="profit-detail-modal">
+            <div class="profit-detail-header">
+                <div class="profit-detail-title-wrap">
+                    <h2>거래내역</h2>
+                    <p id="realizedProfitPeriodLabel">기간을 선택해 실현 손익을 조회합니다.</p>
+                </div>
+                <button class="profit-detail-close" onclick="closeRealizedProfitModal()" aria-label="실현 손익 상세 닫기">&times;</button>
+            </div>
+            <div class="profit-detail-body">
+                <div class="profit-detail-toolbar">
+                    <div class="profit-quick-range">
+                        <button type="button" data-profit-preset="thisMonth" class="active" onclick="setRealizedPreset('thisMonth', true)">이번 달</button>
+                        <button type="button" data-profit-preset="lastMonth" onclick="setRealizedPreset('lastMonth', true)">지난 달</button>
+                        <button type="button" data-profit-preset="threeMonths" onclick="setRealizedPreset('threeMonths', true)">최근 3개월</button>
+                    </div>
+                    <div class="profit-range-inputs">
+                        <input type="date" id="realizedProfitStart" onchange="onRealizedRangeInputChange()">
+                        <input type="date" id="realizedProfitEnd" onchange="onRealizedRangeInputChange()">
+                        <button type="button" class="profit-range-fetch" onclick="fetchRealizedProfitFromInputs()">조회</button>
+                    </div>
+                </div>
+
+                <div class="profit-detail-loading" id="realizedProfitLoading">실현 손익 데이터를 불러오는 중입니다...</div>
+
+                <div class="profit-detail-summary-grid">
+                    <div class="profit-stat-card">
+                        <div class="profit-stat-label">총 실현 손익</div>
+                        <div class="profit-stat-value" id="realizedProfitTotal">-</div>
+                    </div>
+                    <div class="profit-stat-card">
+                        <div class="profit-stat-label">국내 실현 손익</div>
+                        <div class="profit-stat-value" id="realizedProfitDomestic">-</div>
+                    </div>
+                    <div class="profit-stat-card">
+                        <div class="profit-stat-label">해외 실현 손익</div>
+                        <div class="profit-stat-value" id="realizedProfitOverseas">-</div>
+                    </div>
+                    <div class="profit-stat-card">
+                        <div class="profit-stat-label">실현 수익률</div>
+                        <div class="profit-stat-value" id="realizedProfitRate">-</div>
+                    </div>
+                </div>
+
+                <div class="profit-detail-tabs">
+                    <button class="profit-detail-tab active" type="button" data-profit-tab="buy" onclick="setProfitModalTab('buy')">매수</button>
+                    <button class="profit-detail-tab" type="button" data-profit-tab="sell" onclick="setProfitModalTab('sell')">매도</button>
+                </div>
+
+                <div class="profit-detail-panel active" id="buyHistoryPanel">
+                    <div class="profit-detail-table-wrap">
+                        <table class="profit-detail-table trade-history-table">
+                            <thead>
+                                <tr>
+                                    <th>일자</th>
+                                    <th>마켓</th>
+                                    <th>종목</th>
+                                    <th>수량</th>
+                                    <th>체결단가</th>
+                                    <th>거래금액</th>
+                                </tr>
+                            </thead>
+                            <tbody id="buyHistoryRows"></tbody>
+                        </table>
+                    </div>
+                    <div class="profit-detail-empty" id="buyHistoryEmpty">선택한 기간에 매수 거래내역이 없습니다.</div>
+                </div>
+
+                <div class="profit-detail-panel" id="sellHistoryPanel">
+                    <div class="profit-detail-table-wrap">
+                        <table class="profit-detail-table trade-history-table">
+                            <thead>
+                                <tr>
+                                    <th>일자</th>
+                                    <th>마켓</th>
+                                    <th>종목</th>
+                                    <th>수량</th>
+                                    <th>체결단가</th>
+                                    <th>거래금액</th>
+                                    <th>실현손익</th>
+                                    <th>수익률</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sellHistoryRows"></tbody>
+                        </table>
+                    </div>
+                    <div class="profit-detail-empty" id="sellHistoryEmpty">선택한 기간에 매도 거래내역이 없습니다.</div>
+                </div>
             </div>
         </div>
     </div>

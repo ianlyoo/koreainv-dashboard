@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from app import api_client
 import yfinance as yf
 import datetime
+import calendar
 import logging
 import cloudscraper
 from bs4 import BeautifulSoup
@@ -13,6 +14,7 @@ from app import auth
 import os
 import uuid
 from dataclasses import dataclass
+from typing import Optional
 from app import runtime_paths
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -44,6 +46,14 @@ def check_auth(request: Request):
     if not session_id or session_id not in active_sessions:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
+
+def _get_session_data(request: Request) -> SessionData:
+    session_id = request.cookies.get("session")
+    session = active_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return session
+
 def _set_session_cookie(response: Response, session_id: str):
     response.set_cookie(
         key="session",
@@ -71,6 +81,70 @@ def _decrypt_credentials(settings: dict, pin: str):
         acnt_prdt_cd = auth.decrypt_data(settings.get("acnt_prdt_cd_enc", ""), pin)
 
     return app_key, app_secret, cano, acnt_prdt_cd
+
+
+def _today_kst() -> datetime.date:
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).date()
+
+
+def _parse_month_value(month: Optional[str]) -> tuple[datetime.date, datetime.date]:
+    today = _today_kst()
+    if month:
+        try:
+            year, mon = month.split("-")
+            first_day = datetime.date(int(year), int(mon), 1)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid month format. Use YYYY-MM.") from exc
+    else:
+        first_day = today.replace(day=1)
+
+    last_day_num = calendar.monthrange(first_day.year, first_day.month)[1]
+    month_last_day = datetime.date(first_day.year, first_day.month, last_day_num)
+    end_day = min(today, month_last_day)
+    return first_day, end_day
+
+
+def _parse_date_value(raw_value: str, field_name: str) -> datetime.date:
+    try:
+        return datetime.date.fromisoformat(raw_value)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}. Use YYYY-MM-DD.") from exc
+
+
+def _serialize_realized_profit_payload(start_day: datetime.date, end_day: datetime.date, payload: dict) -> dict:
+    summary = payload.get("summary", {})
+    daily_rows = []
+    for row in payload.get("daily", []):
+        trade_date = str(row.get("date", ""))
+        iso_date = trade_date
+        if len(trade_date) == 8 and trade_date.isdigit():
+            iso_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+        daily_rows.append({
+            "date": iso_date,
+            "domestic_realized_profit_krw": round(float(row.get("domestic_realized_profit_krw", 0.0))),
+            "overseas_realized_profit_krw": round(float(row.get("overseas_realized_profit_krw", 0.0))),
+            "total_realized_profit_krw": round(float(row.get("total_realized_profit_krw", 0.0))),
+            "domestic_fee_krw": round(float(row.get("domestic_fee_krw", 0.0))),
+            "domestic_tax_krw": round(float(row.get("domestic_tax_krw", 0.0))),
+            "overseas_fee_krw": round(float(row.get("overseas_fee_krw", 0.0))),
+        })
+
+    return {
+        "status": "success",
+        "period": {
+            "start": start_day.isoformat(),
+            "end": end_day.isoformat(),
+        },
+        "summary": {
+            "domestic_realized_profit_krw": round(float(summary.get("domestic_realized_profit_krw", 0.0))),
+            "overseas_realized_profit_krw": round(float(summary.get("overseas_realized_profit_krw", 0.0))),
+            "total_realized_profit_krw": round(float(summary.get("total_realized_profit_krw", 0.0))),
+            "total_realized_return_rate": round(float(summary.get("total_realized_return_rate", 0.0)), 2),
+            "trade_days": int(summary.get("trade_days", 0)),
+        },
+        "daily": daily_rows,
+        "trades": payload.get("trades", []),
+    }
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -210,10 +284,7 @@ async def reset_settings(request: Request):
 
 @app.get("/api/sync")
 async def sync_data(request: Request):
-    session_id = request.cookies.get("session")
-    session = active_sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    session = _get_session_data(request)
     try:
         token = api_client.get_access_token(session.app_key, session.app_secret)
         if not token:
@@ -236,6 +307,75 @@ async def sync_data(request: Request):
     except Exception:
         logging.exception("sync_data failed")
         raise HTTPException(status_code=500, detail="sync_data_failed")
+
+
+@app.get("/api/realized-profit/summary")
+async def get_realized_profit_summary(request: Request, month: Optional[str] = None):
+    session = _get_session_data(request)
+    start_day, end_day = _parse_month_value(month)
+    try:
+        token = api_client.get_access_token(session.app_key, session.app_secret)
+        if not token:
+            raise HTTPException(status_code=500, detail="Failed to get access token from API")
+
+        payload = api_client.get_realized_profit_summary(
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+        )
+        payload["trades"] = []
+        return _serialize_realized_profit_payload(start_day, end_day, payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("get_realized_profit_summary failed")
+        raise HTTPException(status_code=500, detail="realized_profit_summary_failed")
+
+
+@app.get("/api/realized-profit/detail")
+async def get_realized_profit_detail(request: Request, start: str, end: str):
+    session = _get_session_data(request)
+    start_day = _parse_date_value(start, "start")
+    end_day = _parse_date_value(end, "end")
+    if start_day > end_day:
+        raise HTTPException(status_code=400, detail="start must be before or equal to end")
+    if (end_day - start_day).days > 370:
+        raise HTTPException(status_code=400, detail="Date range is too large")
+
+    try:
+        token = api_client.get_access_token(session.app_key, session.app_secret)
+        if not token:
+            raise HTTPException(status_code=500, detail="Failed to get access token from API")
+
+        payload = api_client.get_realized_profit_summary(
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+        )
+        trade_payload = api_client.get_trade_history(
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+        )
+        payload["trades"] = trade_payload.get("items", [])
+        return _serialize_realized_profit_payload(start_day, end_day, payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("get_realized_profit_detail failed")
+        raise HTTPException(status_code=500, detail="realized_profit_detail_failed")
 
 
 
