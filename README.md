@@ -1,6 +1,6 @@
 # Korea Investment Dashboard
 
-Current release: `v1.2.17`
+Current release: `v1.2.18`
 
 한국투자증권 API 기반 개인 계좌 대시보드입니다.  
 설치 후 실행하면 로컬에서 대시보드가 열리고, 계좌/종목 데이터를 한 화면에서 확인할 수 있습니다.
@@ -97,6 +97,6 @@ build_windows.bat
 ```
 
 ```bash
-git tag v1.2.17
-git push origin v1.2.17
+git tag v1.2.18
+git push origin v1.2.18
 ```

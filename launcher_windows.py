@@ -259,15 +259,17 @@ def _update_policy(release: dict) -> str:
 def _find_zip_asset(release: dict) -> dict | None:
     assets = release.get("assets", []) or []
     preferred = None
-    fallback = None
     for a in assets:
         name = str(a.get("name", "")).lower()
-        if name.endswith(".zip"):
-            fallback = fallback or a
-            if "win64" in name:
-                preferred = a
-                break
-    return preferred or fallback
+        if not name.endswith(".zip"):
+            continue
+        if "win" not in name and "windows" not in name:
+            continue
+        if "win64" in name or "x64" in name or "amd64" in name:
+            preferred = a
+            break
+        preferred = preferred or a
+    return preferred
 
 
 def _download_update_zip(asset: dict, logger: logging.Logger) -> str | None:
