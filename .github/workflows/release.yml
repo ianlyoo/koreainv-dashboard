@@ -78,11 +78,19 @@ jobs:
       - name: Resolve release policy
         id: policy
         env:
+          GH_TOKEN: ${{ github.token }}
           INPUT_POLICY: ${{ github.event.inputs.release_policy }}
         run: |
           policy="${INPUT_POLICY:-}"
           if [ -z "$policy" ]; then
-            tag_message="$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)')"
+            ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
+            object_type="$(printf '%s' "$ref_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])')"
+            if [ "$object_type" = "tag" ]; then
+              object_url="$(printf '%s' "$ref_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["url"])')"
+              tag_message="$(gh api "$object_url" --jq '.message')"
+            else
+              tag_message=""
+            fi
             compact="$(printf '%s' "$tag_message" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
             if printf '%s' "$compact" | grep -q '\[mandatory-update\]\|mandatory-update\|update_policy:mandatory\|필수업데이트'; then
               policy="mandatory"
