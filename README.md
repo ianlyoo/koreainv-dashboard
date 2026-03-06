@@ -1,6 +1,6 @@
 # Korea Investment Dashboard
 
-Current release: `v1.2.18`
+Current release: `v1.3.3`
 
 한국투자증권 API 기반 개인 계좌 대시보드입니다.  
 설치 후 실행하면 로컬에서 대시보드가 열리고, 계좌/종목 데이터를 한 화면에서 확인할 수 있습니다.
@@ -84,6 +84,8 @@ xattr -dr com.apple.quarantine /Applications/KISDashboard.app
 
 ## 개발/배포 (Maintainer)
 
+- 릴리스 업데이트 정책 문서: `RELEASE_POLICY.md`
+
 ```bash
 python -m app.main
 ```
@@ -97,6 +99,6 @@ build_windows.bat
 ```
 
 ```bash
-git tag v1.2.18
-git push origin v1.2.18
+git tag v1.3.3
+git push origin v1.3.3
 ```

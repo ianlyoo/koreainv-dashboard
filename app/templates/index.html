@@ -1589,6 +1589,8 @@
             display: flex;
             gap: 8px;
             margin-bottom: 14px;
+            align-items: center;
+            flex-wrap: wrap;
         }
 
         .profit-detail-tab {
@@ -1606,6 +1608,13 @@
             color: #fff;
             background: rgba(251, 191, 36, 0.14);
             border-color: rgba(251, 191, 36, 0.26);
+        }
+
+        .profit-detail-market-filter {
+            display: flex;
+            gap: 8px;
+            margin-left: auto;
+            flex-wrap: wrap;
         }
 
         .profit-detail-panel {
@@ -2051,6 +2060,7 @@
         let realizedProfitDetailLoading = false;
         let activeRealizedPreset = 'thisMonth';
         let activeProfitModalTab = 'buy';
+        let activeProfitMarketFilter = 'all';
         let activeRealizedSummaryMonth = (() => {
             const today = new Date();
             return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
@@ -2779,19 +2789,25 @@
             captionEl.innerText = `${formatDisplayDate(detailPayload.period.start)} ~ ${formatDisplayDate(detailPayload.period.end)}`;
 
             const trades = Array.isArray(detailPayload.trades) ? detailPayload.trades : [];
-            const buyTrades = trades.filter((trade) => trade.side === '매수');
-            const sellTrades = trades.filter((trade) => trade.side === '매도');
+            const marketFilteredTrades = trades.filter((trade) => {
+                if (activeProfitMarketFilter === 'domestic') return trade.market === 'KOR';
+                if (activeProfitMarketFilter === 'overseas') return trade.market !== 'KOR';
+                return true;
+            });
+            const buyTrades = marketFilteredTrades.filter((trade) => trade.side === '매수');
+            const sellTrades = marketFilteredTrades.filter((trade) => trade.side === '매도');
+            const marketLabel = activeProfitMarketFilter === 'domestic' ? '국내' : activeProfitMarketFilter === 'overseas' ? '해외' : '선택한 조건';
 
             if (!buyTrades.length) {
                 buyRowsEl.innerHTML = '';
                 buyEmptyEl.classList.add('active');
-                buyEmptyEl.innerText = '선택한 기간에 매수 거래내역이 없습니다.';
+                buyEmptyEl.innerText = `${marketLabel} 매수 거래내역이 없습니다.`;
             } else {
                 buyEmptyEl.classList.remove('active');
                 buyRowsEl.innerHTML = buyTrades.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
-                        <td>${trade.market || '-'}</td>
+                        <td>${trade.ticker || trade.symbol || '-'}</td>
                         <td>${trade.name || trade.symbol || '-'}</td>
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
@@ -2803,13 +2819,13 @@
             if (!sellTrades.length) {
                 sellRowsEl.innerHTML = '';
                 sellEmptyEl.classList.add('active');
-                sellEmptyEl.innerText = '선택한 기간에 매도 거래내역이 없습니다.';
+                sellEmptyEl.innerText = `${marketLabel} 매도 거래내역이 없습니다.`;
             } else {
                 sellEmptyEl.classList.remove('active');
                 sellRowsEl.innerHTML = sellTrades.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
-                        <td>${trade.market || '-'}</td>
+                        <td>${trade.ticker || trade.symbol || '-'}</td>
                         <td>${trade.name || trade.symbol || '-'}</td>
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
@@ -2865,6 +2881,7 @@
             const overlay = document.getElementById('realizedProfitModal');
             overlay.classList.add('active');
             setProfitModalTab(activeProfitModalTab || 'buy');
+            setProfitMarketFilter(activeProfitMarketFilter || 'all');
             if (!realizedProfitSummaryCache.get(activeRealizedSummaryMonth)) {
                 fetchRealizedProfitSummary();
             }
@@ -2894,6 +2911,22 @@
             });
             document.getElementById('buyHistoryPanel').classList.toggle('active', activeProfitModalTab === 'buy');
             document.getElementById('sellHistoryPanel').classList.toggle('active', activeProfitModalTab === 'sell');
+        }
+
+        function setProfitMarketFilter(filter) {
+            activeProfitMarketFilter = ['domestic', 'overseas'].includes(filter) ? filter : 'all';
+            document.querySelectorAll('[data-profit-market]').forEach((button) => {
+                button.classList.toggle('active', button.dataset.profitMarket === activeProfitMarketFilter);
+            });
+
+            const start = document.getElementById('realizedProfitStart').value;
+            const end = document.getElementById('realizedProfitEnd').value;
+            if (!start || !end) return;
+
+            const cacheKey = `${start}:${end}`;
+            if (realizedProfitDetailCache.has(cacheKey)) {
+                renderRealizedProfitDetail(realizedProfitDetailCache.get(cacheKey));
+            }
         }
 
         function fetchRealizedProfitFromInputs() {
@@ -3561,6 +3594,11 @@
                 <div class="profit-detail-tabs">
                     <button class="profit-detail-tab active" type="button" data-profit-tab="buy" onclick="setProfitModalTab('buy')">매수</button>
                     <button class="profit-detail-tab" type="button" data-profit-tab="sell" onclick="setProfitModalTab('sell')">매도</button>
+                    <div class="profit-detail-market-filter">
+                        <button class="profit-detail-tab active" type="button" data-profit-market="all" onclick="setProfitMarketFilter('all')">전체</button>
+                        <button class="profit-detail-tab" type="button" data-profit-market="domestic" onclick="setProfitMarketFilter('domestic')">국내</button>
+                        <button class="profit-detail-tab" type="button" data-profit-market="overseas" onclick="setProfitMarketFilter('overseas')">해외</button>
+                    </div>
                 </div>
 
                 <div class="profit-detail-panel active" id="buyHistoryPanel">
@@ -3569,7 +3607,7 @@
                             <thead>
                                 <tr>
                                     <th>일자</th>
-                                    <th>마켓</th>
+                                    <th>티커</th>
                                     <th>종목</th>
                                     <th>수량</th>
                                     <th>체결단가</th>
@@ -3588,7 +3626,7 @@
                             <thead>
                                 <tr>
                                     <th>일자</th>
-                                    <th>마켓</th>
+                                    <th>티커</th>
                                     <th>종목</th>
                                     <th>수량</th>
                                     <th>체결단가</th>

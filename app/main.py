@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from app import api_client
 import yfinance as yf
+import asyncio
 import datetime
 import calendar
 import logging
@@ -290,12 +291,15 @@ async def sync_data(request: Request):
         if not token:
             raise HTTPException(status_code=500, detail="Failed to get access token from API")
 
-        domestic = api_client.get_domestic_balance(
-            token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd
+        domestic_task = asyncio.to_thread(
+            api_client.get_domestic_balance,
+            token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd,
         )
-        overseas = api_client.get_overseas_balance(
-            token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd
+        overseas_task = asyncio.to_thread(
+            api_client.get_overseas_balance,
+            token, session.app_key, session.app_secret, session.cano, session.acnt_prdt_cd,
         )
+        domestic, overseas = await asyncio.gather(domestic_task, overseas_task)
 
         return {
             "status": "success",

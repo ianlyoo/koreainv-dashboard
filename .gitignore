@@ -15,6 +15,7 @@ data/settings.json
 # Local editor/project files
 .vscode/
 .DS_Store
+.playwright-cli/
 
 # Debug / backup artifacts
 api_dump.json

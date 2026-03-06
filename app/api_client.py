@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import json
 from app import config
@@ -11,6 +12,7 @@ _cached_token = None
 _token_issue_time = 0
 _token_expires_at = 0
 _realized_cache = {}
+_MAX_PARALLEL_WORKERS = 4
 logger = logging.getLogger(__name__)
 
 
@@ -447,11 +449,15 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
             }
         for item in (data.get("output1") or []):
                 ticker = item.get("pdno", "")
+                # inquire-balance already includes current price fields, so avoid
+                # issuing one extra quote request per holding on every sync.
                 fallback_now = int(_to_float(item.get("prpr", "0")))
-                quoted_now = get_domestic_quote_price(
-                    token, app_key, app_secret, ticker
-                )
-                now_price = quoted_now if (quoted_now and quoted_now > 0) else fallback_now
+                now_price = fallback_now
+                if now_price <= 0:
+                    quoted_now = get_domestic_quote_price(
+                        token, app_key, app_secret, ticker
+                    )
+                    now_price = quoted_now if (quoted_now and quoted_now > 0) else fallback_now
                 result["items"].append({
                     "name": item.get("prdt_name", "알수없음"),
                     "ticker": ticker,
@@ -660,6 +666,49 @@ def _request_with_pagination(url, headers, params, fk_field: str, nk_field: str,
     return pages
 
 
+def _run_parallel_tasks(tasks: dict[str, tuple]) -> dict[str, object]:
+    if not tasks:
+        return {}
+    results: dict[str, object] = {}
+    with ThreadPoolExecutor(max_workers=min(len(tasks), _MAX_PARALLEL_WORKERS)) as executor:
+        future_map = {
+            name: executor.submit(func, *args)
+            for name, (func, args) in tasks.items()
+        }
+        for name, future in future_map.items():
+            results[name] = future.result()
+    return results
+
+
+def _get_cached_payload(cache_key: tuple, ttl_seconds: int = 20):
+    cached = _realized_cache.get(cache_key)
+    if cached and (time.time() - cached["ts"]) < ttl_seconds:
+        return cached["data"]
+    return None
+
+
+def _set_cached_payload(cache_key: tuple, data):
+    _realized_cache[cache_key] = {"ts": time.time(), "data": data}
+
+
+def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
+    cache_key = ("trade_profit_rows", cano, acnt_prdt_cd, start_date, end_date)
+    cached = _get_cached_payload(cache_key)
+    if cached is not None:
+        return cached
+
+    results = _run_parallel_tasks({
+        "domestic": (get_domestic_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+        "overseas": (get_overseas_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+    })
+    payload = {
+        "domestic": results.get("domestic", []),
+        "overseas": results.get("overseas", []),
+    }
+    _set_cached_payload(cache_key, payload)
+    return payload
+
+
 def _normalize_domestic_realized_rows(rows: list[dict]) -> list[dict]:
     normalized = []
     for row in rows or []:
@@ -839,13 +888,13 @@ def get_overseas_realized_profit(token, app_key, app_secret, cano, acnt_prdt_cd,
 
 def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
     cache_key = ("realized_summary", cano, acnt_prdt_cd, start_date, end_date)
-    now = time.time()
-    cached = _realized_cache.get(cache_key)
-    if cached and (now - cached["ts"]) < 20:
-        return cached["data"]
+    cached = _get_cached_payload(cache_key)
+    if cached is not None:
+        return cached
 
-    domestic_rows = get_domestic_realized_trade_profit(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
-    overseas_rows = get_overseas_realized_trade_profit(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
+    trade_profit_rows = _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
+    domestic_rows = trade_profit_rows["domestic"]
+    overseas_rows = trade_profit_rows["overseas"]
 
     by_date: dict[str, dict] = {}
     for row in domestic_rows:
@@ -893,7 +942,7 @@ def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, 
         },
         "daily": daily_rows,
     }
-    _realized_cache[cache_key] = {"ts": now, "data": result}
+    _set_cached_payload(cache_key, result)
     return result
 
 
@@ -936,7 +985,8 @@ def get_overseas_realized_trade_profit(token, app_key, app_secret, cano, acnt_pr
     ]
     url = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-period-profit"
     rows = []
-    for exchange_code, currency_code in exchange_queries:
+
+    def fetch_exchange(exchange_code: str, currency_code: str):
         headers = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {token}",
@@ -958,11 +1008,17 @@ def get_overseas_realized_trade_profit(token, app_key, app_secret, cano, acnt_pr
             "CTX_AREA_NK200": "",
         }
         pages = _request_with_pagination(url, headers, params, "ctx_area_fk200", "ctx_area_nk200", app_key=app_key, app_secret=app_secret)
+        exchange_rows = []
         for _, data in pages:
             page_rows = data.get("output1") or []
             if isinstance(page_rows, dict):
                 page_rows = [page_rows]
-            rows.extend(_normalize_overseas_realized_trade_rows(page_rows))
+            exchange_rows.extend(_normalize_overseas_realized_trade_rows(page_rows))
+        return exchange_rows
+
+    with ThreadPoolExecutor(max_workers=min(len(exchange_queries), _MAX_PARALLEL_WORKERS)) as executor:
+        for exchange_rows in executor.map(lambda item: fetch_exchange(*item), exchange_queries):
+            rows.extend(exchange_rows)
     return rows
 
 
@@ -975,13 +1031,18 @@ def _normalize_domestic_trade_rows(rows: list[dict]) -> list[dict]:
         if not trade_date:
             continue
         qty = _to_float(row.get("tot_ccld_qty") or row.get("ord_qty") or 0)
-        unit_price = _to_float(row.get("avg_prvs") or row.get("ord_unpr") or 0)
         amount = _to_float(row.get("tot_ccld_amt") or 0)
+        # Official KIS example exposes avg_prvs as 평균가. We still prefer
+        # total amount / filled quantity when both exist because it matches the
+        # actual weighted fill price the user expects to see.
+        unit_price = (amount / qty) if qty > 0 and amount > 0 else _to_float(row.get("avg_prvs") or row.get("ord_unpr") or 0)
+        symbol = str(row.get("pdno", "")).strip()
         normalized.append({
             "date": trade_date,
             "market": "KOR",
-            "symbol": str(row.get("pdno", "")).strip(),
-            "name": str(row.get("prdt_name", "")).strip() or str(row.get("pdno", "")).strip(),
+            "symbol": symbol,
+            "ticker": symbol,
+            "name": str(row.get("prdt_name", "")).strip() or symbol,
             "side": _normalize_side(row.get("sll_buy_dvsn_cd"), row.get("sll_buy_dvsn_cd_name")),
             "quantity": qty,
             "unit_price": unit_price,
@@ -1002,15 +1063,24 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
         if not trade_date:
             continue
         currency = str(row.get("crcy_cd", "")).strip() or "USD"
+        quantity = _to_float(row.get("ccld_qty") or 0)
+        amount = _to_float(row.get("tr_frcr_amt2") or row.get("tr_amt") or 0)
+        # The official example labels tr_frcr_amt2 as foreign-currency trade
+        # amount. For display, deriving price from amount / quantity is more
+        # reliable than ovrs_stck_ccld_unpr, which can come back in a different
+        # unit from the user-facing filled price.
+        unit_price = (amount / quantity) if quantity > 0 and amount > 0 else _to_float(row.get("ovrs_stck_ccld_unpr") or row.get("ft_ccld_unpr2") or 0)
+        symbol = str(row.get("pdno", "")).strip()
         normalized.append({
             "date": trade_date,
             "market": str(row.get("ovrs_excg_cd", "")).strip() or fallback_market,
-            "symbol": str(row.get("pdno", "")).strip(),
-            "name": str(row.get("ovrs_item_name", "")).strip() or str(row.get("pdno", "")).strip(),
+            "symbol": symbol,
+            "ticker": symbol,
+            "name": str(row.get("ovrs_item_name", "")).strip() or symbol,
             "side": _normalize_side(row.get("sll_buy_dvsn_cd"), row.get("sll_buy_dvsn_name")),
-            "quantity": _to_float(row.get("ccld_qty") or 0),
-            "unit_price": _to_float(row.get("ovrs_stck_ccld_unpr") or row.get("ft_ccld_unpr2") or 0),
-            "amount": _to_float(row.get("tr_amt") or row.get("tr_frcr_amt2") or 0),
+            "quantity": quantity,
+            "unit_price": unit_price,
+            "amount": amount,
             "currency": currency,
             "time": "",
             "realized_profit_krw": None,
@@ -1118,7 +1188,7 @@ def get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, s
     url = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-period-trans"
     rows = []
 
-    for exchange_code in exchange_queries:
+    def fetch_exchange(exchange_code: str):
         headers = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {token}",
@@ -1139,28 +1209,38 @@ def get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, s
             "CTX_AREA_NK100": "",
         }
         pages = _request_with_pagination(url, headers, params, "ctx_area_fk100", "ctx_area_nk100", app_key=app_key, app_secret=app_secret)
+        exchange_rows = []
         for _, data in pages:
             page_rows = data.get("output1") or []
             if isinstance(page_rows, dict):
                 page_rows = [page_rows]
-            rows.extend(_normalize_overseas_trade_rows(page_rows, exchange_code))
+            exchange_rows.extend(_normalize_overseas_trade_rows(page_rows, exchange_code))
+        return exchange_rows
+
+    with ThreadPoolExecutor(max_workers=min(len(exchange_queries), _MAX_PARALLEL_WORKERS)) as executor:
+        for exchange_rows in executor.map(fetch_exchange, exchange_queries):
+            rows.extend(exchange_rows)
     return rows
 
 
 def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
     cache_key = ("trade_history", cano, acnt_prdt_cd, start_date, end_date)
-    now = time.time()
-    cached = _realized_cache.get(cache_key)
-    if cached and (now - cached["ts"]) < 20:
-        return cached["data"]
+    cached = _get_cached_payload(cache_key)
+    if cached is not None:
+        return cached
 
-    domestic_rows = get_domestic_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
-    overseas_rows = get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
-    domestic_pnl_rows = get_domestic_realized_trade_profit(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
-    overseas_pnl_rows = get_overseas_realized_trade_profit(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
+    results = _run_parallel_tasks({
+        "domestic_trades": (get_domestic_trade_history, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+        "overseas_trades": (get_overseas_trade_history, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+    })
+    pnl_rows = _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
+    domestic_rows = results.get("domestic_trades", [])
+    overseas_rows = results.get("overseas_trades", [])
+    domestic_pnl_rows = pnl_rows["domestic"]
+    overseas_pnl_rows = pnl_rows["overseas"]
     all_rows = _dedupe_trade_rows(domestic_rows + overseas_rows)
     all_rows = _attach_realized_profit_to_sell_trades(all_rows, domestic_pnl_rows, overseas_pnl_rows)
     all_rows.sort(key=lambda row: f"{row.get('date', '')}{row.get('time', '')}", reverse=True)
     result = {"items": all_rows}
-    _realized_cache[cache_key] = {"ts": now, "data": result}
+    _set_cached_payload(cache_key, result)
     return result
