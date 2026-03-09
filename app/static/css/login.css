@@ -1,0 +1,291 @@
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+
+:root {
+    --bg-base: #050507;
+    --bg-grad-1: #0a0b10;
+    --bg-grad-2: #12141d;
+    --panel-bg: rgba(22, 24, 32, 0.65);
+    --panel-border: rgba(255, 255, 255, 0.06);
+    --panel-hover: rgba(30, 33, 43, 0.8);
+    --text-main: #f3f4f6;
+    --text-sub: #9ca3af;
+    --text-muted: #6b7280;
+    --accent-gold: #fbbf24;
+    --accent-gold-hover: #f59e0b;
+    --accent-blue: #3b82f6;
+    --input-bg: rgba(0, 0, 0, 0.3);
+    --input-border: rgba(255, 255, 255, 0.1);
+    --input-focus: rgba(251, 191, 36, 0.5);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: radial-gradient(circle at center, var(--bg-grad-2) 0%, var(--bg-grad-1) 50%, var(--bg-base) 100%);
+    color: var(--text-main);
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+}
+
+.ambient-light {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(100px);
+    z-index: -1;
+    opacity: 0.15;
+    animation: float 10s infinite ease-in-out alternate;
+}
+
+.ambient-1 {
+    width: 40vw;
+    height: 40vw;
+    background: var(--accent-gold);
+    top: -10vw;
+    left: -10vw;
+}
+
+.ambient-2 {
+    width: 30vw;
+    height: 30vw;
+    background: var(--accent-blue);
+    bottom: -5vw;
+    right: -5vw;
+    animation-delay: -5s;
+}
+
+@keyframes float {
+    0% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    100% {
+        transform: translate(50px, 30px) scale(1.1);
+    }
+}
+
+.login-container {
+    width: 100%;
+    max-width: 440px;
+    padding: 40px;
+    background: var(--panel-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--panel-border);
+    border-radius: 24px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    position: relative;
+    z-index: 10;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUpFade {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.logo-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 16px;
+    background: linear-gradient(135deg, var(--accent-gold), #d97706);
+    border-radius: 16px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0 8px 24px rgba(251, 191, 36, 0.25);
+    font-size: 24px;
+    color: #000;
+}
+
+.login-header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(to right, #ffffff, #a1a1aa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+    letter-spacing: -0.5px;
+}
+
+.login-header p {
+    font-size: 14px;
+    color: var(--text-sub);
+    line-height: 1.5;
+}
+
+.form-group {
+    margin-bottom: 20px;
+    text-align: left;
+    opacity: 0;
+    transform: translateY(10px);
+    animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.form-group:nth-child(1) {
+    animation-delay: 0.1s;
+}
+
+.form-group:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.form-group:nth-child(3) {
+    animation-delay: 0.3s;
+}
+
+.form-group:nth-child(4) {
+    animation-delay: 0.4s;
+}
+
+label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-sub);
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+}
+
+input {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    color: #fff;
+    padding: 14px 16px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-family: 'Pretendard', sans-serif;
+    transition: all 0.2s ease;
+    outline: none;
+}
+
+input::placeholder {
+    color: var(--text-muted);
+}
+
+input:focus {
+    border-color: var(--accent-gold);
+    box-shadow: 0 0 0 3px var(--input-focus);
+    background: rgba(0, 0, 0, 0.5);
+}
+
+input.pin-input {
+    letter-spacing: 4px;
+    font-weight: 700;
+    font-size: 20px;
+    text-align: center;
+}
+
+.btn-submit {
+    width: 100%;
+    background: linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-hover) 100%);
+    color: #000;
+    border: none;
+    padding: 16px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 8px 20px rgba(251, 191, 36, 0.25);
+    margin-top: 12px;
+    opacity: 0;
+    transform: translateY(10px);
+    animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: 0.5s;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-submit::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.3), transparent);
+    transform: skewX(-20deg);
+    transition: 0.5s;
+}
+
+.btn-submit:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px rgba(251, 191, 36, 0.35);
+}
+
+.btn-submit:hover::after {
+    left: 150%;
+}
+
+.btn-submit:active {
+    transform: translateY(0);
+}
+
+.spinner {
+    display: none;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 0, 0, 0.3);
+    border-radius: 50%;
+    border-top-color: #000;
+    animation: spin 1s ease-in-out infinite;
+    margin: 0 auto;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.error-msg {
+    color: #ef4444;
+    font-size: 13px;
+    margin-top: 12px;
+    text-align: center;
+    font-weight: 500;
+    display: none;
+    animation: shake 0.4s;
+}
+
+@keyframes shake {
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    25% {
+        transform: translateX(-5px);
+    }
+
+    75% {
+        transform: translateX(5px);
+    }
+}
+
+.view-section {
+    display: none;
+}
+
+.view-section.active {
+    display: block;
+}
