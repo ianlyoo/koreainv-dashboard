@@ -1,0 +1,324 @@
+from __future__ import annotations
+
+import asyncio
+import calendar
+import datetime
+import logging
+import re
+from typing import Optional
+
+import yfinance as yf
+from fastapi import APIRouter, HTTPException, Request
+
+from app import api_client
+from app.session_store import has_active_session, require_session
+
+
+router = APIRouter()
+
+
+def _today_kst() -> datetime.date:
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).date()
+
+
+def _parse_month_value(month: Optional[str]) -> tuple[datetime.date, datetime.date]:
+    today = _today_kst()
+    if month:
+        try:
+            year, mon = month.split("-")
+            first_day = datetime.date(int(year), int(mon), 1)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid month format. Use YYYY-MM."
+            ) from exc
+    else:
+        first_day = today.replace(day=1)
+
+    last_day_num = calendar.monthrange(first_day.year, first_day.month)[1]
+    month_last_day = datetime.date(first_day.year, first_day.month, last_day_num)
+    end_day = min(today, month_last_day)
+    return first_day, end_day
+
+
+def _parse_date_value(raw_value: str, field_name: str) -> datetime.date:
+    try:
+        return datetime.date.fromisoformat(raw_value)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid {field_name}. Use YYYY-MM-DD."
+        ) from exc
+
+
+def _serialize_realized_profit_payload(
+    start_day: datetime.date, end_day: datetime.date, payload: dict
+) -> dict:
+    summary = payload.get("summary", {})
+    daily_rows = []
+    for row in payload.get("daily", []):
+        trade_date = str(row.get("date", ""))
+        iso_date = trade_date
+        if len(trade_date) == 8 and trade_date.isdigit():
+            iso_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+        daily_rows.append(
+            {
+                "date": iso_date,
+                "domestic_realized_profit_krw": round(
+                    float(row.get("domestic_realized_profit_krw", 0.0))
+                ),
+                "overseas_realized_profit_krw": round(
+                    float(row.get("overseas_realized_profit_krw", 0.0))
+                ),
+                "total_realized_profit_krw": round(
+                    float(row.get("total_realized_profit_krw", 0.0))
+                ),
+                "domestic_fee_krw": round(float(row.get("domestic_fee_krw", 0.0))),
+                "domestic_tax_krw": round(float(row.get("domestic_tax_krw", 0.0))),
+                "overseas_fee_krw": round(float(row.get("overseas_fee_krw", 0.0))),
+            }
+        )
+
+    return {
+        "status": "success",
+        "period": {
+            "start": start_day.isoformat(),
+            "end": end_day.isoformat(),
+        },
+        "summary": {
+            "domestic_realized_profit_krw": round(
+                float(summary.get("domestic_realized_profit_krw", 0.0))
+            ),
+            "overseas_realized_profit_krw": round(
+                float(summary.get("overseas_realized_profit_krw", 0.0))
+            ),
+            "total_realized_profit_krw": round(
+                float(summary.get("total_realized_profit_krw", 0.0))
+            ),
+            "total_realized_return_rate": round(
+                float(summary.get("total_realized_return_rate", 0.0)), 2
+            ),
+            "trade_days": int(summary.get("trade_days", 0)),
+        },
+        "daily": daily_rows,
+        "trades": payload.get("trades", []),
+    }
+
+
+@router.get("/api/sync")
+async def sync_data(request: Request):
+    session = require_session(request)
+    try:
+        token = api_client.get_access_token(session.app_key, session.app_secret)
+        if not token:
+            raise HTTPException(
+                status_code=500, detail="Failed to get access token from API"
+            )
+
+        domestic_task = asyncio.to_thread(
+            api_client.get_domestic_balance,
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+        )
+        overseas_task = asyncio.to_thread(
+            api_client.get_overseas_balance,
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+        )
+        domestic, overseas = await asyncio.gather(domestic_task, overseas_task)
+
+        return {"status": "success", "domestic": domestic, "overseas": overseas}
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("sync_data failed")
+        raise HTTPException(status_code=500, detail="sync_data_failed")
+
+
+@router.get("/api/realized-profit/summary")
+async def get_realized_profit_summary(request: Request, month: Optional[str] = None):
+    session = require_session(request)
+    start_day, end_day = _parse_month_value(month)
+    try:
+        token = api_client.get_access_token(session.app_key, session.app_secret)
+        if not token:
+            raise HTTPException(
+                status_code=500, detail="Failed to get access token from API"
+            )
+
+        payload = api_client.get_realized_profit_summary(
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+        )
+        payload["trades"] = []
+        return _serialize_realized_profit_payload(start_day, end_day, payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("get_realized_profit_summary failed")
+        raise HTTPException(status_code=500, detail="realized_profit_summary_failed")
+
+
+@router.get("/api/realized-profit/detail")
+async def get_realized_profit_detail(request: Request, start: str, end: str):
+    session = require_session(request)
+    start_day = _parse_date_value(start, "start")
+    end_day = _parse_date_value(end, "end")
+    if start_day > end_day:
+        raise HTTPException(
+            status_code=400, detail="start must be before or equal to end"
+        )
+    if (end_day - start_day).days > 370:
+        raise HTTPException(status_code=400, detail="Date range is too large")
+
+    try:
+        token = api_client.get_access_token(session.app_key, session.app_secret)
+        if not token:
+            raise HTTPException(
+                status_code=500, detail="Failed to get access token from API"
+            )
+
+        payload = api_client.get_realized_profit_summary(
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+        )
+        trade_payload = api_client.get_trade_history(
+            token,
+            session.app_key,
+            session.app_secret,
+            session.cano,
+            session.acnt_prdt_cd,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+        )
+        payload["trades"] = trade_payload.get("items", [])
+        return _serialize_realized_profit_payload(start_day, end_day, payload)
+    except HTTPException:
+        raise
+    except Exception:
+        logging.exception("get_realized_profit_detail failed")
+        raise HTTPException(status_code=500, detail="realized_profit_detail_failed")
+
+
+@router.get("/api/stock-search")
+async def stock_search(request: Request, q: str = ""):
+    if not has_active_session(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if not q or len(q) < 1:
+        return {"status": "success", "data": []}
+
+    results = []
+    raw_query = q.strip()
+    query_upper = raw_query.upper()
+
+    try:
+        tickers_to_try = [query_upper]
+        if raw_query.isdigit() and len(raw_query) <= 6:
+            tickers_to_try.append(raw_query.zfill(6) + ".KS")
+            tickers_to_try.append(raw_query.zfill(6) + ".KQ")
+
+        for ticker_candidate in tickers_to_try:
+            try:
+                info = yf.Ticker(ticker_candidate).info
+                if info and info.get("shortName"):
+                    market = "USA"
+                    ticker = ticker_candidate
+                    if ticker_candidate.endswith(".KS") or ticker_candidate.endswith(
+                        ".KQ"
+                    ):
+                        market = "KOR"
+                    elif ticker_candidate.endswith(".T"):
+                        market = "JPN"
+                    results.append(
+                        {
+                            "ticker": ticker,
+                            "name": info.get("shortName", ticker_candidate),
+                            "market": market,
+                        }
+                    )
+            except Exception:
+                pass
+
+        try:
+            search_results = yf.Search(raw_query)
+            if hasattr(search_results, "quotes") and search_results.quotes:
+                for item in search_results.quotes[:8]:
+                    symbol = item.get("symbol", "")
+                    name = item.get("shortname", "") or item.get("longname", symbol)
+                    exchange = item.get("exchange", "")
+                    quote_type = str(item.get("quoteType", "")).upper()
+
+                    symbol_u = str(symbol).upper()
+                    name_l = str(name).lower()
+                    is_occ_option = bool(
+                        re.match(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$", symbol_u)
+                    )
+                    has_option_word = (" call" in name_l) or (" put" in name_l)
+                    if (
+                        quote_type in {"OPTION", "FUTURE"}
+                        or is_occ_option
+                        or has_option_word
+                    ):
+                        continue
+                    if quote_type and quote_type not in {"EQUITY", "ETF"}:
+                        continue
+
+                    market = "USA"
+                    if exchange in ["KSC", "KOE"]:
+                        market = "KOR"
+                    elif exchange in ["JPX", "TYO"]:
+                        market = "JPN"
+
+                    if not any(
+                        str(result.get("ticker", "")).upper() == symbol_u
+                        for result in results
+                    ):
+                        results.append(
+                            {"ticker": symbol, "name": name, "market": market}
+                        )
+        except Exception:
+            pass
+
+        q_lower = raw_query.lower()
+        market_rank = {"KOR": 0, "USA": 1, "JPN": 2}
+
+        def relevance_key(item: dict):
+            name = str(item.get("name", "")).lower()
+            ticker = str(item.get("ticker", "")).upper()
+            ticker_exact = ticker == query_upper
+            ticker_starts = ticker.startswith(query_upper)
+            ticker_contains = query_upper in ticker
+            name_exact = name == q_lower
+            name_starts = name.startswith(q_lower)
+            name_contains = q_lower in name
+            return (
+                0 if ticker_exact else 1,
+                0 if ticker_starts else 1,
+                0 if ticker_contains else 1,
+                0 if name_exact else 1,
+                0 if name_starts else 1,
+                0 if name_contains else 1,
+                market_rank.get(str(item.get("market", "")).upper(), 9),
+                len(ticker),
+            )
+
+        results.sort(key=relevance_key)
+    except Exception as exc:
+        logging.error("Stock search error: %s", exc)
+
+    return {"status": "success", "data": results[:10]}
