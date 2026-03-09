@@ -22,6 +22,7 @@ api_dump.json
 debug_us_balance.json
 tmp_index_script.js
 index_backup.html
+.sisyphus/
 
 # Local websocket cache
 .kis_ws_key.json
