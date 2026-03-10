@@ -27,6 +27,7 @@
         })();
         const CAPITAL_GAINS_TAX_THRESHOLD_KRW = 2500000;
         const CAPITAL_GAINS_TAX_RATE = 0.22;
+        const REALIZED_PROFIT_CACHE_TTL_MS = 5 * 60 * 1000;
         const REALIZED_PROFIT_PAGE_SIZE = 10;
         let cachedTotalEvalKrw = 0;
         let cachedDomesticEvalKrw = 0;
@@ -116,6 +117,23 @@
             const parts = isoDate.split('-');
             if (parts.length !== 3) return isoDate;
             return `${parts[0]}.${parts[1]}.${parts[2]}`;
+        }
+
+        function getFreshRealizedCacheEntry(cache, key) {
+            const entry = cache.get(key);
+            if (!entry) return null;
+            if ((Date.now() - Number(entry.ts || 0)) > REALIZED_PROFIT_CACHE_TTL_MS) {
+                cache.delete(key);
+                return null;
+            }
+            return entry.data;
+        }
+
+        function setRealizedCacheEntry(cache, key, data) {
+            cache.set(key, {
+                ts: Date.now(),
+                data,
+            });
         }
 
         // 수익률 포맷 및 배지 생성
@@ -593,9 +611,9 @@
 
         async function fetchRealizedProfitSummary(force = false) {
             const month = activeRealizedSummaryMonth;
-            if (realizedProfitSummaryLoading) return realizedProfitSummaryCache.get(month) || null;
-            if (realizedProfitSummaryCache.has(month) && !force) {
-                const cached = realizedProfitSummaryCache.get(month);
+            const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, month);
+            if (realizedProfitSummaryLoading) return cached || null;
+            if (cached && !force) {
                 renderRealizedProfitSummary(cached);
                 return cached;
             }
@@ -613,13 +631,13 @@
                     return null;
                 }
                 const data = await res.json();
-                realizedProfitSummaryCache.set(month, data);
+                setRealizedCacheEntry(realizedProfitSummaryCache, month, data);
                 renderRealizedProfitSummary(data);
                 return data;
             } catch (err) {
                 console.error('fetchRealizedProfitSummary error', err);
                 const errorPayload = { status: 'error' };
-                realizedProfitSummaryCache.set(month, errorPayload);
+                setRealizedCacheEntry(realizedProfitSummaryCache, month, errorPayload);
                 renderRealizedProfitSummary(errorPayload);
                 return errorPayload;
             } finally {
@@ -633,7 +651,7 @@
             profitCardShowingRealized = !!showRealized;
             card.classList.toggle('is-flipped', profitCardShowingRealized);
             if (profitCardShowingRealized) {
-                const cached = realizedProfitSummaryCache.get(activeRealizedSummaryMonth);
+                const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, activeRealizedSummaryMonth);
                 if (!cached) {
                     fetchRealizedProfitSummary();
                 } else if (cached.status === 'error') {
@@ -782,8 +800,9 @@
 
         async function getRealizedProfitDetailPayload(start, end, force = false) {
             const cacheKey = `${start}:${end}`;
-            if (!force && realizedProfitDetailCache.has(cacheKey)) {
-                return realizedProfitDetailCache.get(cacheKey);
+            const cached = getFreshRealizedCacheEntry(realizedProfitDetailCache, cacheKey);
+            if (!force && cached) {
+                return cached;
             }
 
             const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
@@ -792,7 +811,7 @@
                 return null;
             }
             const data = await res.json();
-            realizedProfitDetailCache.set(cacheKey, data);
+            setRealizedCacheEntry(realizedProfitDetailCache, cacheKey, data);
             return data;
         }
 
@@ -988,7 +1007,7 @@
             overlay.classList.add('active');
             setProfitModalTab(activeProfitModalTab || 'buy');
             setProfitMarketFilter(activeProfitMarketFilter || 'all');
-            if (!realizedProfitSummaryCache.get(activeRealizedSummaryMonth)) {
+            if (!getFreshRealizedCacheEntry(realizedProfitSummaryCache, activeRealizedSummaryMonth)) {
                 fetchRealizedProfitSummary();
             }
             setRealizedPreset(activeRealizedPreset || 'thisMonth', true);
@@ -1043,8 +1062,9 @@
             if (!start || !end) return;
 
             const cacheKey = `${start}:${end}`;
-            if (realizedProfitDetailCache.has(cacheKey)) {
-                renderRealizedProfitDetail(realizedProfitDetailCache.get(cacheKey));
+            const cached = getFreshRealizedCacheEntry(realizedProfitDetailCache, cacheKey);
+            if (cached) {
+                renderRealizedProfitDetail(cached);
             }
         }
 
