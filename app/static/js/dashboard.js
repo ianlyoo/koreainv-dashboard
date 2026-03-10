@@ -314,17 +314,27 @@
                     }
                 }
 
+                let profitAmtLocal = totalValLocal - (displayAvg * item.qty);
+                let profitAmtSign = profitAmtLocal > 0 ? '+' : (profitAmtLocal < 0 ? '-' : '');
+                let profitAmtClass = profitAmtLocal > 0 ? 'profit-plus' : (profitAmtLocal < 0 ? 'profit-minus' : '');
+                let profitAmtFormatted = `${profitAmtSign}${pricePrefix}${formatNumber(Math.abs(profitAmtLocal).toFixed(dp))}`;
+
                 allListHtml += `
                     <tr data-ticker="${normalizeTicker(item.ticker)}" onclick="fetchAssetInsight('${item.ticker}', '${item.type}')" style="cursor: pointer; transition: background 0.2s;">
-                        <td>${badgeHtml}</td>
                         <td>
-                            <span class="ticker-name">${item.name}</span>
-                            ${item.ticker ? `<span class="ticker-symbol">${item.ticker}</span>` : ''}
+                            <div class="ticker-cell">
+                                <span class="ticker-name">${item.name}</span>
+                                <div class="ticker-meta-row">
+                                    ${badgeHtml}
+                                    ${item.ticker ? `<span class="ticker-symbol">${item.ticker}</span>` : ''}
+                                </div>
+                            </div>
                         </td>
                         <td>${formatNumber(item.qty)}</td>
                         <td class="js-eval" style="color:#fff; font-weight:600;">${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}</td>
                         <td style="color:var(--text-sub);">${pricePrefix}${formatNumber(displayAvg.toFixed(dp))}</td>
                         <td class="js-now">${pricePrefix}${formatNumber(displayNow.toFixed(dp))}</td>
+                        <td class="holding-profit-amount ${profitAmtClass}">${profitAmtFormatted}</td>
                         <td class="js-profit">${formatProfit(profitPct, false)}</td>
                     </tr>
                 `;
