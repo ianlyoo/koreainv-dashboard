@@ -19,6 +19,12 @@ from app.template_utils import render_template_html
 router = APIRouter()
 
 
+def _remove_quote_session(request: Request) -> None:
+    service = getattr(request.app.state, "us_quote_service", None)
+    if service is not None:
+        service.remove_session(request.cookies.get("session"))
+
+
 def _decrypt_credentials(settings: dict, pin: str):
     crypto_version = settings.get("crypto_version", 1)
     salt = settings.get("kdf_salt")
@@ -155,6 +161,7 @@ async def login(pin: str = Form(...)):
 
 @router.post("/api/logout")
 async def logout(request: Request):
+    _remove_quote_session(request)
     destroy_session(request.cookies.get("session"))
     response = JSONResponse({"status": "success", "message": "Logged out"})
     clear_session_cookie(response)
@@ -167,6 +174,7 @@ async def reset_settings(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     if auth.delete_settings():
+        _remove_quote_session(request)
         clear_all_sessions()
         response = JSONResponse({"status": "success", "message": "Settings reset"})
         clear_session_cookie(response)
