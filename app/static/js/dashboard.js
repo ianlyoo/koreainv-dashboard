@@ -3,11 +3,14 @@
         let cachedItems = [];
         let cachedKrCash = 0;
         let cachedUsdCash = 0;
+        let cachedJpyCash = 0;
         let cachedExrt = 1350;
+        let cachedJpExrt = 905;
         let currentTradingViewWidget = null;
         let currentLayoutMode = 'mode2';
         let rightPaneState = 'widgets';
         let assetCardShowingForeign = false;
+        let cashCardShowingForeign = false;
         let profitCardShowingRealized = false;
         let realizedProfitSummaryCache = new Map();
         let realizedProfitDetailCache = new Map();
@@ -32,11 +35,16 @@
         let cachedTotalEvalKrw = 0;
         let cachedDomesticEvalKrw = 0;
         let cachedForeignEvalUsd = 0;
+        let lastUsMarketStatus = null;
+        let syncRequestInFlight = false;
+        let usQuoteRequestInFlight = false;
+        let lastLiveChartUpdateAt = 0;
         let usQuotePollingIntervalId = null;
         let usQuotePollingTimeoutId = null;
         let usQuotePollingActive = false;
         const US_QUOTE_POLL_INTERVAL_MS = 3000;
         const US_QUOTE_POLL_WINDOW_MS = 1 * 60 * 1000;
+        const LIVE_CHART_UPDATE_MIN_INTERVAL_MS = 15000;
 
         const LAYOUT_STORAGE_KEY = 'dashboard_layout_mode';
 
@@ -60,6 +68,11 @@
         function formatUsd(value) {
             const amount = Number(value || 0);
             return `$${formatNumber(amount.toFixed(2))}`;
+        }
+
+        function formatJpy(value) {
+            const amount = Number(value || 0);
+            return `¥${formatNumber(Math.round(amount))}`;
         }
 
         function formatPlainKrw(value) {
@@ -203,7 +216,7 @@
             }
         }
 
-        function rebuildPortfolioView(combinedItems, usMarketStatus) {
+        function renderPortfolioSummary(combinedItems) {
             const domesticItems = combinedItems.filter(item => item.type === 'KOR');
             const usItems = combinedItems.filter(item => item.type === 'USA');
             const jpItems = combinedItems.filter(item => item.type === 'JPN');
@@ -235,10 +248,14 @@
             profitElem.innerText = `${profitSign}₩${formatNumber(Math.round(Math.abs(totalProfitAmt)))}`;
             profitElem.className = `summary-value ${profitClass}`;
             document.getElementById('val_total_rt').innerHTML = formatProfit(totalProfitRt, true);
+        }
 
+        function rebuildPortfolioView(combinedItems, usMarketStatus) {
+            lastUsMarketStatus = usMarketStatus || lastUsMarketStatus;
+            renderPortfolioSummary(combinedItems);
             cachedItems = [...combinedItems].sort((a, b) => b.evalAmtKrw - a.evalAmtKrw);
             renderTable();
-            updateChart(cachedItems, totalEvalKrw);
+            updateChart(cachedItems, cachedTotalEvalKrw);
         }
 
         function stopUsQuotePolling() {
@@ -250,10 +267,114 @@
                 clearTimeout(usQuotePollingTimeoutId);
                 usQuotePollingTimeoutId = null;
             }
+            usQuoteRequestInFlight = false;
             usQuotePollingActive = false;
         }
 
+        function hasMeaningfulUsQuoteChange(currentItem, updatedItem) {
+            return Number(currentItem.now_price || 0) !== Number(updatedItem.now_price || 0)
+                || Number(currentItem.bid || 0) !== Number(updatedItem.bid || 0)
+                || Number(currentItem.ask || 0) !== Number(updatedItem.ask || 0)
+                || Boolean(currentItem.quote_stale) !== Boolean(updatedItem.quote_stale)
+                || String(currentItem.quote_ts || '') !== String(updatedItem.quote_ts || '');
+        }
+
+        function buildHoldingRowHtml(item) {
+            let badgeHtml = '';
+            let quoteBadgeHtml = '';
+            let pricePrefix = '';
+            let dp = 0;
+
+            let displayAvg = item.avg_price;
+            let displayNow = item.now_price;
+            let totalValLocal = item.now_price * item.qty;
+            let profitPct = calcHoldingProfitRate(item.now_price, item.avg_price);
+            if (profitPct === null) profitPct = 0;
+
+            if (item.type === 'KOR') {
+                badgeHtml = `<span class="badge badge-kor">KOR</span>`;
+                pricePrefix = '₩';
+                dp = 0;
+            } else if (item.type === 'USA') {
+                badgeHtml = `<span class="badge badge-usa">USA</span>`;
+                if (item.quote_stale !== false) {
+                    quoteBadgeHtml = `<span class="badge badge-quote-fallback">종가</span>`;
+                }
+                if (currentCurrencyMode === 'krw') {
+                    pricePrefix = '₩';
+                    dp = 0;
+                    let exrt = item.bass_exrt || 1350;
+                    displayAvg = item.avg_price * exrt;
+                    displayNow = item.now_price * exrt;
+                    totalValLocal = item.now_price * item.qty * exrt;
+                } else {
+                    pricePrefix = '$';
+                    dp = 2;
+                }
+            } else if (item.type === 'JPN') {
+                badgeHtml = `<span class="badge badge-jpn">JPN</span>`;
+                if (currentCurrencyMode === 'krw') {
+                    pricePrefix = '₩';
+                    dp = 0;
+                    let exrt = item.bass_exrt || 905;
+                    displayAvg = item.avg_price * (exrt / 100);
+                    displayNow = item.now_price * (exrt / 100);
+                    totalValLocal = item.now_price * item.qty * (exrt / 100);
+                } else {
+                    pricePrefix = '¥';
+                    dp = 2;
+                }
+            }
+
+            let profitAmtLocal = totalValLocal - (displayAvg * item.qty);
+            let profitAmtSign = profitAmtLocal > 0 ? '+' : (profitAmtLocal < 0 ? '-' : '');
+            let profitAmtClass = profitAmtLocal > 0 ? 'profit-plus' : (profitAmtLocal < 0 ? 'profit-minus' : '');
+            let profitAmtFormatted = `${profitAmtSign}${pricePrefix}${formatNumber(Math.abs(profitAmtLocal).toFixed(dp))}`;
+
+            return `
+                <tr data-ticker="${normalizeTicker(item.ticker)}" onclick="fetchAssetInsight('${item.ticker}', '${item.type}')" style="cursor: pointer; transition: background 0.2s;">
+                    <td>
+                        <div class="ticker-cell">
+                            <span class="ticker-name">${item.name}</span>
+                            <div class="ticker-meta-row">
+                                ${badgeHtml}
+                                ${quoteBadgeHtml}
+                                ${item.ticker ? `<span class="ticker-symbol">${item.ticker}</span>` : ''}
+                            </div>
+                        </div>
+                    </td>
+                    <td>${formatNumber(item.qty)}</td>
+                    <td class="js-eval" style="color:#fff; font-weight:600;">${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}</td>
+                    <td style="color:var(--text-sub);">${pricePrefix}${formatNumber(displayAvg.toFixed(dp))}</td>
+                    <td class="js-now">${pricePrefix}${formatNumber(displayNow.toFixed(dp))}</td>
+                    <td class="holding-profit-amount ${profitAmtClass}">${profitAmtFormatted}</td>
+                    <td class="js-profit">${formatProfit(profitPct, false)}</td>
+                </tr>
+            `;
+        }
+
+        function updateUsRowsInTable(changedTickers) {
+            changedTickers.forEach((ticker) => {
+                const item = cachedItems.find((entry) => entry.type === 'USA' && normalizeTicker(entry.ticker) === ticker);
+                if (!item) return;
+                const row = document.querySelector(`#all_list tr[data-ticker="${ticker}"]`);
+                if (row) {
+                    row.outerHTML = buildHoldingRowHtml(item).trim();
+                }
+            });
+        }
+
+        function maybeRefreshLiveChart() {
+            const now = Date.now();
+            if ((now - lastLiveChartUpdateAt) < LIVE_CHART_UPDATE_MIN_INTERVAL_MS) {
+                return;
+            }
+            lastLiveChartUpdateAt = now;
+            updateChart(cachedItems, cachedTotalEvalKrw);
+        }
+
         function mergeUsQuoteItems(usItems, usMarketStatus) {
+            lastUsMarketStatus = usMarketStatus || lastUsMarketStatus;
             if (!Array.isArray(usItems) || usItems.length === 0) {
                 if (usMarketStatus?.session !== 'day_market') {
                     stopUsQuotePolling();
@@ -262,6 +383,7 @@
             }
 
             const usMap = new Map(usItems.map(item => [normalizeTicker(item.ticker), item]));
+            const changedTickers = [];
             const mergedItems = cachedItems.map(item => {
                 if (item.type !== 'USA') {
                     return item;
@@ -276,10 +398,18 @@
                 merged.evalAmtKrw = (merged.qty || 0) * (merged.now_price || 0) * exrt;
                 merged.purchaseAmtKrw = (merged.qty || 0) * (merged.avg_price || 0) * exrt;
                 merged.profit_rt = calcHoldingProfitRate(merged.now_price, merged.avg_price) ?? 0;
+                if (hasMeaningfulUsQuoteChange(item, merged)) {
+                    changedTickers.push(normalizeTicker(item.ticker));
+                }
                 return merged;
             });
 
-            rebuildPortfolioView(mergedItems, usMarketStatus);
+            cachedItems = mergedItems;
+            if (changedTickers.length > 0) {
+                renderPortfolioSummary(cachedItems);
+                updateUsRowsInTable(changedTickers);
+                maybeRefreshLiveChart();
+            }
 
             if (usMarketStatus?.session !== 'day_market') {
                 stopUsQuotePolling();
@@ -287,6 +417,10 @@
         }
 
         async function pollUsQuotesOnce() {
+            if (usQuoteRequestInFlight || document.hidden) {
+                return;
+            }
+            usQuoteRequestInFlight = true;
             try {
                 const res = await fetch('/api/us-quotes');
                 if (res.status === 401) {
@@ -300,12 +434,15 @@
                 }
             } catch (err) {
                 console.error('US quote polling failed', err);
+            } finally {
+                usQuoteRequestInFlight = false;
             }
         }
 
         function startUsQuotePollingWindow(usMarketStatus) {
             stopUsQuotePolling();
-            if (usMarketStatus?.session !== 'day_market') {
+            lastUsMarketStatus = usMarketStatus || lastUsMarketStatus;
+            if (document.hidden || usMarketStatus?.session !== 'day_market') {
                 return;
             }
             usQuotePollingActive = true;
@@ -406,85 +543,7 @@
 
         // 테이블 렌더링
         function renderTable() {
-            let allListHtml = '';
-
-            cachedItems.forEach((item, index) => {
-                let badgeHtml = '';
-                let quoteBadgeHtml = '';
-                let pricePrefix = '';
-                let dp = 0; // 소수점 자리수
-
-                let displayAvg = item.avg_price;
-                let displayNow = item.now_price;
-                let totalValLocal = item.now_price * item.qty; // For local currency display
-                let profitPct = calcHoldingProfitRate(item.now_price, item.avg_price);
-                if (profitPct === null) profitPct = 0;
-
-                if (item.type === 'KOR') {
-                    badgeHtml = `<span class="badge badge-kor">KOR</span>`;
-                    pricePrefix = '₩';
-                    dp = 0;
-                } else if (item.type === 'USA') {
-                    badgeHtml = `<span class="badge badge-usa">USA</span>`;
-                    if (item.quote_stale === false) {
-                        quoteBadgeHtml = ``;
-                    } else {
-                        quoteBadgeHtml = `<span class="badge badge-quote-fallback">종가</span>`;
-                    }
-                    if (currentCurrencyMode === 'krw') {
-                        pricePrefix = '₩';
-                        dp = 0;
-                        let exrt = item.bass_exrt || 1350;
-                        displayAvg = item.avg_price * exrt;
-                        displayNow = item.now_price * exrt;
-                        totalValLocal = item.now_price * item.qty * exrt;
-                    } else {
-                        pricePrefix = '$';
-                        dp = 2;
-                    }
-                } else if (item.type === 'JPN') {
-                    badgeHtml = `<span class="badge badge-jpn">JPN</span>`;
-                    if (currentCurrencyMode === 'krw') {
-                        pricePrefix = '₩';
-                        dp = 0;
-                        let exrt = item.bass_exrt || 905;
-                        displayAvg = item.avg_price * (exrt / 100);
-                        displayNow = item.now_price * (exrt / 100);
-                        totalValLocal = item.now_price * item.qty * (exrt / 100);
-                    } else {
-                        pricePrefix = '¥';
-                        dp = 2;
-                    }
-                }
-
-                let profitAmtLocal = totalValLocal - (displayAvg * item.qty);
-                let profitAmtSign = profitAmtLocal > 0 ? '+' : (profitAmtLocal < 0 ? '-' : '');
-                let profitAmtClass = profitAmtLocal > 0 ? 'profit-plus' : (profitAmtLocal < 0 ? 'profit-minus' : '');
-                let profitAmtFormatted = `${profitAmtSign}${pricePrefix}${formatNumber(Math.abs(profitAmtLocal).toFixed(dp))}`;
-
-                allListHtml += `
-                    <tr data-ticker="${normalizeTicker(item.ticker)}" onclick="fetchAssetInsight('${item.ticker}', '${item.type}')" style="cursor: pointer; transition: background 0.2s;">
-                        <td>
-                            <div class="ticker-cell">
-                                <span class="ticker-name">${item.name}</span>
-                                <div class="ticker-meta-row">
-                                    ${badgeHtml}
-                                    ${quoteBadgeHtml}
-                                    ${item.ticker ? `<span class="ticker-symbol">${item.ticker}</span>` : ''}
-                                </div>
-                            </div>
-                        </td>
-                        <td>${formatNumber(item.qty)}</td>
-                        <td class="js-eval" style="color:#fff; font-weight:600;">${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}</td>
-                        <td style="color:var(--text-sub);">${pricePrefix}${formatNumber(displayAvg.toFixed(dp))}</td>
-                        <td class="js-now">${pricePrefix}${formatNumber(displayNow.toFixed(dp))}</td>
-                        <td class="holding-profit-amount ${profitAmtClass}">${profitAmtFormatted}</td>
-                        <td class="js-profit">${formatProfit(profitPct, false)}</td>
-                    </tr>
-                `;
-            });
-
-            document.getElementById('all_list').innerHTML = allListHtml;
+            document.getElementById('all_list').innerHTML = cachedItems.map((item) => buildHoldingRowHtml(item)).join('');
         }
 
 
@@ -590,6 +649,10 @@
 
         // 메인 데이터 동기화 함수
         async function syncData(manualTrigger = false) {
+            if (syncRequestInFlight) {
+                return null;
+            }
+            syncRequestInFlight = true;
             const loading = document.getElementById('loading');
             loading.classList.add('active');
 
@@ -606,18 +669,28 @@
                 if (data.status === "success") {
                     const krCash = data?.domestic?.summary?.cash_balance || 0;
                     const usCash = data?.overseas?.us_summary?.usd_cash_balance || 0;
-                    let exrt = 1350;
-                    if (data?.overseas?.us_items && data.overseas.us_items.length > 0) {
+                    const jpCash = data?.overseas?.jp_summary?.jpy_cash_balance || 0;
+                    let exrt = data?.overseas?.us_summary?.usd_exrt || 0;
+                    if (exrt <= 0 && data?.overseas?.us_items && data.overseas.us_items.length > 0) {
                         exrt = data.overseas.us_items[0].bass_exrt || 1350;
                     }
+                    if (exrt <= 0) {
+                        exrt = 1350;
+                    }
+                    let jpExrt = data?.overseas?.jp_summary?.jpy_exrt || 0;
+                    if (jpExrt <= 0 && data?.overseas?.jp_items && data.overseas.jp_items.length > 0) {
+                        jpExrt = data.overseas.jp_items[0].bass_exrt || 905;
+                    }
+                    const hasJpyExrt = jpExrt > 0;
                     cachedKrCash = krCash;
                     cachedUsdCash = usCash;
+                    cachedJpyCash = jpCash;
                     cachedExrt = exrt;
-                    const totalCashKrw = krCash + (usCash * exrt);
+                    cachedJpExrt = jpExrt;
+                    const totalCashKrw = krCash + (usCash * exrt) + (hasJpyExrt ? (jpCash * (jpExrt / 100)) : 0);
 
-                    document.getElementById('val_total_cash').innerText = `₩${formatNumber(Math.round(totalCashKrw))}`;
-                    document.getElementById('val_krw_cash').innerText = `₩${formatNumber(Math.round(krCash))}`;
-                    document.getElementById('val_usd_cash').innerText = `$${formatNumber(usCash.toFixed(2))}`;
+                    document.getElementById('val_total_cash').innerText = formatPlainKrw(totalCashKrw);
+                    renderCashCardValues();
                     const now = new Date();
                     const hh = String(now.getHours()).padStart(2, '0');
                     const mm = String(now.getMinutes()).padStart(2, '0');
@@ -632,6 +705,7 @@
                     const usItems = Array.isArray(data?.overseas?.us_items) ? data.overseas.us_items : [];
                     const jpItems = Array.isArray(data?.overseas?.jp_items) ? data.overseas.jp_items : [];
                     const usMarketStatus = data?.overseas?.us_market_status || null;
+                    lastUsMarketStatus = usMarketStatus;
 
                     domesticItems.forEach(i => {
                         const evalAmt = i.qty * i.now_price;
@@ -658,16 +732,33 @@
 
                     rebuildPortfolioView(combinedItems, usMarketStatus);
 
-                    if (manualTrigger) {
+                    if (usMarketStatus?.session === 'day_market') {
                         startUsQuotePollingWindow(usMarketStatus);
+                    } else if (manualTrigger) {
+                        stopUsQuotePolling();
+                    }
+
+                    if (manualTrigger) {
+                        fetchRealizedProfitSummary(true);
+                        const modal = document.getElementById('realizedProfitModal');
+                        if (modal && modal.classList.contains('active')) {
+                            const start = document.getElementById('realizedProfitStart')?.value;
+                            const end = document.getElementById('realizedProfitEnd')?.value;
+                            if (start && end) {
+                                loadRealizedProfitDetail(start, end, true);
+                            }
+                        }
                     }
 
                     // Static mode only.
+                    return data;
                 }
             } catch (err) {
                 console.error(err);
                 alert("데이터를 불러오는 중 오류가 발생했습니다.");
+                return null;
             } finally {
+                syncRequestInFlight = false;
                 loading.classList.remove('active');
             }
         }
@@ -796,6 +887,21 @@
             }
         }
 
+        function renderCashCardValues() {
+            const krwEl = document.getElementById('val_krw_cash');
+            const usdEl = document.getElementById('val_usd_cash');
+            const jpyEl = document.getElementById('val_jpy_cash');
+            if (krwEl) {
+                krwEl.innerText = formatPlainKrw(cachedKrCash);
+            }
+            if (usdEl) {
+                usdEl.innerText = formatUsd(cachedUsdCash);
+            }
+            if (jpyEl) {
+                jpyEl.innerText = formatJpy(cachedJpyCash);
+            }
+        }
+
         function renderAssetCardValues() {
             const krwEl = document.getElementById('val_total_assets_krw');
             const usdEl = document.getElementById('val_total_assets_usd');
@@ -825,6 +931,28 @@
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 toggleAssetCard();
+            }
+        }
+
+        function setCashCardFace(showForeign) {
+            const card = document.getElementById('cashSummaryCard');
+            if (!card) return;
+            cashCardShowingForeign = !!showForeign;
+            card.classList.toggle('is-flipped', cashCardShowingForeign);
+            card.setAttribute('aria-pressed', cashCardShowingForeign ? 'true' : 'false');
+            if (cashCardShowingForeign) {
+                renderCashCardValues();
+            }
+        }
+
+        function toggleCashCard() {
+            setCashCardFace(!cashCardShowingForeign);
+        }
+
+        function handleCashCardKeydown(event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleCashCard();
             }
         }
 
@@ -927,7 +1055,6 @@
             if (!force && cached) {
                 return cached;
             }
-
             const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
             if (res.status === 401) {
                 window.location.href = '/login';
@@ -1766,6 +1893,25 @@
             });
         }
 
+        function runDeferredBootTasks() {
+            fetchMarketCalendar();
+            fetchRealizedProfitSummary();
+        }
+
+        function scheduleDeferredBootTasks() {
+            if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(() => runDeferredBootTasks(), { timeout: 1500 });
+                return;
+            }
+            window.setTimeout(runDeferredBootTasks, 300);
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopUsQuotePolling();
+            }
+        });
+
         // 앱 초기화
         window.addEventListener('DOMContentLoaded', async () => {
             const savedLayoutMode = localStorage.getItem(LAYOUT_STORAGE_KEY) || 'mode2';
@@ -1782,7 +1928,6 @@
 
             document.getElementById('today_date').innerText = `${year}년 ${month}월 ${day}일 (${dayOfWeek})`;
 
-            fetchMarketCalendar();
-            syncData(true);
-            fetchRealizedProfitSummary();
+            await syncData(false);
+            scheduleDeferredBootTasks();
         });

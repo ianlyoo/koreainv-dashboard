@@ -19,7 +19,7 @@
     <!-- TradingView Lightweight Charts (for KOR/JPN fallback) -->
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
 
-    <link rel="stylesheet" href="/static/css/dashboard.css?v=20260311-us-quote-polling-1">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=20260311-v1-4-5">
 </head>
 
 <body class="layout-mode-2">
@@ -191,22 +191,52 @@
                 </div>
 
                 <!-- NEW CASH PANEL -->
-                <div class="glass-card summary-card animate-enter" style="animation-delay: 0.3s;">
-                    <div class="summary-label">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
-                            <line x1="12" y1="12" x2="12" y2="12.01"></line>
-                            <path d="M6 12h.01"></path>
-                            <path d="M18 12h.01"></path>
-                        </svg>
-                        보유 현금
-                    </div>
-                    <div class="summary-value" id="val_total_cash" style="color: var(--accent-gold);">₩61,783</div>
-                    <div class="summary-sub"
-                        style="display:flex; justify-content:space-between; color: var(--text-muted); font-size: 13px;">
-                        <span>KRW: <span id="val_krw_cash" style="color:#fff;">₩2</span></span>
-                        <span>USD: <span id="val_usd_cash" style="color:#fff;">$43.37</span></span>
+                <div class="glass-card summary-card flip-card animate-enter" style="animation-delay: 0.3s;"
+                    id="cashSummaryCard" onclick="toggleCashCard()" onkeydown="handleCashCardKeydown(event)"
+                    role="button" tabindex="0" aria-pressed="false" aria-label="보유 현금 통화 상세 전환">
+                    <div class="flip-card-inner">
+                        <div class="flip-card-face flip-card-front">
+                            <div class="summary-label">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                                    <line x1="12" y1="12" x2="12" y2="12.01"></line>
+                                    <path d="M6 12h.01"></path>
+                                    <path d="M18 12h.01"></path>
+                                </svg>
+                                보유 현금
+                            </div>
+                            <div class="summary-value cash-summary-value" id="val_total_cash">₩61,783</div>
+                            <div class="summary-sub cash-summary-sub">
+                                총 보유 현금 (원화 환산)
+                            </div>
+                        </div>
+                        <div class="flip-card-face flip-card-back">
+                            <div class="summary-label">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                                    <line x1="12" y1="12" x2="12" y2="12.01"></line>
+                                    <path d="M6 12h.01"></path>
+                                    <path d="M18 12h.01"></path>
+                                </svg>
+                                통화별 보유 현금
+                            </div>
+                            <div class="asset-card-back-content">
+                                <div class="asset-card-row">
+                                    <span class="label">KRW</span>
+                                    <span class="value" id="val_krw_cash">₩2</span>
+                                </div>
+                                <div class="asset-card-row">
+                                    <span class="label">USD</span>
+                                    <span class="value" id="val_usd_cash">$43.37</span>
+                                </div>
+                                <div class="asset-card-row">
+                                    <span class="label">JPY</span>
+                                    <span class="value" id="val_jpy_cash">¥0</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -344,7 +374,7 @@
         </div>
 
     </div>
-    <script src="/static/js/dashboard.js?v=20260311-us-quote-polling-1"></script>
+    <script src="/static/js/dashboard.js?v=20260311-v1-4-5"></script>
 
     <!-- Custom Modals -->
     <div class="modal-overlay" id="customModal">

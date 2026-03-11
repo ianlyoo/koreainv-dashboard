@@ -391,6 +391,12 @@
             box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
         }
 
+        .profit-card:focus-visible,
+        .flip-card:focus-visible {
+            outline: 2px solid rgba(251, 191, 36, 0.65);
+            outline-offset: 3px;
+        }
+
         .flip-card {
             cursor: pointer;
             perspective: 1200px;
@@ -450,6 +456,27 @@
             color: #fff;
             font-variant-numeric: tabular-nums;
             letter-spacing: -0.3px;
+        }
+
+        .cash-summary-value {
+            color: var(--accent-gold);
+        }
+
+        .cash-summary-sub {
+            color: var(--text-muted);
+        }
+
+        #cashSummaryCard .asset-card-back-content {
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        #cashSummaryCard .asset-card-row .value {
+            font-size: 15px;
+        }
+
+        #cashSummaryCard .asset-card-row .label {
+            font-size: 12px;
         }
 
         .profit-card-meta {
