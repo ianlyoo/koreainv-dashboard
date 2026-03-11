@@ -297,7 +297,9 @@
                 dp = 0;
             } else if (item.type === 'USA') {
                 badgeHtml = `<span class="badge badge-usa">USA</span>`;
-                if (item.quote_stale !== false) {
+                const isUsDayMarket = item.quote_session === 'day_market'
+                    || lastUsMarketStatus?.session === 'day_market';
+                if (isUsDayMarket && item.quote_stale !== false) {
                     quoteBadgeHtml = `<span class="badge badge-quote-fallback">종가</span>`;
                 }
                 if (currentCurrencyMode === 'krw') {
