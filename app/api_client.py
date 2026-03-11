@@ -770,13 +770,19 @@ def _normalize_domestic_realized_trade_rows(rows: list[dict]) -> list[dict]:
         amount = _to_float(row.get("sll_amt") or 0)
         if quantity <= 0 or amount <= 0:
             continue
+        realized_profit = _to_float(row.get("rlzt_pfls") or 0)
+        fee = _to_float(row.get("fee") or 0)
+        tax = _to_float(row.get("tl_tax") or 0)
+        buy_amount = _to_float(row.get("buy_amt") or 0)
+        if buy_amount <= 0:
+            buy_amount = max(amount - realized_profit - fee - tax, 0.0)
         normalized.append({
             "date": trade_date,
             "symbol": symbol,
             "quantity": quantity,
             "amount": amount,
-            "realized_profit_krw": _to_float(row.get("rlzt_pfls") or 0),
-            "buy_amount_krw": _to_float(row.get("buy_amt") or 0),
+            "realized_profit_krw": realized_profit,
+            "buy_amount_krw": buy_amount,
             "realized_return_rate": None,
         })
     return normalized
@@ -927,10 +933,32 @@ def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, 
 
     domestic_total = sum(row["domestic_realized_profit_krw"] for row in daily_rows)
     overseas_total = sum(row["overseas_realized_profit_krw"] for row in daily_rows)
-    domestic_buy_total = sum(row.get("domestic_buy_amount_krw", 0.0) for row in daily_rows)
-    overseas_buy_total = sum(row.get("overseas_buy_amount_krw", 0.0) for row in daily_rows)
+    domestic_buy_total = sum(
+        row.get("buy_amount_krw", 0.0)
+        for row in domestic_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
+    overseas_buy_total = sum(
+        row.get("buy_amount_krw", 0.0)
+        for row in overseas_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
+    domestic_rate_profit_total = sum(
+        row.get("realized_profit_krw", 0.0)
+        for row in domestic_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
+    overseas_rate_profit_total = sum(
+        row.get("realized_profit_krw", 0.0)
+        for row in overseas_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
     total_buy_amount = domestic_buy_total + overseas_buy_total
-    total_realized_return_rate = ((domestic_total + overseas_total) / total_buy_amount * 100) if total_buy_amount > 0 else 0.0
+    total_realized_return_rate = (
+        ((domestic_rate_profit_total + overseas_rate_profit_total) / total_buy_amount * 100)
+        if total_buy_amount > 0
+        else 0.0
+    )
 
     result = {
         "summary": {
