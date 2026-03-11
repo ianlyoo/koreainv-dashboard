@@ -106,6 +106,7 @@ def _serialize_realized_profit_payload(
 @router.get("/api/sync")
 async def sync_data(request: Request):
     session = require_session(request)
+    session_id = request.cookies.get("session")
     try:
         token = api_client.get_access_token(session.app_key, session.app_secret)
         if not token:
@@ -131,12 +132,71 @@ async def sync_data(request: Request):
         )
         domestic, overseas = await asyncio.gather(domestic_task, overseas_task)
 
+        quote_service = getattr(request.app.state, "us_quote_service", None)
+        if quote_service is not None:
+            us_items = list(overseas.get("us_items") or [])
+            quote_service.sync_session_holdings(
+                session_id,
+                session.app_key,
+                session.app_secret,
+                us_items,
+            )
+            overseas = dict(overseas)
+            enriched_us_items = quote_service.enrich_us_items(us_items)
+            overseas["us_items"] = enriched_us_items
+            overseas["us_market_status"] = quote_service.get_market_status(
+                enriched_us_items
+            )
+            if enriched_us_items:
+                logging.warning(
+                    "us_quote_debug %s",
+                    [
+                        {
+                            "ticker": item.get("ticker"),
+                            "source": item.get("quote_source"),
+                            "stale": item.get("quote_stale"),
+                            "tr_key": item.get("quote_tr_key"),
+                            "quote_ts": item.get("quote_ts"),
+                            "diag": quote_service.get_ticker_diagnostics(
+                                item.get("ticker"), item.get("quote_tr_key")
+                            ),
+                        }
+                        for item in enriched_us_items
+                    ],
+                )
+
         return {"status": "success", "domestic": domestic, "overseas": overseas}
     except HTTPException:
         raise
     except Exception:
         logging.exception("sync_data failed")
         raise HTTPException(status_code=500, detail="sync_data_failed")
+
+
+@router.get("/api/us-quotes")
+async def get_us_quotes(request: Request):
+    require_session(request)
+    quote_service = getattr(request.app.state, "us_quote_service", None)
+    if quote_service is None:
+        return {
+            "status": "success",
+            "overseas": {
+                "us_items": [],
+                "us_market_status": {
+                    "session": "closed",
+                    "is_open": False,
+                    "uses_day_prefix": False,
+                    "source_state": "idle",
+                    "tracked_count": 0,
+                    "fresh_count": 0,
+                    "fallback_count": 0,
+                },
+            },
+        }
+
+    session_id = request.cookies.get("session")
+    payload = quote_service.get_session_quote_payload(session_id)
+    return {"status": "success", "overseas": payload}
 
 
 @router.get("/api/realized-profit/summary")
