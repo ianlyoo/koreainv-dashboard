@@ -32,6 +32,11 @@
         let cachedTotalEvalKrw = 0;
         let cachedDomesticEvalKrw = 0;
         let cachedForeignEvalUsd = 0;
+        let usQuotePollingIntervalId = null;
+        let usQuotePollingTimeoutId = null;
+        let usQuotePollingActive = false;
+        const US_QUOTE_POLL_INTERVAL_MS = 3000;
+        const US_QUOTE_POLL_WINDOW_MS = 1 * 60 * 1000;
 
         const LAYOUT_STORAGE_KEY = 'dashboard_layout_mode';
 
@@ -181,6 +186,138 @@
             return ((now - avg) / avg) * 100;
         }
 
+        function formatUsMarketSessionLabel(sessionKey) {
+            switch ((sessionKey || '').toString()) {
+                case 'day_market':
+                    return '주간거래';
+                case 'premarket':
+                    return '프리마켓';
+                case 'regular':
+                    return '정규장';
+                case 'aftermarket':
+                    return '애프터마켓';
+                case 'closed':
+                    return '휴장';
+                default:
+                    return '-';
+            }
+        }
+
+        function rebuildPortfolioView(combinedItems, usMarketStatus) {
+            const domesticItems = combinedItems.filter(item => item.type === 'KOR');
+            const usItems = combinedItems.filter(item => item.type === 'USA');
+            const jpItems = combinedItems.filter(item => item.type === 'JPN');
+
+            const totalEvalKrw = combinedItems.reduce((acc, item) => acc + (item.evalAmtKrw || 0), 0);
+            const totalPurchaseKrw = combinedItems.reduce((acc, item) => acc + (item.purchaseAmtKrw || 0), 0);
+            const domesticEvalKrw = domesticItems.reduce((acc, item) => acc + ((item.qty || 0) * (item.now_price || 0)), 0);
+            const usEvalUsd = usItems.reduce((acc, item) => acc + ((item.qty || 0) * (item.now_price || 0)), 0);
+            const jpEvalUsd = jpItems.reduce((acc, item) => {
+                const exrt = item.bass_exrt || 905;
+                const evalKrw = (item.qty || 0) * (item.now_price || 0) * (exrt / 100);
+                return acc + (cachedExrt > 0 ? (evalKrw / cachedExrt) : 0);
+            }, 0);
+
+            cachedTotalEvalKrw = totalEvalKrw;
+            cachedDomesticEvalKrw = domesticEvalKrw;
+            cachedForeignEvalUsd = usEvalUsd + jpEvalUsd;
+
+            const totalProfitAmt = totalEvalKrw - totalPurchaseKrw;
+            const totalProfitRt = totalPurchaseKrw > 0 ? (totalProfitAmt / totalPurchaseKrw) * 100 : 0;
+            const profitSign = totalProfitAmt > 0 ? '+' : '';
+            const profitClass = totalProfitAmt > 0 ? 'profit-plus' : (totalProfitAmt < 0 ? 'profit-minus' : '');
+
+            document.getElementById('val_total_assets').innerText = `₩${formatNumber(Math.round(totalEvalKrw))}`;
+            document.getElementById('val_purchase').innerText = `₩${formatNumber(Math.round(totalPurchaseKrw))}`;
+            renderAssetCardValues();
+
+            const profitElem = document.getElementById('val_total_profit');
+            profitElem.innerText = `${profitSign}₩${formatNumber(Math.round(Math.abs(totalProfitAmt)))}`;
+            profitElem.className = `summary-value ${profitClass}`;
+            document.getElementById('val_total_rt').innerHTML = formatProfit(totalProfitRt, true);
+
+            cachedItems = [...combinedItems].sort((a, b) => b.evalAmtKrw - a.evalAmtKrw);
+            renderTable();
+            updateChart(cachedItems, totalEvalKrw);
+        }
+
+        function stopUsQuotePolling() {
+            if (usQuotePollingIntervalId) {
+                clearInterval(usQuotePollingIntervalId);
+                usQuotePollingIntervalId = null;
+            }
+            if (usQuotePollingTimeoutId) {
+                clearTimeout(usQuotePollingTimeoutId);
+                usQuotePollingTimeoutId = null;
+            }
+            usQuotePollingActive = false;
+        }
+
+        function mergeUsQuoteItems(usItems, usMarketStatus) {
+            if (!Array.isArray(usItems) || usItems.length === 0) {
+                if (usMarketStatus?.session !== 'day_market') {
+                    stopUsQuotePolling();
+                }
+                return;
+            }
+
+            const usMap = new Map(usItems.map(item => [normalizeTicker(item.ticker), item]));
+            const mergedItems = cachedItems.map(item => {
+                if (item.type !== 'USA') {
+                    return item;
+                }
+                const updated = usMap.get(normalizeTicker(item.ticker));
+                if (!updated) {
+                    return item;
+                }
+                const exrt = updated.bass_exrt || item.bass_exrt || cachedExrt || 1350;
+                const merged = { ...item, ...updated, type: 'USA' };
+                merged.bass_exrt = exrt;
+                merged.evalAmtKrw = (merged.qty || 0) * (merged.now_price || 0) * exrt;
+                merged.purchaseAmtKrw = (merged.qty || 0) * (merged.avg_price || 0) * exrt;
+                merged.profit_rt = calcHoldingProfitRate(merged.now_price, merged.avg_price) ?? 0;
+                return merged;
+            });
+
+            rebuildPortfolioView(mergedItems, usMarketStatus);
+
+            if (usMarketStatus?.session !== 'day_market') {
+                stopUsQuotePolling();
+            }
+        }
+
+        async function pollUsQuotesOnce() {
+            try {
+                const res = await fetch('/api/us-quotes');
+                if (res.status === 401) {
+                    stopUsQuotePolling();
+                    window.location.href = '/login';
+                    return;
+                }
+                const data = await res.json();
+                if (data.status === 'success') {
+                    mergeUsQuoteItems(data?.overseas?.us_items || [], data?.overseas?.us_market_status || null);
+                }
+            } catch (err) {
+                console.error('US quote polling failed', err);
+            }
+        }
+
+        function startUsQuotePollingWindow(usMarketStatus) {
+            stopUsQuotePolling();
+            if (usMarketStatus?.session !== 'day_market') {
+                return;
+            }
+            usQuotePollingActive = true;
+            usQuotePollingIntervalId = setInterval(() => {
+                pollUsQuotesOnce();
+            }, US_QUOTE_POLL_INTERVAL_MS);
+            usQuotePollingTimeoutId = setTimeout(() => {
+                stopUsQuotePolling();
+            }, US_QUOTE_POLL_WINDOW_MS);
+            pollUsQuotesOnce();
+        }
+
         function updateLayoutModeUI() {
             const btnMode1 = document.getElementById('layoutModeBtn1');
             const btnMode2 = document.getElementById('layoutModeBtn2');
@@ -273,6 +410,7 @@
 
             cachedItems.forEach((item, index) => {
                 let badgeHtml = '';
+                let quoteBadgeHtml = '';
                 let pricePrefix = '';
                 let dp = 0; // 소수점 자리수
 
@@ -288,6 +426,11 @@
                     dp = 0;
                 } else if (item.type === 'USA') {
                     badgeHtml = `<span class="badge badge-usa">USA</span>`;
+                    if (item.quote_stale === false) {
+                        quoteBadgeHtml = ``;
+                    } else {
+                        quoteBadgeHtml = `<span class="badge badge-quote-fallback">종가</span>`;
+                    }
                     if (currentCurrencyMode === 'krw') {
                         pricePrefix = '₩';
                         dp = 0;
@@ -326,6 +469,7 @@
                                 <span class="ticker-name">${item.name}</span>
                                 <div class="ticker-meta-row">
                                     ${badgeHtml}
+                                    ${quoteBadgeHtml}
                                     ${item.ticker ? `<span class="ticker-symbol">${item.ticker}</span>` : ''}
                                 </div>
                             </div>
@@ -445,7 +589,7 @@
         }
 
         // 메인 데이터 동기화 함수
-        async function syncData() {
+        async function syncData(manualTrigger = false) {
             const loading = document.getElementById('loading');
             loading.classList.add('active');
 
@@ -487,6 +631,7 @@
                     const domesticItems = Array.isArray(data?.domestic?.items) ? data.domestic.items : [];
                     const usItems = Array.isArray(data?.overseas?.us_items) ? data.overseas.us_items : [];
                     const jpItems = Array.isArray(data?.overseas?.jp_items) ? data.overseas.jp_items : [];
+                    const usMarketStatus = data?.overseas?.us_market_status || null;
 
                     domesticItems.forEach(i => {
                         const evalAmt = i.qty * i.now_price;
@@ -511,43 +656,11 @@
                         combinedItems.push({ ...i, type: 'JPN', evalAmtKrw: evalAmt, purchaseAmtKrw: purchaseAmt, profit_rt: holdingRt ?? 0 });
                     });
 
-                    // 요약 수치도 종목 합산 기준으로 통일
-                    const totalEvalKrw = combinedItems.reduce((acc, item) => acc + (item.evalAmtKrw || 0), 0);
-                    const totalPurchaseKrw = combinedItems.reduce((acc, item) => acc + (item.purchaseAmtKrw || 0), 0);
-                    const domesticEvalKrw = domesticItems.reduce((acc, item) => acc + ((item.qty || 0) * (item.now_price || 0)), 0);
-                    const usEvalUsd = usItems.reduce((acc, item) => acc + ((item.qty || 0) * (item.now_price || 0)), 0);
-                    const jpEvalUsd = jpItems.reduce((acc, item) => {
-                        const exrt = item.bass_exrt || 905;
-                        const evalKrw = (item.qty || 0) * (item.now_price || 0) * (exrt / 100);
-                        return acc + (cachedExrt > 0 ? (evalKrw / cachedExrt) : 0);
-                    }, 0);
-                    cachedTotalEvalKrw = totalEvalKrw;
-                    cachedDomesticEvalKrw = domesticEvalKrw;
-                    cachedForeignEvalUsd = usEvalUsd + jpEvalUsd;
-                    const totalProfitAmt = totalEvalKrw - totalPurchaseKrw;
-                    const totalProfitRt = totalPurchaseKrw > 0 ? (totalProfitAmt / totalPurchaseKrw) * 100 : 0;
+                    rebuildPortfolioView(combinedItems, usMarketStatus);
 
-                    // 요약 카드 업데이트
-                    document.getElementById('val_total_assets').innerText = `₩${formatNumber(Math.round(totalEvalKrw))}`;
-                    document.getElementById('val_purchase').innerText = `₩${formatNumber(Math.round(totalPurchaseKrw))}`;
-                    renderAssetCardValues();
-
-                    const profitSign = totalProfitAmt > 0 ? '+' : '';
-                    const profitClass = totalProfitAmt > 0 ? 'profit-plus' : (totalProfitAmt < 0 ? 'profit-minus' : '');
-
-                    const profitElem = document.getElementById('val_total_profit');
-                    profitElem.innerText = `${profitSign}₩${formatNumber(Math.round(Math.abs(totalProfitAmt)))}`;
-                    profitElem.className = `summary-value ${profitClass}`;
-
-                    document.getElementById('val_total_rt').innerHTML = formatProfit(totalProfitRt, true);
-
-                    // 평가금액 기준 내림차순 정렬
-                    combinedItems.sort((a, b) => b.evalAmtKrw - a.evalAmtKrw);
-                    cachedItems = combinedItems;
-
-                    // 렌더링 호출
-                    renderTable();
-                    updateChart(combinedItems, totalEvalKrw);
+                    if (manualTrigger) {
+                        startUsQuotePollingWindow(usMarketStatus);
+                    }
 
                     // Static mode only.
                 }
@@ -1670,6 +1783,6 @@
             document.getElementById('today_date').innerText = `${year}년 ${month}월 ${day}일 (${dayOfWeek})`;
 
             fetchMarketCalendar();
-            syncData();
+            syncData(true);
             fetchRealizedProfitSummary();
         });

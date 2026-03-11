@@ -645,6 +645,7 @@
             align-items: center;
         }
 
+
         .table-wrapper {
             flex: 1;
             overflow-y: auto;
@@ -1238,6 +1239,11 @@
         .badge-jpn {
             background: var(--badge-jpn);
             color: var(--badge-jpn-text);
+        }
+
+        .badge-quote-fallback {
+            background: rgba(245, 158, 11, 0.14);
+            color: #fcd34d;
         }
 
         /* Loader */
