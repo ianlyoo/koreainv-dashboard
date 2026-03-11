@@ -69,6 +69,14 @@ def _is_kor_regular_session(now_kst: datetime.datetime | None = None) -> bool:
 
 def _pick_domestic_display_price(quote_output: dict, fallback_price: int) -> int:
     # Regular-session and after-hours prices can both exist in quote output.
+    regular_price, after_price = _extract_domestic_quote_prices(quote_output)
+
+    if _is_kor_regular_session():
+        return regular_price or after_price or fallback_price
+    return after_price or regular_price or fallback_price
+
+
+def _extract_domestic_quote_prices(quote_output: dict) -> tuple[int, int]:
     regular_keys = ["stck_prpr", "prpr"]
     after_keys = ["ovtm_untp_prpr", "ovtm_vi_cls_prc", "ovtm_prpr"]
 
@@ -86,10 +94,7 @@ def _pick_domestic_display_price(quote_output: dict, fallback_price: int) -> int
         if v > 0:
             after_price = v
             break
-
-    if _is_kor_regular_session():
-        return regular_price or after_price or fallback_price
-    return after_price or regular_price or fallback_price
+    return regular_price, after_price
 
 
 def _get_domestic_quote_output(token, app_key, app_secret, ticker: str, market_div_code: str) -> dict | None:
@@ -121,15 +126,39 @@ def _get_domestic_quote_output(token, app_key, app_secret, ticker: str, market_d
 def get_domestic_quote_price(token, app_key, app_secret, ticker: str) -> int | None:
     # Market code: J=KRX, NX=NXT, UN=통합.
     # For after-hours, prefer NXT/통합 first.
-    market_order = ["J", "UN", "NX"] if _is_kor_regular_session() else ["NX", "UN", "J"]
+    is_regular_session = _is_kor_regular_session()
+    market_order = ["J", "UN", "NX"] if is_regular_session else ["NX", "UN", "J"]
+    best_regular_price = 0
     for code in market_order:
         out = _get_domestic_quote_output(token, app_key, app_secret, ticker, code)
         if not out:
             continue
-        price = _pick_domestic_display_price(out, 0)
-        if price > 0:
-            return price
-    return None
+        regular_price, after_price = _extract_domestic_quote_prices(out)
+        if is_regular_session:
+            price = regular_price or after_price
+            if price > 0:
+                return price
+            continue
+        if after_price > 0:
+            return after_price
+        if best_regular_price <= 0 and regular_price > 0:
+            best_regular_price = regular_price
+    return best_regular_price or None
+
+
+def _resolve_domestic_balance_now_price(item: dict, token, app_key, app_secret) -> int:
+    fallback_now = int(_to_float(item.get("prpr", "0")))
+    ticker = str(item.get("pdno", "")).strip()
+
+    if fallback_now > 0 and _is_kor_regular_session():
+        return fallback_now
+    if not ticker:
+        return fallback_now
+
+    quoted_now = get_domestic_quote_price(token, app_key, app_secret, ticker)
+    if quoted_now and quoted_now > 0:
+        return quoted_now
+    return fallback_now
 
 def _pick_orderable_value(row: dict, prefer_usd: bool = False):
     # Explicit priority only (no fuzzy matching).
@@ -571,19 +600,19 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
             }
         for item in (data.get("output1") or []):
                 ticker = item.get("pdno", "")
-                # inquire-balance already includes current price fields, so avoid
-                # issuing one extra quote request per holding on every sync.
-                fallback_now = int(_to_float(item.get("prpr", "0")))
-                now_price = fallback_now
-                if now_price <= 0:
-                    quoted_now = get_domestic_quote_price(
-                        token, app_key, app_secret, ticker
-                    )
-                    now_price = quoted_now if (quoted_now and quoted_now > 0) else fallback_now
+                qty = _to_int(item.get("hldg_qty", "0"))
+                if qty <= 0:
+                    continue
+                now_price = _resolve_domestic_balance_now_price(
+                    item,
+                    token,
+                    app_key,
+                    app_secret,
+                )
                 result["items"].append({
                     "name": item.get("prdt_name", "알수없음"),
                     "ticker": ticker,
-                    "qty": _to_int(item.get("hldg_qty", "0")),
+                    "qty": qty,
                     "avg_price": int(_to_float(item.get("pchs_avg_pric", "0"))),
                     "now_price": now_price,
                     "profit_rt": (
