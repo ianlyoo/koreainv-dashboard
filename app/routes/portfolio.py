@@ -5,6 +5,8 @@ import calendar
 import datetime
 import logging
 import re
+import threading
+import time
 from typing import Optional
 
 import yfinance as yf
@@ -15,6 +17,36 @@ from app.session_store import has_active_session, require_session
 
 
 router = APIRouter()
+_STOCK_SEARCH_CACHE_TTL_SECONDS = 120
+_stock_search_cache: dict[str, dict[str, object]] = {}
+_stock_search_cache_lock = threading.RLock()
+
+
+def _coerce_cache_ts(value: object) -> float:
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, float):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+            return parsed
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _get_stock_search_cache(query: str):
+    with _stock_search_cache_lock:
+        cached = _stock_search_cache.get(query)
+        if cached and (time.time() - _coerce_cache_ts(cached.get("ts"))) < _STOCK_SEARCH_CACHE_TTL_SECONDS:
+            return cached.get("data")
+    return None
+
+
+def _set_stock_search_cache(query: str, data):
+    with _stock_search_cache_lock:
+        _stock_search_cache[query] = {"ts": time.time(), "data": data}
 
 
 def _today_kst() -> datetime.date:
@@ -49,12 +81,45 @@ def _parse_date_value(raw_value: str, field_name: str) -> datetime.date:
         ) from exc
 
 
+def _float_value(value: object) -> float:
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, float):
+        return value
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _int_value(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value))
+        except ValueError:
+            return 0
+    return 0
+
+
 def _serialize_realized_profit_payload(
-    start_day: datetime.date, end_day: datetime.date, payload: dict
-) -> dict:
-    summary = payload.get("summary", {})
+    start_day: datetime.date, end_day: datetime.date, payload: object
+) -> dict[str, object]:
+    payload_dict: dict[str, object] = payload if isinstance(payload, dict) else {}
+    summary = payload_dict.get("summary", {})
+    summary_dict: dict[str, object] = summary if isinstance(summary, dict) else {}
+    daily_source = payload_dict.get("daily", [])
+    daily_source_list = daily_source if isinstance(daily_source, list) else []
     daily_rows = []
-    for row in payload.get("daily", []):
+    for row_value in daily_source_list:
+        row: dict[str, object] = row_value if isinstance(row_value, dict) else {}
+        if not isinstance(row, dict):
+            continue
         trade_date = str(row.get("date", ""))
         iso_date = trade_date
         if len(trade_date) == 8 and trade_date.isdigit():
@@ -63,17 +128,17 @@ def _serialize_realized_profit_payload(
             {
                 "date": iso_date,
                 "domestic_realized_profit_krw": round(
-                    float(row.get("domestic_realized_profit_krw", 0.0))
+                    _float_value(row.get("domestic_realized_profit_krw", 0.0))
                 ),
                 "overseas_realized_profit_krw": round(
-                    float(row.get("overseas_realized_profit_krw", 0.0))
+                    _float_value(row.get("overseas_realized_profit_krw", 0.0))
                 ),
                 "total_realized_profit_krw": round(
-                    float(row.get("total_realized_profit_krw", 0.0))
+                    _float_value(row.get("total_realized_profit_krw", 0.0))
                 ),
-                "domestic_fee_krw": round(float(row.get("domestic_fee_krw", 0.0))),
-                "domestic_tax_krw": round(float(row.get("domestic_tax_krw", 0.0))),
-                "overseas_fee_krw": round(float(row.get("overseas_fee_krw", 0.0))),
+                "domestic_fee_krw": round(_float_value(row.get("domestic_fee_krw", 0.0))),
+                "domestic_tax_krw": round(_float_value(row.get("domestic_tax_krw", 0.0))),
+                "overseas_fee_krw": round(_float_value(row.get("overseas_fee_krw", 0.0))),
             }
         )
 
@@ -85,21 +150,21 @@ def _serialize_realized_profit_payload(
         },
         "summary": {
             "domestic_realized_profit_krw": round(
-                float(summary.get("domestic_realized_profit_krw", 0.0))
+                _float_value(summary_dict.get("domestic_realized_profit_krw", 0.0))
             ),
             "overseas_realized_profit_krw": round(
-                float(summary.get("overseas_realized_profit_krw", 0.0))
+                _float_value(summary_dict.get("overseas_realized_profit_krw", 0.0))
             ),
             "total_realized_profit_krw": round(
-                float(summary.get("total_realized_profit_krw", 0.0))
+                _float_value(summary_dict.get("total_realized_profit_krw", 0.0))
             ),
             "total_realized_return_rate": round(
-                float(summary.get("total_realized_return_rate", 0.0)), 2
+                _float_value(summary_dict.get("total_realized_return_rate", 0.0)), 2
             ),
-            "trade_days": int(summary.get("trade_days", 0)),
+            "trade_days": _int_value(summary_dict.get("trade_days", 0)),
         },
         "daily": daily_rows,
-        "trades": payload.get("trades", []),
+        "trades": payload_dict.get("trades", []),
     }
 
 
@@ -108,7 +173,9 @@ async def sync_data(request: Request):
     session = require_session(request)
     session_id = request.cookies.get("session")
     try:
-        token = api_client.get_access_token(session.app_key, session.app_secret)
+        token = await asyncio.to_thread(
+            api_client.get_access_token, session.app_key, session.app_secret
+        )
         if not token:
             raise HTTPException(
                 status_code=500, detail="Failed to get access token from API"
@@ -204,13 +271,16 @@ async def get_realized_profit_summary(request: Request, month: Optional[str] = N
     session = require_session(request)
     start_day, end_day = _parse_month_value(month)
     try:
-        token = api_client.get_access_token(session.app_key, session.app_secret)
+        token = await asyncio.to_thread(
+            api_client.get_access_token, session.app_key, session.app_secret
+        )
         if not token:
             raise HTTPException(
                 status_code=500, detail="Failed to get access token from API"
             )
 
-        payload = api_client.get_realized_profit_summary(
+        payload = await asyncio.to_thread(
+            api_client.get_realized_profit_summary,
             token,
             session.app_key,
             session.app_secret,
@@ -218,6 +288,15 @@ async def get_realized_profit_summary(request: Request, month: Optional[str] = N
             session.acnt_prdt_cd,
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
+        )
+        summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
+        logging.warning(
+            "realized_summary_response period=%s~%s overseas_profit=%s total_profit=%s trade_days=%s",
+            start_day.isoformat(),
+            end_day.isoformat(),
+            summary.get("overseas_realized_profit_krw"),
+            summary.get("total_realized_profit_krw"),
+            summary.get("trade_days"),
         )
         payload["trades"] = []
         return _serialize_realized_profit_payload(start_day, end_day, payload)
@@ -241,13 +320,16 @@ async def get_realized_profit_detail(request: Request, start: str, end: str):
         raise HTTPException(status_code=400, detail="Date range is too large")
 
     try:
-        token = api_client.get_access_token(session.app_key, session.app_secret)
+        token = await asyncio.to_thread(
+            api_client.get_access_token, session.app_key, session.app_secret
+        )
         if not token:
             raise HTTPException(
                 status_code=500, detail="Failed to get access token from API"
             )
 
-        payload = api_client.get_realized_profit_summary(
+        payload_task = asyncio.to_thread(
+            api_client.get_realized_profit_summary,
             token,
             session.app_key,
             session.app_secret,
@@ -256,7 +338,8 @@ async def get_realized_profit_detail(request: Request, start: str, end: str):
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
         )
-        trade_payload = api_client.get_trade_history(
+        trade_payload_task = asyncio.to_thread(
+            api_client.get_trade_history,
             token,
             session.app_key,
             session.app_secret,
@@ -264,6 +347,22 @@ async def get_realized_profit_detail(request: Request, start: str, end: str):
             session.acnt_prdt_cd,
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
+        )
+        payload, trade_payload = await asyncio.gather(payload_task, trade_payload_task)
+        trades = trade_payload.get("items", []) if isinstance(trade_payload, dict) else []
+        jp_sell_trades = [
+            trade
+            for trade in trades
+            if isinstance(trade, dict)
+            and str(trade.get("market", "")).strip() in {"TSE", "TKSE", "TYO", "JPX"}
+            and trade.get("side") == "매도"
+        ]
+        logging.warning(
+            "realized_detail_response period=%s~%s jp_sell_trades=%s jp_with_pnl=%s",
+            start_day.isoformat(),
+            end_day.isoformat(),
+            len(jp_sell_trades),
+            sum(1 for trade in jp_sell_trades if trade.get("realized_profit_krw") is not None),
         )
         payload["trades"] = trade_payload.get("items", [])
         return _serialize_realized_profit_payload(start_day, end_day, payload)
@@ -285,79 +384,87 @@ async def stock_search(request: Request, q: str = ""):
     results = []
     raw_query = q.strip()
     query_upper = raw_query.upper()
+    cached = _get_stock_search_cache(query_upper)
+    if cached is not None:
+        return {"status": "success", "data": cached}
 
     try:
-        tickers_to_try = [query_upper]
-        if raw_query.isdigit() and len(raw_query) <= 6:
-            tickers_to_try.append(raw_query.zfill(6) + ".KS")
-            tickers_to_try.append(raw_query.zfill(6) + ".KQ")
+        def run_search():
+            local_results = []
+            tickers_to_try = [query_upper]
+            if raw_query.isdigit() and len(raw_query) <= 6:
+                tickers_to_try.append(raw_query.zfill(6) + ".KS")
+                tickers_to_try.append(raw_query.zfill(6) + ".KQ")
 
-        for ticker_candidate in tickers_to_try:
+            for ticker_candidate in tickers_to_try:
+                try:
+                    info = yf.Ticker(ticker_candidate).info
+                    if info and info.get("shortName"):
+                        market = "USA"
+                        ticker = ticker_candidate
+                        if ticker_candidate.endswith(".KS") or ticker_candidate.endswith(
+                            ".KQ"
+                        ):
+                            market = "KOR"
+                        elif ticker_candidate.endswith(".T"):
+                            market = "JPN"
+                        local_results.append(
+                            {
+                                "ticker": ticker,
+                                "name": info.get("shortName", ticker_candidate),
+                                "market": market,
+                            }
+                        )
+                except Exception:
+                    pass
+
             try:
-                info = yf.Ticker(ticker_candidate).info
-                if info and info.get("shortName"):
-                    market = "USA"
-                    ticker = ticker_candidate
-                    if ticker_candidate.endswith(".KS") or ticker_candidate.endswith(
-                        ".KQ"
-                    ):
-                        market = "KOR"
-                    elif ticker_candidate.endswith(".T"):
-                        market = "JPN"
-                    results.append(
-                        {
-                            "ticker": ticker,
-                            "name": info.get("shortName", ticker_candidate),
-                            "market": market,
-                        }
-                    )
+                search_results = yf.Search(raw_query)
+                if hasattr(search_results, "quotes") and search_results.quotes:
+                    for item in search_results.quotes[:8]:
+                        symbol = item.get("symbol", "")
+                        name = item.get("shortname", "") or item.get("longname", symbol)
+                        exchange = item.get("exchange", "")
+                        quote_type = str(item.get("quoteType", "")).upper()
+
+                        symbol_u = str(symbol).upper()
+                        name_l = str(name).lower()
+                        is_occ_option = bool(
+                            re.match(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$", symbol_u)
+                        )
+                        has_option_word = (" call" in name_l) or (" put" in name_l)
+                        if (
+                            quote_type in {"OPTION", "FUTURE"}
+                            or is_occ_option
+                            or has_option_word
+                        ):
+                            continue
+                        if quote_type and quote_type not in {"EQUITY", "ETF"}:
+                            continue
+
+                        market = "USA"
+                        if exchange in ["KSC", "KOE"]:
+                            market = "KOR"
+                        elif exchange in ["JPX", "TYO"]:
+                            market = "JPN"
+
+                        if not any(
+                            str(result.get("ticker", "")).upper() == symbol_u
+                            for result in local_results
+                        ):
+                            local_results.append(
+                                {"ticker": symbol, "name": name, "market": market}
+                            )
             except Exception:
                 pass
+            return local_results
 
-        try:
-            search_results = yf.Search(raw_query)
-            if hasattr(search_results, "quotes") and search_results.quotes:
-                for item in search_results.quotes[:8]:
-                    symbol = item.get("symbol", "")
-                    name = item.get("shortname", "") or item.get("longname", symbol)
-                    exchange = item.get("exchange", "")
-                    quote_type = str(item.get("quoteType", "")).upper()
-
-                    symbol_u = str(symbol).upper()
-                    name_l = str(name).lower()
-                    is_occ_option = bool(
-                        re.match(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$", symbol_u)
-                    )
-                    has_option_word = (" call" in name_l) or (" put" in name_l)
-                    if (
-                        quote_type in {"OPTION", "FUTURE"}
-                        or is_occ_option
-                        or has_option_word
-                    ):
-                        continue
-                    if quote_type and quote_type not in {"EQUITY", "ETF"}:
-                        continue
-
-                    market = "USA"
-                    if exchange in ["KSC", "KOE"]:
-                        market = "KOR"
-                    elif exchange in ["JPX", "TYO"]:
-                        market = "JPN"
-
-                    if not any(
-                        str(result.get("ticker", "")).upper() == symbol_u
-                        for result in results
-                    ):
-                        results.append(
-                            {"ticker": symbol, "name": name, "market": market}
-                        )
-        except Exception:
-            pass
+        results = await asyncio.to_thread(run_search)
 
         q_lower = raw_query.lower()
         market_rank = {"KOR": 0, "USA": 1, "JPN": 2}
 
-        def relevance_key(item: dict):
+        def relevance_key(item: dict[str, object]):
             name = str(item.get("name", "")).lower()
             ticker = str(item.get("ticker", "")).upper()
             ticker_exact = ticker == query_upper
@@ -381,4 +488,6 @@ async def stock_search(request: Request, q: str = ""):
     except Exception as exc:
         logging.error("Stock search error: %s", exc)
 
-    return {"status": "success", "data": results[:10]}
+    top_results = results[:10]
+    _set_stock_search_cache(query_upper, top_results)
+    return {"status": "success", "data": top_results}

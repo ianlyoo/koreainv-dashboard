@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
+import threading
+import time
 
 import dateutil.parser
 import pytz
@@ -11,20 +14,82 @@ from fastapi import APIRouter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_CALENDAR_CACHE_TTL_SECONDS = 900
+_calendar_cache: dict[str, object] = {"ts": 0.0, "data": None}
+_calendar_cache_lock = threading.RLock()
+
+
+def _coerce_cache_ts(value: object) -> float:
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, float):
+        return value
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _get_cached_calendar():
+    with _calendar_cache_lock:
+        cached = _calendar_cache.get("data")
+        if cached is not None and (time.time() - _coerce_cache_ts(_calendar_cache.get("ts"))) < _CALENDAR_CACHE_TTL_SECONDS:
+            return cached
+    return None
+
+
+def _set_cached_calendar(data: object):
+    with _calendar_cache_lock:
+        _calendar_cache["ts"] = time.time()
+        _calendar_cache["data"] = data
+
+
+def _fetch_calendar_events(url: str, headers: dict[str, str]) -> list[dict[str, object]]:
+    response = requests.get(url, headers=headers, timeout=10)
+    if response.status_code == 200:
+        data = response.json()
+        result = data.get("result", [])
+        return [item for item in result if isinstance(item, dict)]
+    return []
+
+
+def _event_str(event: dict[str, object], key: str, default: str = "") -> str:
+    value = event.get(key, default)
+    return value if isinstance(value, str) else str(value)
+
+
+def _event_int(event: dict[str, object], key: str, default: int = 0) -> int:
+    value = event.get(key, default)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 @router.get("/api/market-calendar")
 async def get_market_calendar():
     try:
+        cached = _get_cached_calendar()
+        if cached is not None:
+            return cached
+
         now_kst = datetime.datetime.now(pytz.timezone("Asia/Seoul"))
         start_date = now_kst.strftime("%Y-%m-%dT00:00:00.000Z")
         end_date = (now_kst + datetime.timedelta(days=7)).strftime(
             "%Y-%m-%dT23:59:59.000Z"
         )
 
-        url = f"https://economic-calendar.tradingview.com/events?from={start_date}&to={end_date}&countries=US,KR,CN,JP,EU,GB,DE"
+        url = f"https://economic-calendar.tradingview.com/events?from={start_date}&to={end_date}&countries=US"
 
-        events = []
+        events: list[dict[str, object]] = []
         headers = {
             "Origin": "https://www.tradingview.com",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -32,10 +97,7 @@ async def get_market_calendar():
         }
 
         try:
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                events = data.get("result", [])
+            events = await asyncio.to_thread(_fetch_calendar_events, url, headers)
         except Exception as exc:
             logger.warning("Error fetching TradingView Calendar: %s", exc)
 
@@ -133,13 +195,17 @@ async def get_market_calendar():
         processed_events = []
         for event in events:
             try:
-                dt = dateutil.parser.isoparse(event["date"])
+                raw_date_value = event.get("date")
+                if not isinstance(raw_date_value, str):
+                    continue
+                raw_date = raw_date_value
+                dt = dateutil.parser.isoparse(raw_date)
                 dt_kst = dt.astimezone(pytz.timezone("Asia/Seoul"))
                 if dt_kst < now_kst:
                     continue
 
-                country = event.get("country", "")
-                impact_raw = event.get("importance", -1)
+                country = _event_str(event, "country", "")
+                impact_raw = _event_int(event, "importance", -1)
                 if impact_raw == 1:
                     importance = 3
                 elif impact_raw == 0:
@@ -152,13 +218,13 @@ async def get_market_calendar():
                 if country != "US" or importance < 2:
                     continue
 
-                act = str(event.get("actual", ""))
-                fore = str(event.get("forecast", ""))
-                prev = str(event.get("previous", ""))
+                act = _event_str(event, "actual", "")
+                fore = _event_str(event, "forecast", "")
+                prev = _event_str(event, "previous", "")
                 days = ["월", "화", "수", "목", "금", "토", "일"]
                 day_str = days[dt_kst.weekday()]
                 time_str = dt_kst.strftime(f"%m/%d({day_str}) %H:%M")
-                title = translate_title(event.get("title", "Unknown Event"))
+                title = translate_title(_event_str(event, "title", "Unknown Event"))
 
                 processed_events.append(
                     {
@@ -181,7 +247,9 @@ async def get_market_calendar():
             event.pop("_dt", None)
             final_events.append(event)
 
-        return {"status": "success", "data": final_events}
+        payload = {"status": "success", "data": final_events}
+        _set_cached_calendar(payload)
+        return payload
     except Exception as exc:
         logger.exception("Calendar error: %s", exc)
         return {"status": "error", "message": str(exc)}
