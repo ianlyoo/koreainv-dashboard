@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 _CALENDAR_CACHE_TTL_SECONDS = 900
 _calendar_cache: dict[str, object] = {"ts": 0.0, "data": None}
 _calendar_cache_lock = threading.RLock()
+KST = pytz.timezone("Asia/Seoul")
+UTC = pytz.UTC
 
 
 def _coerce_cache_ts(value: object) -> float:
@@ -44,6 +46,38 @@ def _set_cached_calendar(data: object):
     with _calendar_cache_lock:
         _calendar_cache["ts"] = time.time()
         _calendar_cache["data"] = data
+
+
+def _build_calendar_window(now_kst: datetime.datetime | None = None) -> tuple[datetime.datetime, str, str]:
+    current_kst = now_kst or datetime.datetime.now(KST)
+    start_kst = KST.localize(
+        datetime.datetime(
+            current_kst.year,
+            current_kst.month,
+            current_kst.day,
+            0,
+            0,
+            0,
+        )
+    )
+    end_base = current_kst + datetime.timedelta(days=7)
+    end_kst = KST.localize(
+        datetime.datetime(
+            end_base.year,
+            end_base.month,
+            end_base.day,
+            23,
+            59,
+            59,
+        )
+    )
+    start_utc = start_kst.astimezone(UTC)
+    end_utc = end_kst.astimezone(UTC)
+    return (
+        current_kst,
+        start_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+    )
 
 
 def _fetch_calendar_events(url: str, headers: dict[str, str]) -> list[dict[str, object]]:
@@ -81,11 +115,7 @@ async def get_market_calendar():
         if cached is not None:
             return cached
 
-        now_kst = datetime.datetime.now(pytz.timezone("Asia/Seoul"))
-        start_date = now_kst.strftime("%Y-%m-%dT00:00:00.000Z")
-        end_date = (now_kst + datetime.timedelta(days=7)).strftime(
-            "%Y-%m-%dT23:59:59.000Z"
-        )
+        now_kst, start_date, end_date = _build_calendar_window()
 
         url = f"https://economic-calendar.tradingview.com/events?from={start_date}&to={end_date}&countries=US"
 
@@ -200,7 +230,7 @@ async def get_market_calendar():
                     continue
                 raw_date = raw_date_value
                 dt = dateutil.parser.isoparse(raw_date)
-                dt_kst = dt.astimezone(pytz.timezone("Asia/Seoul"))
+                dt_kst = dt.astimezone(KST)
                 if dt_kst < now_kst:
                     continue
 
@@ -248,7 +278,8 @@ async def get_market_calendar():
             final_events.append(event)
 
         payload = {"status": "success", "data": final_events}
-        _set_cached_calendar(payload)
+        if final_events:
+            _set_cached_calendar(payload)
         return payload
     except Exception as exc:
         logger.exception("Calendar error: %s", exc)
