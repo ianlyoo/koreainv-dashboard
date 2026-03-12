@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import requests
@@ -28,6 +28,7 @@ WS_PAPER_URL = "ws://ops.koreainvestment.com:31000/tryitout"
 TR_ASKING_PRICE = "HDFSASP0"
 TR_CONTRACT = "HDFSCNT0"
 QUOTE_STALE_SECONDS = 180
+APPKEY_CONFLICT_COOLDOWN_SECONDS = 180
 CONTRACT_FIELD_COUNT = 26
 ASK_FIELD_COUNT = 17
 
@@ -71,6 +72,7 @@ class KISUSQuoteService:
         self._app_secret: str | None = None
         self._session_name: str = "closed"
         self._last_session_refresh_at = 0.0
+        self._appkey_conflict_retry_at = 0.0
 
     def start(self) -> None:
         self._stop_event.clear()
@@ -119,6 +121,7 @@ class KISUSQuoteService:
         app_key: str,
         app_secret: str,
         us_items: list[dict[str, Any]],
+        force_retry: bool = False,
     ) -> None:
         if not session_id:
             return
@@ -146,6 +149,8 @@ class KISUSQuoteService:
             if credentials_changed:
                 self._approval_key = None
                 self._subscribed_keys.clear()
+            if force_retry:
+                self._clear_appkey_conflict_cooldown_locked()
             ws = self._ws
         if ws is not None and not credentials_changed:
             self._send_subscriptions(ws)
@@ -201,11 +206,9 @@ class KISUSQuoteService:
                     enriched_item["now_price"] = snapshot.price
                     enriched_item["quote_source"] = snapshot.source
                     enriched_item["quote_stale"] = False
-                    enriched_item["quote_ts"] = (
-                        (snapshot.quoted_at or snapshot.updated_at).isoformat()
-                        if (snapshot.quoted_at or snapshot.updated_at)
-                        else None
-                    )
+                    quote_dt = snapshot.quoted_at or snapshot.updated_at
+                    if quote_dt is not None:
+                        enriched_item["quote_ts"] = quote_dt.isoformat()
                     enriched_item["quote_tr_key"] = snapshot.tr_key
                     avg_price = float(item.get("avg_price") or 0)
                     if avg_price > 0:
@@ -265,11 +268,9 @@ class KISUSQuoteService:
         if snapshot:
             diag.setdefault("ticker", ticker)
             diag["last_quote_source"] = snapshot.source
-            diag["last_quote_ts"] = (
-                (snapshot.quoted_at or snapshot.updated_at).isoformat()
-                if (snapshot.quoted_at or snapshot.updated_at)
-                else None
-            )
+            quote_dt = snapshot.quoted_at or snapshot.updated_at
+            if quote_dt is not None:
+                diag["last_quote_ts"] = quote_dt.isoformat()
             diag["quote_is_stale"] = snapshot.is_stale(now)
         return diag
 
@@ -301,6 +302,11 @@ class KISUSQuoteService:
             with self._lock:
                 if not self._desired_keys or not self._app_key or not self._app_secret:
                     continue
+                retry_at = self._appkey_conflict_retry_at
+            now_ts = time.time()
+            if retry_at > now_ts:
+                self._wake_event.wait(timeout=min(retry_at - now_ts, 1.0))
+                continue
             try:
                 self._connect_once()
                 backoff = 1.0
@@ -310,6 +316,9 @@ class KISUSQuoteService:
                 backoff = min(backoff * 2, 30.0)
 
     def _connect_once(self) -> None:
+        ws_module = cast(Any, websocket)
+        if ws_module is None:
+            raise RuntimeError("websocket-client is not installed")
         approval_key = self._get_approval_key()
         if not approval_key:
             raise RuntimeError("Failed to obtain websocket approval key")
@@ -334,7 +343,7 @@ class KISUSQuoteService:
                 self._subscribed_keys.clear()
                 self._ws = None
 
-        ws_app = websocket.WebSocketApp(
+        ws_app = ws_module.WebSocketApp(
             self._get_ws_url(),
             on_open=on_open,
             on_message=on_message,
@@ -343,7 +352,7 @@ class KISUSQuoteService:
         )
         with self._lock:
             self._ws = ws_app
-        ws_app.run_forever(ping_interval=None)
+        ws_app.run_forever()
 
     def _get_approval_key(self) -> str | None:
         with self._lock:
@@ -475,8 +484,11 @@ class KISUSQuoteService:
         header = obj.get("header") or {}
         tr_id = header.get("tr_id")
         if tr_id == "PINGPONG":
+            ws_module = cast(Any, websocket)
+            if ws_module is None:
+                return
             try:
-                ws_app.send(data, opcode=websocket.ABNF.OPCODE_PING)
+                ws_app.send(data, opcode=ws_module.ABNF.OPCODE_PING)
             except Exception:
                 logger.debug("Failed to answer PINGPONG", exc_info=True)
             return
@@ -484,6 +496,12 @@ class KISUSQuoteService:
         body = obj.get("body") or {}
         if str(body.get("rt_cd", "0")) != "0":
             msg = body.get("msg1")
+            if self._is_appkey_conflict_message(msg):
+                self._mark_appkey_conflict()
+                try:
+                    ws_app.close()
+                except Exception:
+                    logger.debug("Failed to close websocket after appkey conflict", exc_info=True)
             tr_key = str(header.get("tr_key") or "").strip().upper()
             if tr_key:
                 with self._lock:
@@ -626,6 +644,18 @@ class KISUSQuoteService:
                     continue
                 desired[tr_key] = (ticker, excg_cd)
         self._desired_keys = desired
+
+    @staticmethod
+    def _is_appkey_conflict_message(message: object) -> bool:
+        return "ALREADY IN USE appkey" in str(message or "")
+
+    def _mark_appkey_conflict(self) -> None:
+        with self._lock:
+            self._appkey_conflict_retry_at = time.time() + APPKEY_CONFLICT_COOLDOWN_SECONDS
+            self._subscribed_keys.clear()
+
+    def _clear_appkey_conflict_cooldown_locked(self) -> None:
+        self._appkey_conflict_retry_at = 0.0
 
     @staticmethod
     def _to_float(value: Any) -> float:

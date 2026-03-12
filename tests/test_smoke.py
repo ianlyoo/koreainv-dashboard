@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from typing import cast
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -12,11 +13,15 @@ from app.version import APP_VERSION
 
 
 class DashboardSmokeTests(unittest.TestCase):
+    client: TestClient = cast(TestClient, cast(object, None))
+
     def setUp(self):
         active_sessions.clear()
         self.client = TestClient(app)
+        self.client.__enter__()
 
     def tearDown(self):
+        self.client.__exit__(None, None, None)
         active_sessions.clear()
 
     def test_login_page_uses_static_assets_and_no_store_headers(self):
@@ -87,6 +92,53 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn('aria-pressed="false"', index_html)
         self.assertIn("function toggleCashCard()", dashboard_js)
         self.assertIn("function handleCashCardKeydown(event)", dashboard_js)
+
+    @patch("app.routes.portfolio.api_client.get_domestic_balance", return_value={"items": [], "summary": {}})
+    @patch("app.routes.portfolio.api_client.get_overseas_balance", return_value={"us_items": [], "jp_items": []})
+    @patch("app.routes.portfolio.api_client.get_access_token", return_value="token")
+    def test_sync_manual_refresh_bypasses_quote_cooldown(
+        self,
+        _get_access_token,
+        _get_overseas_balance,
+        _get_domestic_balance,
+    ):
+        active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
+        self.client.cookies.set("session", "test-session")
+        original_service = app.state.us_quote_service
+        quote_service = Mock()
+        quote_service.enrich_us_items.return_value = []
+        quote_service.get_market_status.return_value = {
+            "session": "closed",
+            "is_open": False,
+            "uses_day_prefix": False,
+            "source_state": "idle",
+            "tracked_count": 0,
+            "fresh_count": 0,
+            "fallback_count": 0,
+        }
+        app.state.us_quote_service = quote_service
+
+        try:
+            response = self.client.get("/api/sync?manual_refresh=1")
+        finally:
+            app.state.us_quote_service = original_service
+
+        self.assertEqual(response.status_code, 200)
+        quote_service.sync_session_holdings.assert_called_once_with(
+            "test-session",
+            "key",
+            "secret",
+            [],
+            force_retry=True,
+        )
+
+    def test_dashboard_sync_uses_manual_refresh_flag_only_for_button_trigger(self):
+        dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "const syncUrl = manualTrigger ? '/api/sync?manual_refresh=1' : '/api/sync';",
+            dashboard_js,
+        )
 
 
 if __name__ == "__main__":

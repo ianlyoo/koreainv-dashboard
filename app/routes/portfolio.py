@@ -176,7 +176,7 @@ def _with_realized_profit_trades(payload: object, trades: Sequence[object]) -> d
 
 
 @router.get("/api/sync")
-async def sync_data(request: Request):
+async def sync_data(request: Request, manual_refresh: bool = False):
     session = require_session(request)
     session_id = request.cookies.get("session")
     try:
@@ -214,6 +214,7 @@ async def sync_data(request: Request):
                 session.app_key,
                 session.app_secret,
                 us_items,
+                force_retry=manual_refresh,
             )
             overseas = dict(overseas)
             enriched_us_items = quote_service.enrich_us_items(us_items)

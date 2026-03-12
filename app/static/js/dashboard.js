@@ -660,7 +660,8 @@
             const loading = document.getElementById('loading');
             loading.classList.add('active');
             try {
-                const res = await fetch('/api/sync');
+                const syncUrl = manualTrigger ? '/api/sync?manual_refresh=1' : '/api/sync';
+                const res = await fetch(syncUrl);
 
                 if (res.status === 401) {
                     window.location.href = '/login';
