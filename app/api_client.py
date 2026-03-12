@@ -15,6 +15,7 @@ _cached_token = None
 _token_issue_time = 0
 _token_expires_at = 0
 _realized_cache = {}
+_inflight_trade_profit_rows = {}
 _MAX_PARALLEL_WORKERS = 4
 _REALIZED_CACHE_TTL_SECONDS = 120
 _token_lock = threading.RLock()
@@ -569,6 +570,7 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
     res = requests.get(url, headers=headers, params=params)
     
     result = {"summary": {}, "items": []}
+    quote_lookup_count = 0
     if res.status_code == 200:
         data = res.json()
         output2_rows = data.get("output2") or []
@@ -603,6 +605,9 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 qty = _to_int(item.get("hldg_qty", "0"))
                 if qty <= 0:
                     continue
+                fallback_now = int(_to_float(item.get("prpr", "0")))
+                if ticker and not (fallback_now > 0 and _is_kor_regular_session()):
+                    quote_lookup_count += 1
                 now_price = _resolve_domestic_balance_now_price(
                     item,
                     token,
@@ -623,16 +628,22 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
     return result
 
 def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
-    headers = {
-        "content-type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appkey": app_key,
-        "appsecret": app_secret,
-        "tr_id": "CTRP6504R", 
-    }
     url = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-present-balance"
-    
-    result = {"us_summary": {}, "jp_summary": {}, "us_items": [], "jp_items": []}
+    result: dict[str, dict[str, object] | list[dict[str, object]]] = {
+        "us_summary": {},
+        "jp_summary": {},
+        "us_items": [],
+        "jp_items": [],
+    }
+
+    def _balance_headers() -> dict[str, str]:
+        return {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {token}",
+            "appkey": app_key,
+            "appsecret": app_secret,
+            "tr_id": "CTRP6504R",
+        }
 
     def _get_overseas_orderable_usd():
         headers_ps = {
@@ -673,32 +684,40 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
             except Exception:
                 continue
         return 0.0, "none"
-    
-    # 1. ?명솕 湲곗? (02) 濡?醫낅ぉ ?뺣낫 媛?몄삤湲?
-    params_us_foreign = {
-        "CANO": cano,
-        "ACNT_PRDT_CD": acnt_prdt_cd,
-        "WCRC_FRCR_DVSN_CD": "02", # ?명솕
-        "NATN_CD": "840",
-        "TR_MKET_CD": "00",
-        "INQR_DVSN_CD": "00",
-        "CTX_AREA_FK200": "",
-        "CTX_AREA_NK200": ""
-    }
-    
-    while True:
-        res = requests.get(url, headers=headers, params=params_us_foreign)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get("rt_cd") == "0":
+
+    def _fetch_us_balance() -> dict[str, object]:
+        us_items: list[dict[str, object]] = []
+        us_result: dict[str, object] = {"us_summary": {}, "us_items": us_items}
+        headers = _balance_headers()
+        params_us_foreign = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "WCRC_FRCR_DVSN_CD": "02",
+            "NATN_CD": "840",
+            "TR_MKET_CD": "00",
+            "INQR_DVSN_CD": "00",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
+        }
+
+        try:
+            while True:
+                res = requests.get(url, headers=headers, params=params_us_foreign, timeout=10)
+                if res.status_code != 200:
+                    break
+                data = res.json()
+                if data.get("rt_cd") != "0":
+                    break
+
                 if "output1" in data:
                     for item in data["output1"]:
                         avg_unpr3 = _to_float(item.get("avg_unpr3", "0"))
                         ovrs_now_pric1 = _to_float(item.get("ovrs_now_pric1", "0"))
                         bass_exrt = _to_float(item.get("bass_exrt", "1"))
-                        if bass_exrt == 0: bass_exrt = 1
+                        if bass_exrt == 0:
+                            bass_exrt = 1
 
-                        result["us_items"].append({
+                        us_items.append({
                             "name": item.get("prdt_name", "?뚯닔?놁쓬"),
                             "ticker": item.get("pdno", ""),
                             "excg_cd": item.get("ovrs_excg_cd", "NASD"),
@@ -706,62 +725,74 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                             "profit_rt": ((ovrs_now_pric1 - avg_unpr3) / avg_unpr3 * 100) if avg_unpr3 > 0 else 0.0,
                             "avg_price": avg_unpr3,
                             "now_price": ovrs_now_pric1,
-                            "bass_exrt": bass_exrt
+                            "bass_exrt": bass_exrt,
                         })
-                
-                if "output3" in data and not result["us_summary"]:
-                    out3 = data["output3"]
 
-                    ps_cash, ps_key = _get_overseas_orderable_usd()
-                    
+                if "output3" in data and not us_result["us_summary"]:
+                    out3 = data["output3"]
                     usd_cash = 0.0
                     usd_exrt = 0.0
                     usd_cash_key = "none"
                     if "output2" in data:
                         usd_cash, usd_exrt, usd_cash_key = _pick_usd_orderable_from_output2(data["output2"])
-                    if ps_cash > 0:
-                        usd_cash = ps_cash
-                        usd_cash_key = ps_key
                     if usd_cash <= 0:
                         fallback_cash, fallback_key = _pick_usd_orderable_from_output3(out3)
                         if fallback_cash > 0:
                             usd_cash = fallback_cash
                             usd_cash_key = fallback_key
+                    if usd_cash <= 0:
+                        ps_cash, ps_key = _get_overseas_orderable_usd()
+                        if ps_cash > 0:
+                            usd_cash = ps_cash
+                            usd_cash_key = ps_key
 
                     logger.info(
                         "Overseas USD cash selected: key=%s, value=%s",
                         usd_cash_key,
                         usd_cash,
                     )
-                    
-                    result["us_summary"] = {
+
+                    us_result["us_summary"] = {
                         "krw_purchase_amt": _to_float(out3.get("pchs_amt_smtl_amt", 0)),
                         "krw_eval_amt": _to_float(out3.get("evlu_amt_smtl_amt", 0)),
                         "usd_cash_balance": usd_cash,
                         "usd_exrt": usd_exrt,
                     }
-                
+
                 tr_cont = res.headers.get("tr_cont", "")
                 if tr_cont in ["F", "M"]:
                     params_us_foreign["CTX_AREA_FK200"] = data.get("ctx_area_fk200", "")
                     params_us_foreign["CTX_AREA_NK200"] = data.get("ctx_area_nk200", "")
-                else:
-                    break
-            else:
+                    continue
                 break
-        else:
-            break
+        except Exception:
+            logger.warning("Failed to fetch US overseas balance", exc_info=True)
 
-    # 2. ?쇰낯 二쇱떇 ?명솕 湲곗? (392)
-    params_jp_foreign = params_us_foreign.copy()
-    params_jp_foreign["NATN_CD"] = "392"
-    params_jp_foreign["CTX_AREA_FK200"] = ""
-    params_jp_foreign["CTX_AREA_NK200"] = ""
-    
-    res = requests.get(url, headers=headers, params=params_jp_foreign)
-    if res.status_code == 200:
-        data = res.json()
-        if data.get("rt_cd") == "0":
+        return us_result
+
+    def _fetch_jp_balance() -> dict[str, object]:
+        headers = _balance_headers()
+        params_jp_foreign = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "WCRC_FRCR_DVSN_CD": "02",
+            "NATN_CD": "392",
+            "TR_MKET_CD": "00",
+            "INQR_DVSN_CD": "00",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
+        }
+        jp_items: list[dict[str, object]] = []
+        jp_result: dict[str, object] = {"jp_summary": {}, "jp_items": jp_items}
+
+        try:
+            res = requests.get(url, headers=headers, params=params_jp_foreign, timeout=10)
+            if res.status_code != 200:
+                return jp_result
+            data = res.json()
+            if data.get("rt_cd") != "0":
+                return jp_result
+
             jp_cash = 0.0
             jp_exrt = 0.0
             jp_cash_key = "none"
@@ -792,7 +823,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 jp_cash,
             )
 
-            result["jp_summary"] = {
+            jp_result["jp_summary"] = {
                 "jpy_cash_balance": jp_cash,
                 "jpy_exrt": jp_exrt,
             }
@@ -803,9 +834,10 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 avg_unpr3 = _to_float(item.get("avg_unpr3", "0"))
                 ovrs_now_pric1 = _to_float(item.get("ovrs_now_pric1", "0"))
                 bass_exrt = _to_float(item.get("bass_exrt", "1"))
-                if bass_exrt == 0: bass_exrt = 1
+                if bass_exrt == 0:
+                    bass_exrt = 1
 
-                result["jp_items"].append({
+                jp_items.append({
                     "name": item.get("prdt_name", "?뚯닔?놁쓬"),
                     "ticker": item.get("pdno", ""),
                     "excg_cd": item.get("ovrs_excg_cd", "TKSE"),
@@ -813,8 +845,29 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                     "profit_rt": ((ovrs_now_pric1 - avg_unpr3) / avg_unpr3 * 100) if avg_unpr3 > 0 else 0.0,
                     "avg_price": avg_unpr3,
                     "now_price": ovrs_now_pric1,
-                    "bass_exrt": bass_exrt
+                    "bass_exrt": bass_exrt,
                 })
+        except Exception:
+            logger.warning("Failed to fetch JP overseas balance", exc_info=True)
+
+        return jp_result
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        us_future = executor.submit(_fetch_us_balance)
+        jp_future = executor.submit(_fetch_jp_balance)
+        us_result = us_future.result()
+        jp_result = jp_future.result()
+
+    if isinstance(us_result, dict):
+        us_summary = us_result.get("us_summary")
+        us_items = us_result.get("us_items")
+        result["us_summary"] = us_summary if isinstance(us_summary, dict) else {}
+        result["us_items"] = us_items if isinstance(us_items, list) else []
+    if isinstance(jp_result, dict):
+        jp_summary = jp_result.get("jp_summary")
+        jp_items = jp_result.get("jp_items")
+        result["jp_summary"] = jp_summary if isinstance(jp_summary, dict) else {}
+        result["jp_items"] = jp_items if isinstance(jp_items, list) else []
 
     # 3. (??젣?? ?먰솕 珥앺빀怨꾨뒗 1踰??몄텧??output3?먯꽌 媛?몄샂
                     
@@ -883,46 +936,42 @@ def _set_cached_payload(cache_key: tuple, data):
 
 def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
     cache_key = ("trade_profit_rows", cano, acnt_prdt_cd, start_date, end_date)
-    cached = _get_cached_payload(cache_key)
-    if cached is not None:
-        return cached
+    inflight_event = None
 
-    results = _run_parallel_tasks({
-        "domestic": (get_domestic_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
-        "overseas": (get_overseas_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
-    })
-    domestic_result = results.get("domestic")
-    overseas_result = results.get("overseas")
-    payload: dict[str, list[dict]] = {"domestic": [], "overseas": []}
-    if isinstance(domestic_result, list):
-        payload["domestic"] = domestic_result
-    if isinstance(overseas_result, list):
-        payload["overseas"] = overseas_result
-    overseas_rows: list[dict] = payload["overseas"]
-    jp_rows = [
-        row for row in overseas_rows if _is_japan_market_code(str(row.get("exchange_code", "")))
-    ]
-    if not jp_rows:
-        japan_source_trades = get_japan_trade_history_ccnl(
-            token,
-            app_key,
-            app_secret,
-            cano,
-            acnt_prdt_cd,
-            start_date,
-            end_date,
-        )
-        japan_trades = [
-            row
-            for row in japan_source_trades
-            if _is_japan_market_code(str(row.get("market", "")))
-        ]
-        japan_fallback_rows = _build_japan_realized_fallback_rows(japan_trades)
-        if japan_fallback_rows:
-            overseas_rows = _dedupe_realized_profit_rows(overseas_rows + japan_fallback_rows)
-            payload["overseas"] = overseas_rows
-    _set_cached_payload(cache_key, payload)
-    return payload
+    while True:
+        cached = _get_cached_payload(cache_key)
+        if cached is not None:
+            return cached
+
+        with _cache_lock:
+            inflight_event = _inflight_trade_profit_rows.get(cache_key)
+            if inflight_event is None:
+                inflight_event = threading.Event()
+                _inflight_trade_profit_rows[cache_key] = inflight_event
+                break
+
+        inflight_event.wait()
+
+    try:
+        results = _run_parallel_tasks({
+            "domestic": (get_domestic_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+            "overseas": (get_overseas_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+        })
+        domestic_result = results.get("domestic")
+        overseas_result = results.get("overseas")
+        payload: dict[str, list[dict]] = {"domestic": [], "overseas": []}
+        if isinstance(domestic_result, list):
+            payload["domestic"] = domestic_result
+        if isinstance(overseas_result, list):
+            payload["overseas"] = overseas_result
+        _set_cached_payload(cache_key, payload)
+        return payload
+    finally:
+        with _cache_lock:
+            current_event = _inflight_trade_profit_rows.get(cache_key)
+            if current_event is inflight_event:
+                del _inflight_trade_profit_rows[cache_key]
+                inflight_event.set()
 
 
 def _normalize_domestic_realized_rows(rows: list[dict]) -> list[dict]:
@@ -1406,63 +1455,6 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
     return normalized
 
 
-def _is_japan_market_code(value: str) -> bool:
-    return str(value or "").strip().upper() in {"TSE", "TKSE", "TYO", "JPX"}
-
-
-def _build_japan_realized_fallback_rows(trades: list[dict]) -> list[dict]:
-    fallback_rows = []
-    for trade in trades:
-        if not isinstance(trade, dict):
-            continue
-        if trade.get("side") != "매도":
-            continue
-        if not _is_japan_market_code(str(trade.get("market", ""))):
-            continue
-        if str(trade.get("currency", "")).strip().upper() != "JPY":
-            continue
-
-        sell_amount_native = _to_float(trade.get("sell_amount_native") or trade.get("amount") or 0)
-        buy_amount_native = _to_float(trade.get("buy_amount_native") or 0)
-        exchange_rate = _to_float(trade.get("exchange_rate") or 0)
-        settlement_amount_krw = _to_float(trade.get("settlement_amount_krw") or 0)
-        fees_krw = _to_float(trade.get("domestic_fee_krw") or 0) + _to_float(trade.get("overseas_fee_krw") or 0)
-        if fees_krw <= 0 and exchange_rate > 0:
-            fees_krw = (
-                _to_float(trade.get("domestic_fee_native") or 0)
-                + _to_float(trade.get("overseas_fee_native") or 0)
-            ) * exchange_rate
-
-        if buy_amount_native <= 0:
-            continue
-        if exchange_rate <= 0 and sell_amount_native > 0 and settlement_amount_krw > 0:
-            exchange_rate = settlement_amount_krw / sell_amount_native
-        if exchange_rate <= 0:
-            continue
-
-        buy_amount_krw = buy_amount_native * exchange_rate
-        sell_amount_krw = sell_amount_native * exchange_rate if sell_amount_native > 0 else settlement_amount_krw
-        if sell_amount_krw <= 0:
-            sell_amount_krw = settlement_amount_krw
-        if sell_amount_krw <= 0 or buy_amount_krw <= 0:
-            continue
-
-        realized_profit_krw = sell_amount_krw - buy_amount_krw - fees_krw
-        fallback_rows.append({
-            "date": str(trade.get("date", "")),
-            "symbol": str(trade.get("symbol", "")),
-            "quantity": _to_float(trade.get("quantity") or 0),
-            "amount": sell_amount_native if sell_amount_native > 0 else _to_float(trade.get("amount") or 0),
-            "realized_profit_krw": realized_profit_krw,
-            "buy_amount_krw": buy_amount_krw,
-            "realized_return_rate": (realized_profit_krw / buy_amount_krw * 100) if buy_amount_krw > 0 else None,
-            "exchange_code": str(trade.get("market", "")),
-            "currency_code": "JPY",
-            "source": "japan_trade_fallback",
-        })
-    return fallback_rows
-
-
 def get_japan_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
     headers = {
         "content-type": "application/json; charset=utf-8",
@@ -1528,6 +1520,14 @@ def _dedupe_trade_rows(rows: list[dict]) -> list[dict]:
         seen.add(key)
         deduped.append(row)
     return deduped
+
+
+def _has_japan_trade_rows(rows: list[dict]) -> bool:
+    for row in rows:
+        market = str(row.get("market", "")).strip().upper()
+        if market in {"TSE", "TKSE", "TYO", "JPX"}:
+            return True
+    return False
 
 
 def _build_realized_profit_matchers(rows: list[dict]) -> dict:
@@ -1661,16 +1661,18 @@ def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date
     overseas_trade_result = results.get("overseas_trades")
     domestic_rows: list[dict] = domestic_trade_result if isinstance(domestic_trade_result, list) else []
     overseas_rows: list[dict] = overseas_trade_result if isinstance(overseas_trade_result, list) else []
-    japan_ccnl_result = get_japan_trade_history_ccnl(
-        token,
-        app_key,
-        app_secret,
-        cano,
-        acnt_prdt_cd,
-        start_date,
-        end_date,
-    )
-    japan_ccnl_rows: list[dict] = japan_ccnl_result if isinstance(japan_ccnl_result, list) else []
+    japan_ccnl_rows: list[dict] = []
+    if not _has_japan_trade_rows(overseas_rows):
+        japan_ccnl_result = get_japan_trade_history_ccnl(
+            token,
+            app_key,
+            app_secret,
+            cano,
+            acnt_prdt_cd,
+            start_date,
+            end_date,
+        )
+        japan_ccnl_rows = japan_ccnl_result if isinstance(japan_ccnl_result, list) else []
     if japan_ccnl_rows:
         overseas_rows = _dedupe_trade_rows(overseas_rows + japan_ccnl_rows)
     domestic_pnl_rows = pnl_rows["domestic"] if isinstance(pnl_rows.get("domestic"), list) else []

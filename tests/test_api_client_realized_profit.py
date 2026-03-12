@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -10,9 +12,11 @@ from app import api_client
 class RealizedProfitApiClientTests(unittest.TestCase):
     def setUp(self):
         api_client._realized_cache.clear()
+        api_client._inflight_trade_profit_rows.clear()
 
     def tearDown(self):
         api_client._realized_cache.clear()
+        api_client._inflight_trade_profit_rows.clear()
 
     def test_normalize_domestic_realized_trade_rows_derives_buy_amount_when_missing(
         self,
@@ -318,12 +322,16 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "output2": [{"crcy_cd": "JPY", "frcr_use_psbl_amt": "33000", "bass_exrt": "910"}],
         }
 
-        mock_get.side_effect = [
-            SimpleNamespace(status_code=200, json=lambda: us_payload, headers={}),
-            SimpleNamespace(status_code=500, json=lambda: {}, headers={}),
-            SimpleNamespace(status_code=500, json=lambda: {}, headers={}),
-            SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={}),
-        ]
+        def fake_get(url, headers=None, params=None, timeout=None):
+            tr_id = (headers or {}).get("tr_id")
+            natn_cd = (params or {}).get("NATN_CD")
+            if tr_id == "CTRP6504R" and natn_cd == "840":
+                return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
+            if tr_id == "CTRP6504R" and natn_cd == "392":
+                return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
+            self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
+
+        mock_get.side_effect = fake_get
 
         result = api_client.get_overseas_balance(
             "token",
@@ -360,12 +368,16 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "output3": {"ord_psbl_frcr_amt": "12000"},
         }
 
-        mock_get.side_effect = [
-            SimpleNamespace(status_code=200, json=lambda: us_payload, headers={}),
-            SimpleNamespace(status_code=500, json=lambda: {}, headers={}),
-            SimpleNamespace(status_code=500, json=lambda: {}, headers={}),
-            SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={}),
-        ]
+        def fake_get(url, headers=None, params=None, timeout=None):
+            tr_id = (headers or {}).get("tr_id")
+            natn_cd = (params or {}).get("NATN_CD")
+            if tr_id == "CTRP6504R" and natn_cd == "840":
+                return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
+            if tr_id == "CTRP6504R" and natn_cd == "392":
+                return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
+            self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
+
+        mock_get.side_effect = fake_get
 
         result = api_client.get_overseas_balance(
             "token",
@@ -384,6 +396,260 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(jp_summary.get("jpy_exrt"), 905.0)
         self.assertEqual(len(jp_items), 1)
         self.assertEqual(jp_items[0].get("ticker"), "7203")
+
+    @patch("app.api_client.requests.get")
+    def test_get_overseas_balance_uses_psamount_only_when_balance_fields_are_empty(self, mock_get):
+        us_payload = {
+            "rt_cd": "0",
+            "output1": [],
+            "output2": [{"crcy_cd": "USD", "frcr_use_psbl_amt": "0", "bass_exrt": "1400"}],
+            "output3": {"pchs_amt_smtl_amt": "0", "evlu_amt_smtl_amt": "0"},
+        }
+        jp_payload = {
+            "rt_cd": "0",
+            "output1": [],
+            "output2": [{"crcy_cd": "JPY", "frcr_use_psbl_amt": "0", "bass_exrt": "910"}],
+            "output3": {"ord_psbl_frcr_amt": "0"},
+        }
+        ps_payload = {
+            "rt_cd": "0",
+            "output": {"ovrs_ord_psbl_amt": "77.5"},
+        }
+        ps_calls = []
+
+        def fake_get(url, headers=None, params=None, timeout=None):
+            tr_id = (headers or {}).get("tr_id")
+            natn_cd = (params or {}).get("NATN_CD")
+            if tr_id == "CTRP6504R" and natn_cd == "840":
+                return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
+            if tr_id == "CTRP6504R" and natn_cd == "392":
+                return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
+            if tr_id == "TTTS3007R":
+                ps_calls.append((params or {}).get("OVRS_EXCG_CD"))
+                return SimpleNamespace(status_code=200, json=lambda: ps_payload, headers={})
+            self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
+
+        mock_get.side_effect = fake_get
+
+        result = api_client.get_overseas_balance(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+        )
+        result_dict = result if isinstance(result, dict) else {}
+        us_summary_obj = result_dict.get("us_summary")
+        us_summary = us_summary_obj if isinstance(us_summary_obj, dict) else {}
+
+        self.assertEqual(us_summary.get("usd_cash_balance"), 77.5)
+        self.assertEqual(ps_calls, ["NASD"])
+
+    @patch("app.api_client._run_parallel_tasks")
+    def test_fetch_trade_profit_rows_dedupes_overlapping_calls(self, mock_run_parallel_tasks):
+        call_count = 0
+        call_count_lock = threading.Lock()
+        results = []
+
+        def fake_run_parallel_tasks(tasks):
+            nonlocal call_count
+            with call_count_lock:
+                call_count += 1
+            time.sleep(0.05)
+            return {
+                "domestic": [{"date": "20260311", "symbol": "005930"}],
+                "overseas": [{"date": "20260311", "symbol": "AAPL"}],
+            }
+
+        mock_run_parallel_tasks.side_effect = fake_run_parallel_tasks
+
+        def fetch_rows():
+            results.append(
+                api_client._fetch_trade_profit_rows(
+                    "token",
+                    "key",
+                    "secret",
+                    "12345678",
+                    "01",
+                    "20260301",
+                    "20260331",
+                )
+            )
+
+        first = threading.Thread(target=fetch_rows)
+        second = threading.Thread(target=fetch_rows)
+        first.start()
+        second.start()
+        first.join()
+        second.join()
+
+        self.assertEqual(call_count, 1)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], results[1])
+
+    @patch("app.api_client._run_parallel_tasks")
+    def test_fetch_trade_profit_rows_clears_inflight_state_after_failure(self, mock_run_parallel_tasks):
+        call_count = 0
+
+        def fake_run_parallel_tasks(tasks):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("boom")
+            return {
+                "domestic": [{"date": "20260311", "symbol": "005930"}],
+                "overseas": [],
+            }
+
+        mock_run_parallel_tasks.side_effect = fake_run_parallel_tasks
+
+        with self.assertRaises(RuntimeError):
+            api_client._fetch_trade_profit_rows(
+                "token",
+                "key",
+                "secret",
+                "12345678",
+                "01",
+                "20260301",
+                "20260331",
+            )
+
+        self.assertEqual(api_client._inflight_trade_profit_rows, {})
+
+        payload = api_client._fetch_trade_profit_rows(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+        )
+
+        self.assertEqual(call_count, 2)
+        self.assertEqual(len(payload.get("domestic") or []), 1)
+
+    def test_has_japan_trade_rows_accepts_market_aliases(self):
+        self.assertTrue(api_client._has_japan_trade_rows([{"market": "TKSE"}]))
+        self.assertTrue(api_client._has_japan_trade_rows([{"market": "TSE"}]))
+        self.assertTrue(api_client._has_japan_trade_rows([{"market": "TYO"}]))
+        self.assertTrue(api_client._has_japan_trade_rows([{"market": "JPX"}]))
+        self.assertFalse(api_client._has_japan_trade_rows([{"market": "NASD"}]))
+
+    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client._fetch_trade_profit_rows")
+    @patch("app.api_client.get_overseas_trade_history")
+    @patch("app.api_client.get_domestic_trade_history")
+    def test_get_trade_history_skips_japan_fallback_when_overseas_rows_include_japan(
+        self,
+        mock_domestic_trade_history,
+        mock_overseas_trade_history,
+        mock_fetch_trade_profit_rows,
+        mock_get_japan_trade_history_ccnl,
+    ):
+        mock_domestic_trade_history.return_value = []
+        mock_overseas_trade_history.return_value = [
+            {
+                "date": "20260311",
+                "market": "TKSE",
+                "symbol": "7203",
+                "ticker": "7203",
+                "side": "매도",
+                "quantity": 10.0,
+                "amount": 1000.0,
+            }
+        ]
+        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
+
+        payload = api_client.get_trade_history(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+        )
+
+        self.assertEqual(len(payload.get("items") or []), 1)
+        mock_get_japan_trade_history_ccnl.assert_not_called()
+
+    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client._fetch_trade_profit_rows")
+    @patch("app.api_client.get_overseas_trade_history")
+    @patch("app.api_client.get_domestic_trade_history")
+    def test_get_trade_history_skips_japan_fallback_for_jpx_alias_market(
+        self,
+        mock_domestic_trade_history,
+        mock_overseas_trade_history,
+        mock_fetch_trade_profit_rows,
+        mock_get_japan_trade_history_ccnl,
+    ):
+        mock_domestic_trade_history.return_value = []
+        mock_overseas_trade_history.return_value = [
+            {
+                "date": "20260311",
+                "market": "JPX",
+                "symbol": "7203",
+                "ticker": "7203",
+                "side": "매도",
+                "quantity": 10.0,
+                "amount": 1000.0,
+            }
+        ]
+        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
+
+        payload = api_client.get_trade_history(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+        )
+
+        self.assertEqual(len(payload.get("items") or []), 1)
+        mock_get_japan_trade_history_ccnl.assert_not_called()
+
+    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client._fetch_trade_profit_rows")
+    @patch("app.api_client.get_overseas_trade_history")
+    @patch("app.api_client.get_domestic_trade_history")
+    def test_get_trade_history_calls_japan_fallback_when_overseas_rows_have_no_japan(
+        self,
+        mock_domestic_trade_history,
+        mock_overseas_trade_history,
+        mock_fetch_trade_profit_rows,
+        mock_get_japan_trade_history_ccnl,
+    ):
+        mock_domestic_trade_history.return_value = []
+        mock_overseas_trade_history.return_value = [
+            {
+                "date": "20260311",
+                "market": "NASD",
+                "symbol": "AAPL",
+                "ticker": "AAPL",
+                "side": "매수",
+                "quantity": 1.0,
+                "amount": 100.0,
+            }
+        ]
+        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
+        mock_get_japan_trade_history_ccnl.return_value = []
+
+        payload = api_client.get_trade_history(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+        )
+
+        self.assertEqual(len(payload.get("items") or []), 1)
+        mock_get_japan_trade_history_ccnl.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
