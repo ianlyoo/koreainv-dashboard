@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.session_store import SessionData, active_sessions
+from app.version import APP_VERSION
 
 
 class DashboardSmokeTests(unittest.TestCase):
@@ -41,8 +42,11 @@ class DashboardSmokeTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Dashboard", response.text)
-        self.assertIn("/static/css/dashboard.css", response.text)
-        self.assertIn("/static/js/dashboard.js", response.text)
+        self.assertIn(f"/static/css/dashboard.css?v={APP_VERSION}", response.text)
+        self.assertIn(f"/static/js/dashboard.js?v={APP_VERSION}", response.text)
+        self.assertNotIn("__ASSET_VERSION__", response.text)
+        self.assertNotIn("20260312-v1-4-9", response.text)
+        self.assertNotIn("20260312-v1-4-7", response.text)
 
     @patch(
         "app.routes.auth_pages._decrypt_credentials",
@@ -72,6 +76,17 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertNotIn('sessionStorage.setItem("dashboard_auth"', login_html)
         self.assertNotIn('sessionStorage.getItem("dashboard_auth"', index_html)
         self.assertNotIn("http://localhost:8000/img/", index_html)
+
+    def test_dashboard_template_contains_cash_flip_card_hooks(self):
+        index_html = Path("app/templates/index.html").read_text(encoding="utf-8")
+        dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="cashSummaryCard"', index_html)
+        self.assertIn('id="val_jpy_cash"', index_html)
+        self.assertIn('onclick="toggleCashCard()"', index_html)
+        self.assertIn('aria-pressed="false"', index_html)
+        self.assertIn("function toggleCashCard()", dashboard_js)
+        self.assertIn("function handleCashCardKeydown(event)", dashboard_js)
 
 
 if __name__ == "__main__":
