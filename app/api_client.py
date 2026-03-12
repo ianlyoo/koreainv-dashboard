@@ -891,11 +891,14 @@ def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, sta
         "domestic": (get_domestic_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
         "overseas": (get_overseas_realized_trade_profit, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
     })
-    payload = {
-        "domestic": results.get("domestic", []),
-        "overseas": results.get("overseas", []),
-    }
-    overseas_rows = payload["overseas"] if isinstance(payload.get("overseas"), list) else []
+    domestic_result = results.get("domestic")
+    overseas_result = results.get("overseas")
+    payload: dict[str, list[dict]] = {"domestic": [], "overseas": []}
+    if isinstance(domestic_result, list):
+        payload["domestic"] = domestic_result
+    if isinstance(overseas_result, list):
+        payload["overseas"] = overseas_result
+    overseas_rows: list[dict] = payload["overseas"]
     jp_rows = [
         row for row in overseas_rows if _is_japan_market_code(str(row.get("exchange_code", "")))
     ]
@@ -909,16 +912,6 @@ def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, sta
             start_date,
             end_date,
         )
-        if not japan_source_trades:
-            japan_source_trades = get_overseas_trade_history(
-                token,
-                app_key,
-                app_secret,
-                cano,
-                acnt_prdt_cd,
-                start_date,
-                end_date,
-            )
         japan_trades = [
             row
             for row in japan_source_trades
@@ -926,7 +919,7 @@ def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, sta
         ]
         japan_fallback_rows = _build_japan_realized_fallback_rows(japan_trades)
         if japan_fallback_rows:
-            overseas_rows.extend(japan_fallback_rows)
+            overseas_rows = _dedupe_realized_profit_rows(overseas_rows + japan_fallback_rows)
             payload["overseas"] = overseas_rows
     _set_cached_payload(cache_key, payload)
     return payload
@@ -950,7 +943,7 @@ def _normalize_domestic_realized_rows(rows: list[dict]) -> list[dict]:
     return normalized
 
 
-def _normalize_side(code: str = "", label: str = "") -> str:
+def _normalize_side(code: object = "", label: object = "") -> str:
     label = str(label or "").strip()
     code = str(code or "").strip()
     if "매도" in label or code == "01":
@@ -973,6 +966,32 @@ def _get_overseas_profit_nation_code(exchange_code: str) -> str:
     if exchange_code in {"HASE", "HSX", "HNX"}:
         return "704"
     return ""
+
+
+def _is_yyyymmdd_in_range(date_value: str, start_date: str, end_date: str) -> bool:
+    raw = str(date_value or "").strip()
+    if len(raw) != 8 or not raw.isdigit():
+        return False
+    return start_date <= raw <= end_date
+
+
+def _dedupe_realized_profit_rows(rows: list[dict]) -> list[dict]:
+    deduped = []
+    seen = set()
+    for row in rows or []:
+        key = (
+            str(row.get("date", "")),
+            str(row.get("symbol", "")),
+            round(float(row.get("quantity") or 0), 8),
+            round(float(row.get("amount") or 0), 8),
+            round(float(row.get("realized_profit_krw") or 0), 8),
+            round(float(row.get("buy_amount_krw") or 0), 8),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 def _normalize_overseas_realized_rows(rows: list[dict]) -> list[dict]:
@@ -1130,10 +1149,15 @@ def get_overseas_realized_profit(token, app_key, app_secret, cano, acnt_prdt_cd,
             if isinstance(page_rows, dict):
                 page_rows = [page_rows]
             normalized_rows = _normalize_overseas_realized_rows(page_rows)
+            normalized_rows = [
+                row
+                for row in normalized_rows
+                if _is_yyyymmdd_in_range(str(row.get("date", "")), start_date, end_date)
+            ]
             exchange_row_count += len(normalized_rows)
             rows.extend(normalized_rows)
 
-    return rows
+    return _dedupe_realized_profit_rows(rows)
 
 
 def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
@@ -1286,13 +1310,18 @@ def get_overseas_realized_trade_profit(token, app_key, app_secret, cano, acnt_pr
             if isinstance(page_rows, dict):
                 page_rows = [page_rows]
             normalized_rows = _normalize_overseas_realized_trade_rows(page_rows)
+            normalized_rows = [
+                row
+                for row in normalized_rows
+                if _is_yyyymmdd_in_range(str(row.get("date", "")), start_date, end_date)
+            ]
             exchange_rows.extend(normalized_rows)
         return exchange_rows
 
     with ThreadPoolExecutor(max_workers=min(len(exchange_queries), _MAX_PARALLEL_WORKERS)) as executor:
         for exchange_rows in executor.map(lambda item: fetch_exchange(*item), exchange_queries):
             rows.extend(exchange_rows)
-    return rows
+    return _dedupe_realized_profit_rows(rows)
 
 
 def _normalize_domestic_trade_rows(rows: list[dict]) -> list[dict]:
@@ -1316,7 +1345,7 @@ def _normalize_domestic_trade_rows(rows: list[dict]) -> list[dict]:
             "symbol": symbol,
             "ticker": symbol,
             "name": str(row.get("prdt_name", "")).strip() or symbol,
-            "side": _normalize_side(row.get("sll_buy_dvsn_cd"), row.get("sll_buy_dvsn_cd_name")),
+            "side": _normalize_side(str(row.get("sll_buy_dvsn_cd") or ""), str(row.get("sll_buy_dvsn_cd_name") or "")),
             "quantity": qty,
             "unit_price": unit_price,
             "amount": amount,
@@ -1358,7 +1387,7 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
             "symbol": symbol,
             "ticker": symbol,
             "name": str(row.get("ovrs_item_name", "")).strip() or symbol,
-            "side": _normalize_side(row.get("sll_buy_dvsn_cd"), row.get("sll_buy_dvsn_name")),
+            "side": _normalize_side(str(row.get("sll_buy_dvsn_cd") or ""), str(row.get("sll_buy_dvsn_name") or "")),
             "quantity": quantity,
             "unit_price": unit_price,
             "amount": amount,
@@ -1628,9 +1657,11 @@ def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date
         "overseas_trades": (get_overseas_trade_history, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
     })
     pnl_rows = _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
-    domestic_rows = results.get("domestic_trades", [])
-    overseas_rows = results.get("overseas_trades", [])
-    japan_ccnl_rows = get_japan_trade_history_ccnl(
+    domestic_trade_result = results.get("domestic_trades")
+    overseas_trade_result = results.get("overseas_trades")
+    domestic_rows: list[dict] = domestic_trade_result if isinstance(domestic_trade_result, list) else []
+    overseas_rows: list[dict] = overseas_trade_result if isinstance(overseas_trade_result, list) else []
+    japan_ccnl_result = get_japan_trade_history_ccnl(
         token,
         app_key,
         app_secret,
@@ -1639,10 +1670,11 @@ def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date
         start_date,
         end_date,
     )
+    japan_ccnl_rows: list[dict] = japan_ccnl_result if isinstance(japan_ccnl_result, list) else []
     if japan_ccnl_rows:
         overseas_rows = _dedupe_trade_rows(overseas_rows + japan_ccnl_rows)
-    domestic_pnl_rows = pnl_rows["domestic"]
-    overseas_pnl_rows = pnl_rows["overseas"]
+    domestic_pnl_rows = pnl_rows["domestic"] if isinstance(pnl_rows.get("domestic"), list) else []
+    overseas_pnl_rows = pnl_rows["overseas"] if isinstance(pnl_rows.get("overseas"), list) else []
     all_rows = _dedupe_trade_rows(domestic_rows + overseas_rows)
     all_rows = _attach_realized_profit_to_sell_trades(all_rows, domestic_pnl_rows, overseas_pnl_rows)
     all_rows.sort(key=lambda row: f"{row.get('date', '')}{row.get('time', '')}", reverse=True)

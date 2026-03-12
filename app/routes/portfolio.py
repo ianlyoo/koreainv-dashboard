@@ -7,7 +7,7 @@ import logging
 import re
 import threading
 import time
-from typing import Optional
+from typing import Optional, Sequence
 
 import yfinance as yf
 from fastapi import APIRouter, HTTPException, Request
@@ -168,6 +168,13 @@ def _serialize_realized_profit_payload(
     }
 
 
+def _with_realized_profit_trades(payload: object, trades: Sequence[object]) -> dict[str, object]:
+    payload_dict = payload if isinstance(payload, dict) else {}
+    result = dict(payload_dict)
+    result["trades"] = trades
+    return result
+
+
 @router.get("/api/sync")
 async def sync_data(request: Request):
     session = require_session(request)
@@ -289,17 +296,11 @@ async def get_realized_profit_summary(request: Request, month: Optional[str] = N
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
         )
-        summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
-        logging.warning(
-            "realized_summary_response period=%s~%s overseas_profit=%s total_profit=%s trade_days=%s",
-            start_day.isoformat(),
-            end_day.isoformat(),
-            summary.get("overseas_realized_profit_krw"),
-            summary.get("total_realized_profit_krw"),
-            summary.get("trade_days"),
+        return _serialize_realized_profit_payload(
+            start_day,
+            end_day,
+            _with_realized_profit_trades(payload, []),
         )
-        payload["trades"] = []
-        return _serialize_realized_profit_payload(start_day, end_day, payload)
     except HTTPException:
         raise
     except Exception:
@@ -350,22 +351,11 @@ async def get_realized_profit_detail(request: Request, start: str, end: str):
         )
         payload, trade_payload = await asyncio.gather(payload_task, trade_payload_task)
         trades = trade_payload.get("items", []) if isinstance(trade_payload, dict) else []
-        jp_sell_trades = [
-            trade
-            for trade in trades
-            if isinstance(trade, dict)
-            and str(trade.get("market", "")).strip() in {"TSE", "TKSE", "TYO", "JPX"}
-            and trade.get("side") == "매도"
-        ]
-        logging.warning(
-            "realized_detail_response period=%s~%s jp_sell_trades=%s jp_with_pnl=%s",
-            start_day.isoformat(),
-            end_day.isoformat(),
-            len(jp_sell_trades),
-            sum(1 for trade in jp_sell_trades if trade.get("realized_profit_krw") is not None),
+        return _serialize_realized_profit_payload(
+            start_day,
+            end_day,
+            _with_realized_profit_trades(payload, trades),
         )
-        payload["trades"] = trade_payload.get("items", [])
-        return _serialize_realized_profit_payload(start_day, end_day, payload)
     except HTTPException:
         raise
     except Exception:
