@@ -80,6 +80,15 @@ def _build_calendar_window(now_kst: datetime.datetime | None = None) -> tuple[da
     )
 
 
+def _format_calendar_time(dt_kst: datetime.datetime) -> str:
+    days = ["월", "화", "수", "목", "금", "토", "일"]
+    day_str = days[dt_kst.weekday()]
+    return (
+        f"{dt_kst.month:02d}/{dt_kst.day:02d}"
+        f"({day_str}) {dt_kst.hour:02d}:{dt_kst.minute:02d}"
+    )
+
+
 def _fetch_calendar_events(url: str, headers: dict[str, str]) -> list[dict[str, object]]:
     response = requests.get(url, headers=headers, timeout=10)
     if response.status_code == 200:
@@ -251,9 +260,7 @@ async def get_market_calendar():
                 act = _event_str(event, "actual", "")
                 fore = _event_str(event, "forecast", "")
                 prev = _event_str(event, "previous", "")
-                days = ["월", "화", "수", "목", "금", "토", "일"]
-                day_str = days[dt_kst.weekday()]
-                time_str = dt_kst.strftime(f"%m/%d({day_str}) %H:%M")
+                time_str = _format_calendar_time(dt_kst)
                 title = translate_title(_event_str(event, "title", "Unknown Event"))
 
                 processed_events.append(

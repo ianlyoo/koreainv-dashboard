@@ -26,6 +26,15 @@ class MarketCalendarTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start_date, "2026-03-11T15:00:00.000Z")
         self.assertEqual(end_date, "2026-03-19T14:59:59.000Z")
 
+    def test_format_calendar_time_does_not_depend_on_strftime(self):
+        class StrftimeBrokenDateTime(dt.datetime):
+            def strftime(self, _format: str) -> str:
+                raise AssertionError("strftime should not be used for calendar time formatting")
+
+        broken_dt = StrftimeBrokenDateTime(2026, 3, 12, 12, 0, 0, tzinfo=market.KST)
+
+        self.assertEqual(market._format_calendar_time(broken_dt), "03/12(목) 12:00")
+
     @patch("app.routes.market.asyncio.to_thread", new_callable=AsyncMock)
     async def test_empty_results_are_not_cached(self, mock_to_thread):
         now_kst = market.KST.localize(dt.datetime(2026, 3, 12, 10, 15, 0))
