@@ -659,7 +659,6 @@
             syncRequestInFlight = true;
             const loading = document.getElementById('loading');
             loading.classList.add('active');
-
             try {
                 const res = await fetch('/api/sync');
 
@@ -743,7 +742,9 @@
                     }
 
                     if (manualTrigger) {
-                        fetchRealizedProfitSummary(true);
+                        if (profitCardShowingRealized) {
+                            fetchRealizedProfitSummary(true);
+                        }
                         const modal = document.getElementById('realizedProfitModal');
                         if (modal && modal.classList.contains('active')) {
                             const start = document.getElementById('realizedProfitStart')?.value;
@@ -1916,7 +1917,6 @@
 
         function runDeferredBootTasks() {
             fetchMarketCalendar();
-            fetchRealizedProfitSummary();
         }
 
         function scheduleDeferredBootTasks() {
