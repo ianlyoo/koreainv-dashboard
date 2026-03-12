@@ -14,6 +14,8 @@
         let profitCardShowingRealized = false;
         let realizedProfitSummaryCache = new Map();
         let realizedProfitDetailCache = new Map();
+        let realizedProfitSummaryInFlight = new Map();
+        let realizedProfitDetailInFlight = new Map();
         let realizedProfitSummaryLoading = false;
         let realizedProfitDetailLoading = false;
         let currentRealizedProfitDetail = null;
@@ -828,10 +830,13 @@
         async function fetchRealizedProfitSummary(force = false) {
             const month = activeRealizedSummaryMonth;
             const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, month);
-            if (realizedProfitSummaryLoading) return cached || null;
             if (cached && !force) {
                 renderRealizedProfitSummary(cached);
                 return cached;
+            }
+            const inFlight = realizedProfitSummaryInFlight.get(month);
+            if (inFlight) {
+                return inFlight;
             }
 
             realizedProfitSummaryLoading = true;
@@ -840,25 +845,30 @@
             document.getElementById('val_realized_profit_month_sub').innerText = '실현 손익을 불러오는 중입니다';
             renderRealizedProfitMonthNav();
 
-            try {
-                const res = await fetch(`/api/realized-profit/summary?month=${month}`);
-                if (res.status === 401) {
-                    window.location.href = '/login';
-                    return null;
+            const request = (async () => {
+                try {
+                    const res = await fetch(`/api/realized-profit/summary?month=${month}`);
+                    if (res.status === 401) {
+                        window.location.href = '/login';
+                        return null;
+                    }
+                    const data = await res.json();
+                    setRealizedCacheEntry(realizedProfitSummaryCache, month, data);
+                    renderRealizedProfitSummary(data);
+                    return data;
+                } catch (err) {
+                    console.error('fetchRealizedProfitSummary error', err);
+                    const errorPayload = { status: 'error' };
+                    setRealizedCacheEntry(realizedProfitSummaryCache, month, errorPayload);
+                    renderRealizedProfitSummary(errorPayload);
+                    return errorPayload;
+                } finally {
+                    realizedProfitSummaryLoading = false;
+                    realizedProfitSummaryInFlight.delete(month);
                 }
-                const data = await res.json();
-                setRealizedCacheEntry(realizedProfitSummaryCache, month, data);
-                renderRealizedProfitSummary(data);
-                return data;
-            } catch (err) {
-                console.error('fetchRealizedProfitSummary error', err);
-                const errorPayload = { status: 'error' };
-                setRealizedCacheEntry(realizedProfitSummaryCache, month, errorPayload);
-                renderRealizedProfitSummary(errorPayload);
-                return errorPayload;
-            } finally {
-                realizedProfitSummaryLoading = false;
-            }
+            })();
+            realizedProfitSummaryInFlight.set(month, request);
+            return request;
         }
 
         function setProfitCardFace(showRealized) {
@@ -1057,14 +1067,26 @@
             if (!force && cached) {
                 return cached;
             }
-            const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
-            if (res.status === 401) {
-                window.location.href = '/login';
-                return null;
+            const inFlight = realizedProfitDetailInFlight.get(cacheKey);
+            if (inFlight) {
+                return inFlight;
             }
-            const data = await res.json();
-            setRealizedCacheEntry(realizedProfitDetailCache, cacheKey, data);
-            return data;
+            const request = (async () => {
+                try {
+                    const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+                    if (res.status === 401) {
+                        window.location.href = '/login';
+                        return null;
+                    }
+                    const data = await res.json();
+                    setRealizedCacheEntry(realizedProfitDetailCache, cacheKey, data);
+                    return data;
+                } finally {
+                    realizedProfitDetailInFlight.delete(cacheKey);
+                }
+            })();
+            realizedProfitDetailInFlight.set(cacheKey, request);
+            return request;
         }
 
         async function calculateCapitalGainsTax() {
@@ -1259,9 +1281,6 @@
             overlay.classList.add('active');
             setProfitModalTab(activeProfitModalTab || 'buy');
             setProfitMarketFilter(activeProfitMarketFilter || 'all');
-            if (!getFreshRealizedCacheEntry(realizedProfitSummaryCache, activeRealizedSummaryMonth)) {
-                fetchRealizedProfitSummary();
-            }
             setRealizedPreset(activeRealizedPreset || 'thisMonth', true);
         }
 
