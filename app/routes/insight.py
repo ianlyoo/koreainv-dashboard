@@ -139,6 +139,19 @@ def _fetch_options_data(yf_ticker: str, current_price: float):
         if not opts:
             return None
 
+        def _build_confidence_meta(level: str, reason: str) -> dict[str, str]:
+            labels = {
+                "high": "높음",
+                "medium": "보통",
+                "low": "낮음",
+                "none": "미산출",
+            }
+            return {
+                "level": level,
+                "label": labels.get(level, "미산출"),
+                "reason": reason,
+            }
+
         def _sum_metric(df, col: str) -> int:
             if df is None or df.empty or col not in df.columns:
                 return 0
@@ -147,7 +160,7 @@ def _fetch_options_data(yf_ticker: str, current_price: float):
             except Exception:
                 return 0
 
-        nearest_date = opts[0]
+        nearest_date = sorted(str(opt) for opt in opts)[0]
         chain = tc.option_chain(nearest_date)
         calls_vol = _sum_metric(getattr(chain, "calls", None), "volume")
         puts_vol = _sum_metric(getattr(chain, "puts", None), "volume")
@@ -222,6 +235,11 @@ def _fetch_options_data(yf_ticker: str, current_price: float):
         calls_for_metrics = _prepare_filtered(chain.calls, "call")
         puts_for_metrics = _prepare_filtered(chain.puts, "put")
 
+        filtered_calls_oi = _sum_metric(calls_for_metrics, "openInterest")
+        filtered_puts_oi = _sum_metric(puts_for_metrics, "openInterest")
+        filtered_total_oi = filtered_calls_oi + filtered_puts_oi
+        filtered_weaker_side_oi = min(filtered_calls_oi, filtered_puts_oi)
+
         def _max_strike_by_metric(df, prefer_oi: bool):
             if df is None or df.empty or "strike" not in df.columns:
                 return 0
@@ -261,8 +279,27 @@ def _fetch_options_data(yf_ticker: str, current_price: float):
             else []
         )
         strikes = np.unique(np.concatenate((call_strikes, put_strikes)))
+        strikes_count = int(len(strikes))
+        total_oi = calls_oi + puts_oi
+        weaker_side_oi = min(calls_oi, puts_oi)
 
-        if len(strikes) > 0 and oi_reliable:
+        oi_confidence = _build_confidence_meta("none", "근월물 OI 데이터가 없습니다.")
+        if total_oi <= 0:
+            oi_confidence = _build_confidence_meta("none", "근월물 OI 데이터가 없어 신뢰도를 계산할 수 없습니다.")
+        elif weaker_side_oi >= 100 and total_oi >= 500:
+            oi_confidence = _build_confidence_meta("high", "콜/풋 양측 OI가 모두 충분합니다.")
+        elif weaker_side_oi >= 25 and total_oi >= 150:
+            oi_confidence = _build_confidence_meta("medium", "양측 OI가 있어 근월물 해석에 활용 가능합니다.")
+        elif calls_oi > 0 and puts_oi > 0:
+            oi_confidence = _build_confidence_meta("low", "양측 OI가 있지만 규모가 작아 신호가 약합니다.")
+        else:
+            oi_confidence = _build_confidence_meta("low", "한쪽 OI가 부족해 해석 편향 가능성이 있습니다.")
+
+        max_pain_confidence = _build_confidence_meta("none", "근월물 OI가 부족해 맥스페인을 계산할 수 없습니다.")
+
+        if strikes_count <= 0:
+            max_pain_confidence = _build_confidence_meta("none", "근월물 유효 행사가가 부족해 맥스페인을 계산할 수 없습니다.")
+        elif filtered_total_oi > 0:
             calls_oi_series = (
                 calls_for_metrics["openInterest"].fillna(0).clip(lower=0)
                 if calls_for_metrics is not None and "openInterest" in calls_for_metrics.columns
@@ -302,6 +339,16 @@ def _fetch_options_data(yf_ticker: str, current_price: float):
                     min_loss = loss
                     max_pain = float(strike)
 
+            if max_pain > 0:
+                if filtered_weaker_side_oi >= 100 and filtered_total_oi >= 500 and strikes_count >= 8:
+                    max_pain_confidence = _build_confidence_meta("high", "양측 OI와 근처 행사가 분포가 충분합니다.")
+                elif filtered_weaker_side_oi >= 25 and filtered_total_oi >= 150 and strikes_count >= 6:
+                    max_pain_confidence = _build_confidence_meta("medium", "근월물 OI가 제한적이지만 참고 가능한 수준입니다.")
+                elif filtered_calls_oi > 0 and filtered_puts_oi > 0:
+                    max_pain_confidence = _build_confidence_meta("low", "양측 OI가 얇아 참고용으로만 보는 것이 좋습니다.")
+                else:
+                    max_pain_confidence = _build_confidence_meta("low", "한쪽 OI 의존도가 높아 신뢰도가 낮습니다.")
+
         atm_iv = None
         try:
             if current_price and not chain.calls.empty and "impliedVolatility" in chain.calls.columns:
@@ -325,10 +372,16 @@ def _fetch_options_data(yf_ticker: str, current_price: float):
             "puts_volume": puts_vol,
             "puts_oi": puts_oi,
             "oi_available": oi_available,
+            "oi_confidence": oi_confidence,
             "max_pain": max_pain,
+            "max_pain_available": max_pain > 0,
+            "max_pain_confidence": max_pain_confidence,
+            "filtered_calls_oi": filtered_calls_oi,
+            "filtered_puts_oi": filtered_puts_oi,
             "max_call_oi_strike": max_call_oi_strike,
             "max_put_oi_strike": max_put_oi_strike,
             "strike_basis": strike_basis,
+            "strikes_count": strikes_count,
             "oi_reliable": oi_reliable,
             "atm_iv": atm_iv,
             "pcr": pcr,

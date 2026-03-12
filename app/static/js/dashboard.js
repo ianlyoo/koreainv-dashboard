@@ -1657,9 +1657,33 @@
                         const strikePrefix = fin.currency ? `${fin.currency} ` : '';
                         const maxCallLabel = strikeBasis === 'OI' ? 'Max OI Call' : 'Max Vol Call';
                         const maxPutLabel = strikeBasis === 'OI' ? 'Max OI Put' : 'Max Vol Put';
+                        const oiConfidence = opt.oi_confidence || { level: oiAvailable ? 'low' : 'none', label: oiAvailable ? '낮음' : '미산출', reason: oiAvailable ? '근월물 OI 규모가 작습니다.' : '근월물 OI 데이터가 없습니다.' };
+                        const maxPainConfidence = opt.max_pain_confidence || { level: opt.max_pain_available ? 'low' : 'none', label: opt.max_pain_available ? '낮음' : '미산출', reason: opt.max_pain_available ? '근월물 OI를 참고 계산했습니다.' : '근월물 OI가 부족해 맥스페인을 계산할 수 없습니다.' };
+                        const confidenceColors = {
+                            high: 'rgba(16,185,129,0.18)',
+                            medium: 'rgba(245,158,11,0.18)',
+                            low: 'rgba(239,68,68,0.18)',
+                            none: 'rgba(148,163,184,0.16)',
+                        };
+                        const confidenceTextColors = {
+                            high: '#6ee7b7',
+                            medium: '#fbbf24',
+                            low: '#fca5a5',
+                            none: '#cbd5e1',
+                        };
+                        const renderConfidenceBadge = (meta) => {
+                            const level = meta && meta.level ? meta.level : 'none';
+                            const label = meta && meta.label ? meta.label : '미산출';
+                            const background = confidenceColors[level] || confidenceColors.none;
+                            const color = confidenceTextColors[level] || confidenceTextColors.none;
+                            return `<span style="display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; background:${background}; color:${color}; font-size:10px; font-weight:700; letter-spacing:0.02em;">${label}</span>`;
+                        };
+                        const maxPainAvailable = opt.max_pain_available === true || (Number.isFinite(Number(opt.max_pain)) && Number(opt.max_pain) > 0);
+                        const maxPainText = maxPainAvailable ? strikePrefix + formatNumber(opt.max_pain) : '미산출';
                         const oiCallText = oiAvailable ? `${formatNumber(opt.calls_oi)}계약` : '데이터 미제공';
                         const oiPutText = oiAvailable ? `${formatNumber(opt.puts_oi)}계약` : '데이터 미제공';
-                        const oiHint = oiAvailable ? '' : `<div style="font-size:10px; color:var(--text-muted); margin-top:6px; text-align:right;">OI 데이터 미제공 (공급원 기준)</div>`;
+                        const oiHint = `<div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-top:8px;"><div style="font-size:10px; color:var(--text-muted); line-height:1.45;">${oiConfidence.reason || '근월물 OI 품질을 기준으로 해석합니다.'}</div>${renderConfidenceBadge(oiConfidence)}</div>`;
+                        const maxPainHint = `<div style="font-size:10px; color:var(--text-muted); line-height:1.45; text-align:right;">${maxPainConfidence.reason || '근월물 OI 기반으로 계산합니다.'}</div>`;
 
                         optHtml = `
                             <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 18px;">
@@ -1700,9 +1724,13 @@
 
                                 <div style="display:flex; flex-direction: column; gap:6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div style="font-size:11px; color:var(--text-muted);">Max Pain</div>
-                                        <div style="font-size:13px; font-weight:700; color:#eab308;">${opt.max_pain ? strikePrefix + formatNumber(opt.max_pain) : 'N/A'}</div>
+                                        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                                            <div style="font-size:11px; color:var(--text-muted);">Max Pain</div>
+                                            ${renderConfidenceBadge(maxPainConfidence)}
+                                        </div>
+                                        <div style="font-size:13px; font-weight:700; color:${maxPainAvailable ? '#eab308' : '#cbd5e1'};">${maxPainText}</div>
                                     </div>
+                                    ${maxPainHint}
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <div style="font-size:11px; color:var(--text-muted);">${maxCallLabel}</div>
                                         <div style="font-size:13px; font-weight:700; color:var(--profit);">${opt.max_call_oi_strike ? strikePrefix + formatNumber(opt.max_call_oi_strike) : 'N/A'}</div>
