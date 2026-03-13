@@ -3,6 +3,20 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val releaseStoreFile = System.getenv("ANDROID_RELEASE_STORE_FILE")
+    ?: (findProperty("ANDROID_RELEASE_STORE_FILE") as String?)
+val releaseStorePassword = System.getenv("ANDROID_RELEASE_STORE_PASSWORD")
+    ?: (findProperty("ANDROID_RELEASE_STORE_PASSWORD") as String?)
+val releaseKeyAlias = System.getenv("ANDROID_RELEASE_KEY_ALIAS")
+    ?: (findProperty("ANDROID_RELEASE_KEY_ALIAS") as String?)
+val releaseKeyPassword = System.getenv("ANDROID_RELEASE_KEY_PASSWORD")
+    ?: (findProperty("ANDROID_RELEASE_KEY_PASSWORD") as String?)
+
+val hasReleaseSigning = !releaseStoreFile.isNullOrBlank() &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
+
 android {
     namespace = "com.koreainv.dashboard"
     compileSdk = 34
@@ -11,8 +25,8 @@ android {
         applicationId = "com.koreainv.dashboard"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.6.1"
+        versionCode = 4
+        versionName = "1.6.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -27,6 +41,19 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseStoreFile))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
         }
     }
     compileOptions {

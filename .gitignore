@@ -36,6 +36,7 @@ dist/
 # Android local artifacts
 android-app/.gradle/
 android-app/local.properties
+android-app/release-keystore.jks
 
 # Local screenshots and issue dumps
 temp/
