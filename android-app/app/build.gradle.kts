@@ -21,6 +21,17 @@ android {
     namespace = "com.koreainv.dashboard"
     compileSdk = 34
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseStoreFile))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.koreainv.dashboard"
         minSdk = 26
@@ -36,24 +47,14 @@ android {
 
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (hasReleaseSigning) {
-                signingConfig = signingConfigs.getByName("release")
-            }
-        }
-    }
-    signingConfigs {
-        if (hasReleaseSigning) {
-            create("release") {
-                storeFile = file(requireNotNull(releaseStoreFile))
-                storePassword = requireNotNull(releaseStorePassword)
-                keyAlias = requireNotNull(releaseKeyAlias)
-                keyPassword = requireNotNull(releaseKeyPassword)
-            }
         }
     }
     compileOptions {
