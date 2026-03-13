@@ -20,6 +20,45 @@ permissions:
   contents: write
 
 jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify tag matches Android version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          app_version="$(python3 -c "from pathlib import Path; text = Path('android-app/app/build.gradle.kts').read_text(); print(next(line.split('\\"')[1] for line in text.splitlines() if 'versionName =' in line))")"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$tag_version" != "$app_version" ]; then
+            echo "Tag version ($tag_version) does not match Android versionName ($app_version)." >&2
+            exit 1
+          fi
+
+      - name: Build Android APK
+        working-directory: android-app
+        run: ./gradlew assembleRelease
+
+      - name: Prepare Android artifact
+        run: |
+          mkdir -p dist
+          cp android-app/app/build/outputs/apk/release/app-release-unsigned.apk dist/KISDashboard-android.apk
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KISDashboard-android
+          path: dist/KISDashboard-android.apk
+
   build-windows:
     runs-on: windows-latest
 
@@ -88,6 +127,7 @@ jobs:
   publish-release:
     if: startsWith(github.ref, 'refs/tags/')
     needs:
+      - build-android
       - build-windows
       - build-macos
     runs-on: ubuntu-latest
@@ -133,6 +173,7 @@ jobs:
         with:
           files: |
             release-assets/**/*.zip
+            release-assets/**/*.apk
           generate_release_notes: true
 
       - name: Mark mandatory update in release body
