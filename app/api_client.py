@@ -238,18 +238,65 @@ def _pick_usd_orderable_from_output2(rows: list):
     return 0.0, exrt, "none"
 
 
-def _pick_foreign_cash_balance_from_output2(rows: list, currency_code: str):
+def _pick_foreign_sell_reuse_from_output2(rows: list, currency_code: str):
     candidates = [
+        "sll_ruse_psbl_amt",
+        "sl_ruse_frcr_amt",
         "frcr_sll_amt_smtl",
-        "frcr_use_psbl_amt",
+    ]
+    exrt = 0.0
+    matched_rows = []
+    target_currency = str(currency_code or "").strip().upper()
+
+    for idx, row in enumerate(rows or []):
+        if not isinstance(row, dict):
+            continue
+        crcy = str(row.get("crcy_cd", "")).strip().upper()
+        if crcy != target_currency:
+            continue
+        matched_rows.append((idx, row))
+        if exrt <= 0:
+            exrt = _to_float(row.get("bass_exrt") or row.get("frst_bltn_exrt") or 0.0)
+
+    if not matched_rows and target_currency:
+        for idx, row in enumerate(rows or []):
+            if not isinstance(row, dict):
+                continue
+            matched_rows.append((idx, row))
+            if exrt <= 0:
+                exrt = _to_float(row.get("bass_exrt") or row.get("frst_bltn_exrt") or 0.0)
+
+    if not matched_rows:
+        return 0.0, exrt, "none"
+
+    for key in candidates:
+        matches = []
+        for idx, row in matched_rows:
+            raw, actual = _get_ci(row, key)
+            if actual is None:
+                continue
+            value = _to_float(raw)
+            if value > 0:
+                matches.append((value, f"output2[{idx}].{actual}"))
+        if matches:
+            matches.sort(key=lambda x: x[0], reverse=True)
+            return matches[0][0], exrt, matches[0][1]
+
+    return 0.0, exrt, "none"
+
+
+def _pick_foreign_balance_from_output2(rows: list, currency_code: str):
+    candidates = [
         "frcr_dncl_amt_2",
+        "tot_frcr_cblc_smtl",
+        "frcr_use_psbl_amt",
+        "frcr_drwg_psbl_amt_1",
+        "frcr_drwg_psbl_amt1",
         "frcr_ord_psbl_amt1",
         "frcr_ord_psbl_amt2",
         "frcr_ord_psbl_amt",
         "ord_psbl_frcr_amt",
         "ovrs_ord_psbl_amt",
-        "frcr_drwg_psbl_amt_1",
-        "frcr_drwg_psbl_amt1",
         "ord_psbl_amt",
     ]
     exrt = 0.0
@@ -293,6 +340,12 @@ def _pick_foreign_cash_balance_from_output2(rows: list, currency_code: str):
     return 0.0, exrt, "none"
 
 
+def _pick_foreign_cash_balance_from_output2(rows: list, currency_code: str):
+    balance, exrt, balance_key = _pick_foreign_balance_from_output2(rows, currency_code)
+    sell_reuse, reuse_exrt, reuse_key = _pick_foreign_sell_reuse_from_output2(rows, currency_code)
+    return balance + sell_reuse, exrt or reuse_exrt, f"balance={balance_key}, reuse={reuse_key}"
+
+
 def _normalize_balance_rows(rows):
     if isinstance(rows, list):
         return [row for row in rows if isinstance(row, dict)]
@@ -308,8 +361,9 @@ def _pick_foreign_cash_balance_from_output1_cash_row(rows, currency_code: str):
 
     candidates = [
         "ccld_qty_smtl1",
-        "frcr_use_psbl_amt",
         "frcr_dncl_amt_2",
+        "tot_frcr_cblc_smtl",
+        "frcr_use_psbl_amt",
         "frcr_drwg_psbl_amt_1",
     ]
 
@@ -335,10 +389,11 @@ def _pick_foreign_cash_balance_from_output3(summary_row: dict):
         return 0.0, "none"
 
     candidates = [
+        "frcr_dncl_amt_2",
+        "tot_frcr_cblc_smtl",
         "frcr_use_psbl_amt",
         "ord_psbl_frcr_amt",
         "frcr_drwg_psbl_amt_1",
-        "frcr_dncl_amt_2",
     ]
     for key in candidates:
         raw, actual = _get_ci(summary_row, key)
@@ -359,6 +414,25 @@ def _pick_usd_orderable_from_output3(summary_row: dict):
         "frcr_ord_psbl_amt1",
         "ord_psbl_frcr_amt",
         "ovrs_ord_psbl_amt",
+    ]
+    for key in candidates:
+        raw, actual = _get_ci(summary_row, key)
+        if actual is None:
+            continue
+        value = _to_float(raw)
+        if value > 0:
+            return value, f"output3.{actual}"
+    return 0.0, "none"
+
+
+def _pick_foreign_sell_reuse_from_output3(summary_row: dict):
+    if not isinstance(summary_row, dict):
+        return 0.0, "none"
+
+    candidates = [
+        "sll_ruse_psbl_amt",
+        "sl_ruse_frcr_amt",
+        "frcr_sll_amt_smtl",
     ]
     for key in candidates:
         raw, actual = _get_ci(summary_row, key)
@@ -730,16 +804,29 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
 
                 if "output3" in data and not us_result["us_summary"]:
                     out3 = data["output3"]
+                    usd_balance = 0.0
+                    usd_reuse = 0.0
                     usd_cash = 0.0
                     usd_exrt = 0.0
                     usd_cash_key = "none"
+                    usd_reuse_key = "none"
+                    output1_rows = _normalize_balance_rows(data.get("output1"))
                     if "output2" in data:
-                        usd_cash, usd_exrt, usd_cash_key = _pick_usd_orderable_from_output2(data["output2"])
-                    if usd_cash <= 0:
-                        fallback_cash, fallback_key = _pick_usd_orderable_from_output3(out3)
+                        usd_balance, usd_exrt, usd_cash_key = _pick_foreign_balance_from_output2(data["output2"], "USD")
+                        usd_reuse, _, usd_reuse_key = _pick_foreign_sell_reuse_from_output2(data["output2"], "USD")
+                    if usd_balance <= 0 and output1_rows:
+                        usd_balance, usd_exrt, usd_cash_key = _pick_foreign_cash_balance_from_output1_cash_row(output1_rows, "USD")
+                    if usd_balance <= 0:
+                        fallback_cash, fallback_key = _pick_foreign_cash_balance_from_output3(out3)
                         if fallback_cash > 0:
-                            usd_cash = fallback_cash
+                            usd_balance = fallback_cash
                             usd_cash_key = fallback_key
+                    if usd_reuse <= 0:
+                        fallback_reuse, fallback_reuse_key = _pick_foreign_sell_reuse_from_output3(out3)
+                        if fallback_reuse > 0:
+                            usd_reuse = fallback_reuse
+                            usd_reuse_key = fallback_reuse_key
+                    usd_cash = usd_balance + usd_reuse
                     if usd_cash <= 0:
                         ps_cash, ps_key = _get_overseas_orderable_usd()
                         if ps_cash > 0:
@@ -747,8 +834,9 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                             usd_cash_key = ps_key
 
                     logger.info(
-                        "Overseas USD cash selected: key=%s, value=%s",
+                        "Overseas USD cash selected: balance_key=%s, reuse_key=%s, value=%s",
                         usd_cash_key,
+                        usd_reuse_key,
                         usd_cash,
                     )
 
@@ -793,33 +881,48 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
             if data.get("rt_cd") != "0":
                 return jp_result
 
+            jp_balance = 0.0
+            jp_reuse = 0.0
             jp_cash = 0.0
             jp_exrt = 0.0
             jp_cash_key = "none"
+            jp_reuse_key = "none"
 
             output1_rows = _normalize_balance_rows(data.get("output1"))
             output2_rows = _normalize_balance_rows(data.get("output2"))
             output3_row = data.get("output3") or {}
 
             if output1_rows:
-                jp_cash, jp_exrt, jp_cash_key = _pick_foreign_cash_balance_from_output1_cash_row(
+                jp_balance, jp_exrt, jp_cash_key = _pick_foreign_cash_balance_from_output1_cash_row(
                     output1_rows, "JPY"
                 )
 
-            if jp_cash <= 0 and output2_rows:
-                jp_cash, jp_exrt, jp_cash_key = _pick_foreign_cash_balance_from_output2(
+            if output2_rows:
+                if jp_balance <= 0:
+                    jp_balance, jp_exrt, jp_cash_key = _pick_foreign_balance_from_output2(
+                        output2_rows, "JPY"
+                    )
+                jp_reuse, _, jp_reuse_key = _pick_foreign_sell_reuse_from_output2(
                     output2_rows, "JPY"
                 )
 
-            if jp_cash <= 0 and output3_row:
+            if jp_balance <= 0 and output3_row:
                 fallback_cash, fallback_key = _pick_foreign_cash_balance_from_output3(output3_row)
                 if fallback_cash > 0:
-                    jp_cash = fallback_cash
+                    jp_balance = fallback_cash
                     jp_cash_key = fallback_key
+            if jp_reuse <= 0 and output3_row:
+                fallback_reuse, fallback_reuse_key = _pick_foreign_sell_reuse_from_output3(output3_row)
+                if fallback_reuse > 0:
+                    jp_reuse = fallback_reuse
+                    jp_reuse_key = fallback_reuse_key
+
+            jp_cash = jp_balance + jp_reuse
 
             logger.info(
-                "Overseas JPY cash selected: key=%s, value=%s",
+                "Overseas JPY cash selected: balance_key=%s, reuse_key=%s, value=%s",
                 jp_cash_key,
+                jp_reuse_key,
                 jp_cash,
             )
 

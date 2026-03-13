@@ -10,6 +10,7 @@ from app import runtime_paths
 from app.routes.auth_pages import router as auth_pages_router
 from app.routes.insight import router as insight_router
 from app.routes.market import router as market_router
+from app.routes.mobile import router as mobile_router
 from app.routes.portfolio import router as portfolio_router
 from app.services.kis_us_quote_service import KISUSQuoteService
 
@@ -38,6 +39,7 @@ if os.path.isdir(os.path.join(BASE_DIR, "img")):
     app.mount("/img", StaticFiles(directory=os.path.join(BASE_DIR, "img")), name="img")
 
 app.include_router(auth_pages_router)
+app.include_router(mobile_router)
 app.include_router(portfolio_router)
 app.include_router(market_router)
 app.include_router(insight_router)

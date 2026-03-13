@@ -266,28 +266,28 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(rows[0]["symbol"], "ORCL")
         self.assertEqual(rows[0]["realized_profit_krw"], 120.0)
 
-    def test_pick_foreign_cash_balance_from_output2_reads_jpy_only(self):
+    def test_pick_foreign_cash_balance_from_output2_combines_balance_and_reuse(self):
         rows = [
             {"crcy_cd": "USD", "frcr_use_psbl_amt": "250.50", "bass_exrt": "1450"},
-            {"crcy_cd": "JPY", "frcr_use_psbl_amt": "30000", "bass_exrt": "915"},
+            {"crcy_cd": "JPY", "frcr_dncl_amt_2": "30000", "sll_ruse_psbl_amt": "12000", "bass_exrt": "915"},
         ]
 
         amount, exrt, source = api_client._pick_foreign_cash_balance_from_output2(rows, "JPY")
 
-        self.assertEqual(amount, 30000.0)
+        self.assertEqual(amount, 42000.0)
         self.assertEqual(exrt, 915.0)
-        self.assertEqual(source, "output2[1].frcr_use_psbl_amt")
+        self.assertEqual(source, "balance=output2[1].frcr_dncl_amt_2, reuse=output2[1].sll_ruse_psbl_amt")
 
     def test_pick_foreign_cash_balance_from_output2_falls_back_when_currency_code_missing(self):
         rows = [
-            {"crcy_cd": "", "frcr_use_psbl_amt": "33000", "bass_exrt": "910"},
+            {"crcy_cd": "", "frcr_dncl_amt_2": "33000", "sl_ruse_frcr_amt": "2000", "bass_exrt": "910"},
         ]
 
         amount, exrt, source = api_client._pick_foreign_cash_balance_from_output2(rows, "JPY")
 
-        self.assertEqual(amount, 33000.0)
+        self.assertEqual(amount, 35000.0)
         self.assertEqual(exrt, 910.0)
-        self.assertEqual(source, "output2[0].frcr_use_psbl_amt")
+        self.assertEqual(source, "balance=output2[0].frcr_dncl_amt_2, reuse=output2[0].sl_ruse_frcr_amt")
 
     def test_pick_foreign_cash_balance_from_output1_cash_row_reads_jpy_pdno(self):
         rows = [
@@ -299,6 +299,17 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(amount, 48000.0)
         self.assertEqual(exrt, 905.0)
         self.assertEqual(source, "output1[0].ccld_qty_smtl1")
+
+    def test_pick_foreign_sell_reuse_from_output2_reads_usd_reuse(self):
+        rows = [
+            {"crcy_cd": "USD", "sll_ruse_psbl_amt": "25.5", "bass_exrt": "1400"},
+        ]
+
+        amount, exrt, source = api_client._pick_foreign_sell_reuse_from_output2(rows, "USD")
+
+        self.assertEqual(amount, 25.5)
+        self.assertEqual(exrt, 1400.0)
+        self.assertEqual(source, "output2[0].sll_ruse_psbl_amt")
 
     def test_pick_foreign_cash_balance_from_output3_reads_orderable_fields(self):
         amount, source = api_client._pick_foreign_cash_balance_from_output3(
@@ -313,13 +324,13 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         us_payload = {
             "rt_cd": "0",
             "output1": [],
-            "output2": [{"crcy_cd": "USD", "frcr_use_psbl_amt": "20.5", "bass_exrt": "1400"}],
+            "output2": [{"crcy_cd": "USD", "frcr_dncl_amt_2": "20.5", "sll_ruse_psbl_amt": "4.5", "bass_exrt": "1400"}],
             "output3": {"pchs_amt_smtl_amt": "0", "evlu_amt_smtl_amt": "0"},
         }
         jp_payload = {
             "rt_cd": "0",
             "output1": [],
-            "output2": [{"crcy_cd": "JPY", "frcr_use_psbl_amt": "33000", "bass_exrt": "910"}],
+            "output2": [{"crcy_cd": "JPY", "frcr_dncl_amt_2": "33000", "sll_ruse_psbl_amt": "7000", "bass_exrt": "910"}],
         }
 
         def fake_get(url, headers=None, params=None, timeout=None):
@@ -346,8 +357,8 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         us_summary = us_summary_obj if isinstance(us_summary_obj, dict) else {}
         jp_summary = jp_summary_obj if isinstance(jp_summary_obj, dict) else {}
 
-        self.assertEqual(us_summary.get("usd_cash_balance"), 20.5)
-        self.assertEqual(jp_summary.get("jpy_cash_balance"), 33000.0)
+        self.assertEqual(us_summary.get("usd_cash_balance"), 25.0)
+        self.assertEqual(jp_summary.get("jpy_cash_balance"), 40000.0)
         self.assertEqual(jp_summary.get("jpy_exrt"), 910.0)
 
     @patch("app.api_client.requests.get")
@@ -364,7 +375,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
                 {"pdno": "JPY", "ccld_qty_smtl1": "48000", "bass_exrt": "905"},
                 {"pdno": "7203", "prdt_name": "Toyota", "avg_unpr3": "2000", "ovrs_now_pric1": "2100", "bass_exrt": "905", "ccld_qty_smtl1": "10", "ovrs_excg_cd": "TKSE"},
             ],
-            "output2": {"frcr_use_psbl_amt": "33000", "bass_exrt": "910"},
+            "output2": {"frcr_dncl_amt_2": "33000", "sll_ruse_psbl_amt": "5000", "bass_exrt": "910"},
             "output3": {"ord_psbl_frcr_amt": "12000"},
         }
 
@@ -392,7 +403,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         jp_summary = jp_summary_obj if isinstance(jp_summary_obj, dict) else {}
         jp_items = jp_items_obj if isinstance(jp_items_obj, list) else []
 
-        self.assertEqual(jp_summary.get("jpy_cash_balance"), 48000.0)
+        self.assertEqual(jp_summary.get("jpy_cash_balance"), 53000.0)
         self.assertEqual(jp_summary.get("jpy_exrt"), 905.0)
         self.assertEqual(len(jp_items), 1)
         self.assertEqual(jp_items[0].get("ticker"), "7203")

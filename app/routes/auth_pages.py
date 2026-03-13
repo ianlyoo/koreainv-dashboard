@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -25,24 +27,36 @@ def _remove_quote_session(request: Request) -> None:
         service.remove_session(request.cookies.get("session"))
 
 
-def _decrypt_credentials(settings: dict, pin: str):
-    crypto_version = settings.get("crypto_version", 1)
-    salt = settings.get("kdf_salt")
+def _decrypt_credentials(settings: Mapping[str, object], pin: str):
+    crypto_version_raw = settings.get("crypto_version", 1)
+    crypto_version = (
+        int(crypto_version_raw) if isinstance(crypto_version_raw, (int, float)) else 1
+    )
+    salt_raw = settings.get("kdf_salt")
+    salt = salt_raw if isinstance(salt_raw, str) else None
+
+    def _encrypted_value(key: str) -> str:
+        value = settings.get(key, "")
+        return value if isinstance(value, str) else ""
 
     if crypto_version >= 2 and salt:
-        app_key = auth.decrypt_data_v2(settings.get("api_key_enc", ""), pin, salt)
-        app_secret = auth.decrypt_data_v2(settings.get("api_secret_enc", ""), pin, salt)
-        cano = auth.decrypt_data_v2(settings.get("cano_enc", ""), pin, salt)
+        app_key = auth.decrypt_data_v2(_encrypted_value("api_key_enc"), pin, salt)
+        app_secret = auth.decrypt_data_v2(_encrypted_value("api_secret_enc"), pin, salt)
+        cano = auth.decrypt_data_v2(_encrypted_value("cano_enc"), pin, salt)
         acnt_prdt_cd = auth.decrypt_data_v2(
-            settings.get("acnt_prdt_cd_enc", ""), pin, salt
+            _encrypted_value("acnt_prdt_cd_enc"), pin, salt
         )
     else:
-        app_key = auth.decrypt_data(settings.get("api_key_enc", ""), pin)
-        app_secret = auth.decrypt_data(settings.get("api_secret_enc", ""), pin)
-        cano = auth.decrypt_data(settings.get("cano_enc", ""), pin)
-        acnt_prdt_cd = auth.decrypt_data(settings.get("acnt_prdt_cd_enc", ""), pin)
+        app_key = auth.decrypt_data(_encrypted_value("api_key_enc"), pin)
+        app_secret = auth.decrypt_data(_encrypted_value("api_secret_enc"), pin)
+        cano = auth.decrypt_data(_encrypted_value("cano_enc"), pin)
+        acnt_prdt_cd = auth.decrypt_data(_encrypted_value("acnt_prdt_cd_enc"), pin)
 
     return app_key, app_secret, cano, acnt_prdt_cd
+
+
+def decrypt_credentials_for_session(settings: Mapping[str, object], pin: str):
+    return _decrypt_credentials(settings, pin)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -131,11 +145,13 @@ async def setup_api(
 
 @router.post("/api/login")
 async def login(pin: str = Form(...)):
-    settings = auth.load_settings()
+    settings: dict[str, object] = auth.load_settings()
     if not settings.get("setup_complete"):
         raise HTTPException(status_code=400, detail="Setup not complete")
 
     pin_hash = settings.get("pin_hash")
+    if not isinstance(pin_hash, str):
+        raise HTTPException(status_code=500, detail="Stored PIN is invalid")
     if not auth.verify_pin(pin, pin_hash):
         raise HTTPException(status_code=401, detail="Invalid PIN")
 
