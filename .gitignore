@@ -32,3 +32,10 @@ build/
 dist/
 *.spec
 *.app/
+
+# Android local artifacts
+android-app/.gradle/
+android-app/local.properties
+
+# Local screenshots and issue dumps
+temp/
