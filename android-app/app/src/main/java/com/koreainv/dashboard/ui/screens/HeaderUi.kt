@@ -281,7 +281,7 @@ fun HeroMetricRow(
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         HeroMetricCell(
             label = primaryLabel,
@@ -609,8 +609,8 @@ fun DashboardBottomTabBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(30.dp))
-                .background(SurfaceGlassLight.copy(alpha = 0.58f))
-                .border(1.dp, SurfaceBorder.copy(alpha = 0.62f), RoundedCornerShape(30.dp))
+                .background(SurfaceGlassLight.copy(alpha = 0.74f))
+                .border(1.dp, SurfaceBorder.copy(alpha = 0.74f), RoundedCornerShape(30.dp))
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -620,10 +620,10 @@ fun DashboardBottomTabBar(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(22.dp))
-                        .background(if (selected) SurfaceAccent else SurfaceGlassLight.copy(alpha = 0.42f))
+                        .background(if (selected) SurfaceAccent else SurfaceGlassLight.copy(alpha = 0.56f))
                         .border(
                             width = 1.dp,
-                            color = if (selected) SurfaceBorderPrimary else SurfaceBorder.copy(alpha = 0.4f),
+                            color = if (selected) SurfaceBorderPrimary else SurfaceBorder.copy(alpha = 0.55f),
                             shape = RoundedCornerShape(22.dp),
                         )
                         .clickable { onTabSelected(item) }
@@ -633,7 +633,7 @@ fun DashboardBottomTabBar(
                     Text(
                         text = item.label,
                         style = MaterialTheme.typography.labelLarge,
-                        color = if (selected) TextGold else TextPrimary.copy(alpha = 0.72f),
+                        color = if (selected) TextGold else TextPrimary.copy(alpha = 0.86f),
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -817,8 +817,8 @@ private data class TonePalette(
 private fun tonePalette(tone: AccentTone): TonePalette = when (tone) {
     AccentTone.Neutral -> TonePalette(SurfacePrimary, TextPrimary, SurfaceBorder)
     AccentTone.Accent -> TonePalette(SurfaceAccent, TextGold, SurfaceBorderPrimary)
-    AccentTone.Positive -> TonePalette(PositiveSurface, Success, SurfaceBorder)
-    AccentTone.Negative -> TonePalette(NegativeSurface, Error, SurfaceBorder)
+    AccentTone.Positive -> TonePalette(PositiveSurface.copy(alpha = 0.96f), Success, Success.copy(alpha = 0.42f))
+    AccentTone.Negative -> TonePalette(NegativeSurface.copy(alpha = 0.96f), Error, Error.copy(alpha = 0.42f))
     AccentTone.Info -> TonePalette(InfoSurface, Info, SurfaceBorder)
 }
 

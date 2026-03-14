@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -266,10 +267,6 @@ fun PortfolioSummarySection(data: DashboardResponse, currencyMode: CurrencyDispl
     val stockEvalAmount = data.summary.totalAssetsKrw - data.summary.totalCashKrw
 
     HeroTopSection {
-        SurfaceBadge(
-            label = stringResource(R.string.portfolio),
-            tone = AccentTone.Info,
-        )
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = stringResource(R.string.stock_evaluation_amount),
@@ -320,12 +317,13 @@ fun HoldingItem(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(modifier = Modifier.padding(top = 2.dp)) {
-                    MarketBadge(market = holding.market)
-                }
+                MarketBadge(
+                    market = holding.market,
+                    modifier = Modifier.offset(x = (-6).dp),
+                )
                 Text(
                     text = holding.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -377,7 +375,7 @@ fun HoldingItem(
 }
 
 @Composable
-private fun MarketBadge(market: String) {
+private fun MarketBadge(market: String, modifier: Modifier = Modifier) {
     val (backgroundColor, textColor) = when (market) {
         "KOR" -> MarketKoreaBg to MarketKoreaFg
         "USA" -> MarketUsaBg to MarketUsaFg
@@ -386,7 +384,7 @@ private fun MarketBadge(market: String) {
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(backgroundColor),
     ) {

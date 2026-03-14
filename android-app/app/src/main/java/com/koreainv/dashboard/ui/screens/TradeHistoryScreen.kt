@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -309,10 +310,6 @@ fun TradeSummaryCard(
     }
 
     HeroTopSection {
-        SurfaceBadge(
-            label = stringResource(R.string.trade_history_title),
-            tone = AccentTone.Info,
-        )
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = stringResource(R.string.realized_profit),
@@ -375,12 +372,14 @@ fun TradeItemCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(modifier = Modifier.padding(top = 2.dp)) {
-                    SurfaceBadge(label = trade.side, tone = sideTone)
-                }
+                SurfaceBadge(
+                    label = trade.side,
+                    tone = sideTone,
+                    modifier = Modifier.offset(x = (-6).dp),
+                )
                 Text(
                     text = trade.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -391,21 +390,19 @@ fun TradeItemCard(
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     text = stringResource(
                         R.string.share_quantity_price,
                         formatWholeNumber(trade.quantity),
-                        formatTradeUnitPrice(trade, currencyMode, usdRate),
+                        formatTradeUnitPrice(trade),
                     ),
+                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
-                )
-                Text(
-                    text = trade.date,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
                 )
             }
         }
@@ -459,11 +456,9 @@ private fun formatTradeAmount(trade: Trade, currencyMode: CurrencyDisplayMode, u
     }
 }
 
-private fun formatTradeUnitPrice(trade: Trade, currencyMode: CurrencyDisplayMode, usdRate: Double): String {
-    val safeUsdRate = usdRate.takeIf { it > 0.0 } ?: 1350.0
+private fun formatTradeUnitPrice(trade: Trade): String {
     return when {
-        trade.currency == "USD" && currencyMode == CurrencyDisplayMode.USD -> "$${formatUsdNumber(trade.unitPrice)}"
-        trade.currency == "USD" && currencyMode == CurrencyDisplayMode.KRW -> "₩${formatWholeNumber(trade.unitPrice * safeUsdRate)}"
+        trade.currency == "USD" -> "$${formatUsdNumber(trade.unitPrice)}"
         trade.currency == "JPY" -> "¥${formatWholeNumber(trade.unitPrice)}"
         else -> "₩${formatWholeNumber(trade.unitPrice)}"
     }

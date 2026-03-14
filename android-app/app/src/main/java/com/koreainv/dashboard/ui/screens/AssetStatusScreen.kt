@@ -175,10 +175,6 @@ fun TotalAssetsCard(data: DashboardResponse) {
     val equityAmount = data.summary.totalAssetsKrw - data.summary.totalCashKrw
 
     HeroTopSection {
-        SurfaceBadge(
-            label = stringResource(R.string.asset_status),
-            tone = AccentTone.Info,
-        )
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = stringResource(R.string.all_assets),

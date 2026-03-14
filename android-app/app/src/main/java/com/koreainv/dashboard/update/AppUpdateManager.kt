@@ -123,7 +123,7 @@ class AppUpdateManager {
             val asset = element.asJsonObject
             val name = asset.get("name")?.asString.orEmpty()
             val lower = name.lowercase()
-            if (lower.endsWith(".apk") && ("android" in lower || "app-release" in lower || "app-debug" in lower)) {
+            if (lower == "kisdashboard-android.apk" || lower == "app-release.apk") {
                 return ReleaseAsset(
                     name = name,
                     url = asset.get("browser_download_url")?.asString.orEmpty(),
