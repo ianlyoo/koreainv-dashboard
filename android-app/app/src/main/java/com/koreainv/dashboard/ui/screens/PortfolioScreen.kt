@@ -5,35 +5,28 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,19 +37,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.koreainv.dashboard.R
-import com.koreainv.dashboard.network.KisRepository
 import com.koreainv.dashboard.network.DashboardResponse
 import com.koreainv.dashboard.network.Holding
+import com.koreainv.dashboard.network.KisRepository
 import com.koreainv.dashboard.ui.theme.Background
-import com.koreainv.dashboard.ui.theme.Surface
+import com.koreainv.dashboard.ui.theme.Error
+import com.koreainv.dashboard.ui.theme.MarketJapanBg
+import com.koreainv.dashboard.ui.theme.MarketJapanFg
+import com.koreainv.dashboard.ui.theme.MarketKoreaBg
+import com.koreainv.dashboard.ui.theme.MarketKoreaFg
+import com.koreainv.dashboard.ui.theme.MarketUsaBg
+import com.koreainv.dashboard.ui.theme.MarketUsaFg
+import com.koreainv.dashboard.ui.theme.Success
 import com.koreainv.dashboard.ui.theme.SurfaceBorder
 import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
 import com.koreainv.dashboard.ui.theme.TextGold
@@ -68,7 +67,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun PortfolioScreen(
     repository: KisRepository,
-    onMenuClick: () -> Unit,
+    onCheckUpdatesClick: () -> Unit,
+    onLogoutClick: () -> Unit,
     onHoldingClick: (String) -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -106,51 +106,33 @@ fun PortfolioScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    InlineTitleWithSync(
-                        title = stringResource(R.string.portfolio),
-                        lastSynced = dashboardData?.summary?.lastSynced,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = TextGold,
-                ),
-                navigationIcon = {
-                    IconButton(onClick = onMenuClick) {
-                        Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.menu), tint = Color.White)
-                    }
-                },
+            DashboardTopBar(
+                title = stringResource(R.string.portfolio),
+                lastSynced = dashboardData?.summary?.lastSynced,
                 actions = {
                     CompactCurrencyToggle(
                         mode = currencyMode,
                         onModeChange = { currencyMode = it },
                     )
                     if (isLoading && dashboardData != null) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .padding(start = 10.dp, end = 16.dp)
-                                .size(20.dp),
-                            color = TextGold,
-                            strokeWidth = 2.dp,
-                        )
+                        HeaderLoadingIndicator()
                     } else {
-                        IconButton(onClick = { loadDashboard(forceRefresh = true) }) {
-                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh), tint = Color.White)
-                        }
+                        HeaderIconButton(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.refresh),
+                            onClick = { loadDashboard(forceRefresh = true) },
+                        )
                     }
+                    DashboardUtilityMenu(
+                        onCheckUpdates = onCheckUpdatesClick,
+                        onLogout = onLogoutClick,
+                    )
                 },
             )
         },
-        containerColor = Color.Transparent,
+        containerColor = Background,
     ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Background)
-                .padding(paddingValues),
-        ) {
+        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
                 isLoading && dashboardData == null -> {
                     CircularProgressIndicator(
@@ -161,21 +143,22 @@ fun PortfolioScreen(
 
                 errorMessage != null && dashboardData == null -> {
                     Column(
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         Text(
                             text = errorMessage.orEmpty(),
                             color = MaterialTheme.colorScheme.error,
                             textAlign = TextAlign.Center,
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
+                        DashboardPillButton(
+                            label = stringResource(R.string.retry),
                             onClick = { loadDashboard() },
-                            colors = ButtonDefaults.buttonColors(containerColor = TextGold),
-                        ) {
-                            Text(stringResource(R.string.retry), color = Color.Black)
-                        }
+                            tone = AccentTone.Accent,
+                        )
                     }
                 }
 
@@ -188,57 +171,50 @@ fun PortfolioScreen(
                             HoldingSortMode.PROFIT -> data.holdings.sortedByDescending { it.profitLossKrw }
                         }
                     }
+
                     LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 20.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 132.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         item {
-                            PortfolioSummarySection(data, currencyMode)
+                            PortfolioSummarySection(data = data, currencyMode = currencyMode)
                         }
 
                         item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 16.dp, bottom = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                SectionTitle(
-                                    title = stringResource(R.string.holdings),
-                                    modifier = Modifier,
-                                )
-                                Box {
-                                    TextButton(onClick = { sortExpanded = true }) {
-                                        Text(
-                                            text = sortMode.label(),
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = TextGold,
+                            SectionHeader(
+                                title = stringResource(R.string.holdings),
+                                modifier = Modifier.padding(top = 8.dp),
+                                action = {
+                                    Box {
+                                        DashboardPillButton(
+                                            label = sortMode.label(),
+                                            onClick = { sortExpanded = true },
+                                            tone = AccentTone.Neutral,
+                                            trailingIcon = Icons.Default.ArrowDropDown,
                                         )
-                                        Icon(
-                                            imageVector = Icons.Default.ArrowDropDown,
-                                            contentDescription = stringResource(R.string.sort_by),
-                                            tint = TextGold,
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = sortExpanded,
-                                        onDismissRequest = { sortExpanded = false },
-                                    ) {
-                                        HoldingSortMode.entries.forEach { mode ->
-                                            DropdownMenuItem(
-                                                text = { Text(mode.label()) },
-                                                onClick = {
-                                                    sortMode = mode
-                                                    sortExpanded = false
-                                                },
-                                            )
+                                        DropdownMenu(
+                                            expanded = sortExpanded,
+                                            onDismissRequest = { sortExpanded = false },
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(24.dp))
+                                                .background(SurfaceGlassLight)
+                                                .border(1.dp, SurfaceBorder, RoundedCornerShape(24.dp)),
+                                        ) {
+                                            HoldingSortMode.entries.forEach { mode ->
+                                                DropdownMenuItem(
+                                                    text = { Text(mode.label(), color = TextPrimary) },
+                                                    colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                    onClick = {
+                                                        sortMode = mode
+                                                        sortExpanded = false
+                                                    },
+                                                )
+                                            }
                                         }
                                     }
-                                }
-                            }
+                                },
+                            )
                         }
 
                         if (data.holdings.isEmpty()) {
@@ -249,7 +225,7 @@ fun PortfolioScreen(
                                     color = TextSecondary,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 32.dp),
+                                        .padding(vertical = 24.dp),
                                     textAlign = TextAlign.Center,
                                 )
                             }
@@ -262,10 +238,6 @@ fun PortfolioScreen(
                                     onClick = { onHoldingClick(holding.symbol) },
                                 )
                             }
-                        }
-
-                        item {
-                            Spacer(modifier = Modifier.height(32.dp))
                         }
                     }
                 }
@@ -290,65 +262,44 @@ private fun HoldingSortMode.label(): String = when (this) {
 @Composable
 fun PortfolioSummarySection(data: DashboardResponse, currencyMode: CurrencyDisplayMode) {
     val isPositive = data.summary.totalProfitKrw >= 0
-    val profitColor = if (isPositive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-
+    val profitColor = if (isPositive) Success else Error
     val stockEvalAmount = data.summary.totalAssetsKrw - data.summary.totalCashKrw
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        PremiumCard {
-            Column(
-                modifier = Modifier.padding(vertical = 8.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.stock_evaluation_amount),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextSecondary,
-                    letterSpacing = 1.sp,
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = formatCurrencyAmount(stockEvalAmount, currencyMode, data.summary.usdExchangeRate),
-                    style = MaterialTheme.typography.displayMedium,
-                    color = TextGold,
-                )
-                Spacer(modifier = Modifier.height(32.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Column {
-                        Text(
-                            text = stringResource(R.string.profit_loss),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TextSecondary,
-                            letterSpacing = 0.5.sp,
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = formatCurrencyAmount(data.summary.totalProfitKrw, currencyMode, data.summary.usdExchangeRate, signed = true),
-                            style = MaterialTheme.typography.titleLarge,
-                            color = profitColor,
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = stringResource(R.string.return_label),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TextSecondary,
-                            letterSpacing = 0.5.sp,
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = formatSignedPercent(data.summary.totalProfitRate),
-                            style = MaterialTheme.typography.titleLarge,
-                            color = profitColor,
-                        )
-                    }
-                }
-            }
+    HeroTopSection {
+        SurfaceBadge(
+            label = stringResource(R.string.portfolio),
+            tone = AccentTone.Info,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = stringResource(R.string.stock_evaluation_amount),
+                style = MaterialTheme.typography.labelMedium,
+                color = TextSecondary,
+            )
+            HeroHeadlineValue(
+                value = formatCurrencyAmount(stockEvalAmount, currencyMode, data.summary.usdExchangeRate),
+                color = TextGold,
+            )
+            Text(
+                text = stringResource(R.string.all_assets),
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+            )
+        }
+        HeroMetricGroup {
+            HeroMetricRow(
+                primaryLabel = stringResource(R.string.profit_loss),
+                primaryValue = formatCurrencyAmount(
+                    data.summary.totalProfitKrw,
+                    currencyMode,
+                    data.summary.usdExchangeRate,
+                    signed = true,
+                ),
+                primaryValueColor = profitColor,
+                secondaryLabel = stringResource(R.string.return_label),
+                secondaryValue = formatSignedPercent(data.summary.totalProfitRate),
+                secondaryValueColor = profitColor,
+            )
         }
     }
 }
@@ -360,40 +311,38 @@ fun HoldingItem(
     usdRate: Double,
     onClick: () -> Unit,
 ) {
-    val isPositive = holding.profitLossKrw >= 0
-    val profitColor = if (isPositive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-    val badgeColors = when (holding.market) {
-        "KOR" -> Color(0x263B82F6) to Color(0xFF60A5FA)
-        "USA" -> Color(0x26F43F5E) to Color(0xFFFB7185)
-        "JPN" -> Color(0x26A855F7) to Color(0xFFC084FC)
-        else -> Color.White.copy(alpha = 0.1f) to Color.White.copy(alpha = 0.7f)
-    }
+    val profitColor = if (holding.profitLossKrw >= 0) Success else Error
 
     PremiumListItem(onClick = onClick) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = holding.name,
-                style = MaterialTheme.typography.titleMedium,
-                color = TextPrimary,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(badgeColors.first)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    Text(
-                        text = holding.market,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = badgeColors.second,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp,
-                    )
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(modifier = Modifier.padding(top = 2.dp)) {
+                    MarketBadge(market = holding.market)
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = holding.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = holding.symbol,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TextSecondary,
+                )
                 Text(
                     text = stringResource(R.string.share_count, formatWholeNumber(holding.quantity)),
                     style = MaterialTheme.typography.bodyMedium,
@@ -402,19 +351,56 @@ fun HoldingItem(
             }
         }
 
-        Column(horizontalAlignment = Alignment.End) {
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(
+            modifier = Modifier.width(116.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Text(
                 text = formatCurrencyAmount(holding.totalValueKrw, currencyMode, usdRate),
                 style = MaterialTheme.typography.titleMedium,
                 color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End,
             )
-            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = formatSignedPercent(holding.profitLossRate),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = profitColor,
+                textAlign = TextAlign.End,
             )
         }
+    }
+}
+
+@Composable
+private fun MarketBadge(market: String) {
+    val (backgroundColor, textColor) = when (market) {
+        "KOR" -> MarketKoreaBg to MarketKoreaFg
+        "USA" -> MarketUsaBg to MarketUsaFg
+        "JPN" -> MarketJapanBg to MarketJapanFg
+        else -> Color.Transparent to TextSecondary
+    }
+
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(backgroundColor),
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .border(1.dp, textColor.copy(alpha = 0.24f), RoundedCornerShape(12.dp)),
+        )
+        Text(
+            text = market,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = textColor,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

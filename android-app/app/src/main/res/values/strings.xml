@@ -42,6 +42,8 @@
     <string name="asset_status">자산 현황</string>
     <string name="asset_distribution">자산 분포</string>
     <string name="cash_balance_label">보유 현금</string>
+    <string name="show_details">상세 보기</string>
+    <string name="hide_details">상세 닫기</string>
     <string name="expand_cash">통화별 현금 보기</string>
     <string name="all_assets">총 자산</string>
     <string name="stock_evaluation_amount">주식 평가금액</string>
@@ -82,6 +84,13 @@
     <string name="profit_loss_percentage">수익률</string>
     <string name="quantity">보유수량</string>
     <string name="holding_detail">보유 종목 상세</string>
+    <string name="trade_detail">거래 상세</string>
+    <string name="trade_type">거래 구분</string>
+    <string name="trade_date">거래일</string>
+    <string name="trade_amount">거래 금액</string>
+    <string name="trade_unit_price">체결 단가</string>
+    <string name="trade_currency">통화</string>
+    <string name="ticker">티커</string>
     <string name="trade_history">거래내역</string>
     <string name="update_available_title">새 업데이트가 있습니다</string>
     <string name="update_up_to_date">이미 최신 버전입니다.</string>

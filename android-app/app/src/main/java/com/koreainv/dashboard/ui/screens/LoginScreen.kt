@@ -32,7 +32,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -45,8 +44,11 @@ import androidx.compose.ui.unit.sp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.Surface
+import com.koreainv.dashboard.ui.theme.SurfaceAccent
 import com.koreainv.dashboard.ui.theme.SurfaceBorder
+import com.koreainv.dashboard.ui.theme.SurfaceGlass
 import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
+import com.koreainv.dashboard.ui.theme.SurfacePrimary
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
@@ -234,7 +236,7 @@ private fun DecorativeBackdrop() {
                 Brush.verticalGradient(
                     colors = listOf(
                         Background,
-                        Color(0xFF08101A),
+                        Surface,
                         Background,
                     ),
                 ),
@@ -243,29 +245,30 @@ private fun DecorativeBackdrop() {
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 84.dp)
-                .size(260.dp)
-                .blur(56.dp)
-                .clip(CircleShape)
-                .background(TextGold.copy(alpha = 0.12f)),
+                .fillMaxWidth()
+                .height(104.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            SurfaceGlassLight.copy(alpha = 0.42f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
         )
         Box(
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(top = 120.dp, start = 24.dp)
-                .size(220.dp)
-                .blur(72.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF4FC3F7).copy(alpha = 0.12f)),
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(bottom = 120.dp, end = 20.dp)
-                .size(240.dp)
-                .blur(80.dp)
-                .clip(CircleShape)
-                .background(TextGold.copy(alpha = 0.08f)),
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(132.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            SurfaceGlass.copy(alpha = 0.3f),
+                        ),
+                    ),
+                ),
         )
     }
 }

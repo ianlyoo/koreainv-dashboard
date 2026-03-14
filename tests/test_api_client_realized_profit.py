@@ -266,7 +266,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(rows[0]["symbol"], "ORCL")
         self.assertEqual(rows[0]["realized_profit_krw"], 120.0)
 
-    def test_pick_foreign_cash_balance_from_output2_combines_balance_and_reuse(self):
+    def test_pick_foreign_cash_balance_from_output2_reads_balance_only(self):
         rows = [
             {"crcy_cd": "USD", "frcr_use_psbl_amt": "250.50", "bass_exrt": "1450"},
             {"crcy_cd": "JPY", "frcr_dncl_amt_2": "30000", "sll_ruse_psbl_amt": "12000", "bass_exrt": "915"},
@@ -274,20 +274,20 @@ class RealizedProfitApiClientTests(unittest.TestCase):
 
         amount, exrt, source = api_client._pick_foreign_cash_balance_from_output2(rows, "JPY")
 
-        self.assertEqual(amount, 42000.0)
+        self.assertEqual(amount, 30000.0)
         self.assertEqual(exrt, 915.0)
-        self.assertEqual(source, "balance=output2[1].frcr_dncl_amt_2, reuse=output2[1].sll_ruse_psbl_amt")
+        self.assertEqual(source, "output2[1].frcr_dncl_amt_2")
 
-    def test_pick_foreign_cash_balance_from_output2_falls_back_when_currency_code_missing(self):
+    def test_pick_foreign_cash_balance_from_output2_falls_back_without_currency_match(self):
         rows = [
             {"crcy_cd": "", "frcr_dncl_amt_2": "33000", "sl_ruse_frcr_amt": "2000", "bass_exrt": "910"},
         ]
 
         amount, exrt, source = api_client._pick_foreign_cash_balance_from_output2(rows, "JPY")
 
-        self.assertEqual(amount, 35000.0)
+        self.assertEqual(amount, 33000.0)
         self.assertEqual(exrt, 910.0)
-        self.assertEqual(source, "balance=output2[0].frcr_dncl_amt_2, reuse=output2[0].sl_ruse_frcr_amt")
+        self.assertEqual(source, "output2[0].frcr_dncl_amt_2")
 
     def test_pick_foreign_cash_balance_from_output1_cash_row_reads_jpy_pdno(self):
         rows = [
@@ -332,6 +332,14 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "output1": [],
             "output2": [{"crcy_cd": "JPY", "frcr_dncl_amt_2": "33000", "sll_ruse_psbl_amt": "7000", "bass_exrt": "910"}],
         }
+        us_ps_payload = {
+            "rt_cd": "0",
+            "output": {"ovrs_ord_psbl_amt": "25.0"},
+        }
+        jp_ps_payload = {
+            "rt_cd": "0",
+            "output": {"ovrs_ord_psbl_amt": "40000.0"},
+        }
 
         def fake_get(url, headers=None, params=None, timeout=None):
             tr_id = (headers or {}).get("tr_id")
@@ -340,6 +348,10 @@ class RealizedProfitApiClientTests(unittest.TestCase):
                 return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
             if tr_id == "CTRP6504R" and natn_cd == "392":
                 return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
+            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") in {"NASD", "NYSE"}:
+                return SimpleNamespace(status_code=200, json=lambda: us_ps_payload, headers={})
+            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") == "TKSE":
+                return SimpleNamespace(status_code=200, json=lambda: jp_ps_payload, headers={})
             self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
 
         mock_get.side_effect = fake_get
@@ -378,6 +390,14 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "output2": {"frcr_dncl_amt_2": "33000", "sll_ruse_psbl_amt": "5000", "bass_exrt": "910"},
             "output3": {"ord_psbl_frcr_amt": "12000"},
         }
+        us_ps_payload = {
+            "rt_cd": "0",
+            "output": {"ovrs_ord_psbl_amt": "20.5"},
+        }
+        jp_ps_payload = {
+            "rt_cd": "0",
+            "output": {"ovrs_ord_psbl_amt": "53000.0"},
+        }
 
         def fake_get(url, headers=None, params=None, timeout=None):
             tr_id = (headers or {}).get("tr_id")
@@ -386,6 +406,10 @@ class RealizedProfitApiClientTests(unittest.TestCase):
                 return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
             if tr_id == "CTRP6504R" and natn_cd == "392":
                 return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
+            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") in {"NASD", "NYSE"}:
+                return SimpleNamespace(status_code=200, json=lambda: us_ps_payload, headers={})
+            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") == "TKSE":
+                return SimpleNamespace(status_code=200, json=lambda: jp_ps_payload, headers={})
             self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
 
         mock_get.side_effect = fake_get
@@ -404,7 +428,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         jp_items = jp_items_obj if isinstance(jp_items_obj, list) else []
 
         self.assertEqual(jp_summary.get("jpy_cash_balance"), 53000.0)
-        self.assertEqual(jp_summary.get("jpy_exrt"), 905.0)
+        self.assertEqual(jp_summary.get("jpy_exrt"), 910.0)
         self.assertEqual(len(jp_items), 1)
         self.assertEqual(jp_items[0].get("ticker"), "7203")
 
@@ -454,7 +478,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         us_summary = us_summary_obj if isinstance(us_summary_obj, dict) else {}
 
         self.assertEqual(us_summary.get("usd_cash_balance"), 77.5)
-        self.assertEqual(ps_calls, ["NASD"])
+        self.assertEqual(ps_calls, ["NASD", "TKSE"])
 
     @patch("app.api_client._run_parallel_tasks")
     def test_fetch_trade_profit_rows_dedupes_overlapping_calls(self, mock_run_parallel_tasks):

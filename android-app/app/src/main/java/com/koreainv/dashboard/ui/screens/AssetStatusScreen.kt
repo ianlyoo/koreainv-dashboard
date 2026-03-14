@@ -2,40 +2,28 @@ package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,22 +33,22 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.DashboardResponse
 import com.koreainv.dashboard.network.KisRepository
 import com.koreainv.dashboard.ui.theme.Background
-import com.koreainv.dashboard.ui.theme.SurfaceBorder
-import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
+import com.koreainv.dashboard.ui.theme.ChartTone1
+import com.koreainv.dashboard.ui.theme.ChartTone2
+import com.koreainv.dashboard.ui.theme.ChartTone3
+import com.koreainv.dashboard.ui.theme.ChartTone4
+import com.koreainv.dashboard.ui.theme.ChartTone5
+import com.koreainv.dashboard.ui.theme.ChartTone6
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
@@ -72,7 +60,8 @@ import java.util.Locale
 @Composable
 fun AssetStatusScreen(
     repository: KisRepository,
-    onBackClick: () -> Unit,
+    onCheckUpdatesClick: () -> Unit,
+    onLogoutClick: () -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
 
@@ -106,47 +95,29 @@ fun AssetStatusScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    InlineTitleWithSync(
-                        title = stringResource(R.string.asset_status),
-                        lastSynced = dashboardData?.summary?.lastSynced,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = TextGold,
-                ),
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.back), tint = Color.White)
-                    }
-                },
+            DashboardTopBar(
+                title = stringResource(R.string.asset_status),
+                lastSynced = dashboardData?.summary?.lastSynced,
                 actions = {
                     if (isLoading && dashboardData != null) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .padding(end = 16.dp)
-                                .size(20.dp),
-                            color = TextGold,
-                            strokeWidth = 2.dp,
-                        )
+                        HeaderLoadingIndicator()
                     } else {
-                        IconButton(onClick = { loadDashboard(forceRefresh = true) }) {
-                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh), tint = Color.White)
-                        }
+                        HeaderIconButton(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.refresh),
+                            onClick = { loadDashboard(forceRefresh = true) },
+                        )
                     }
+                    DashboardUtilityMenu(
+                        onCheckUpdates = onCheckUpdatesClick,
+                        onLogout = onLogoutClick,
+                    )
                 },
             )
         },
-        containerColor = Color.Transparent,
+        containerColor = Background,
     ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Background)
-                .padding(paddingValues),
-        ) {
+        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
                 isLoading && dashboardData == null -> {
                     CircularProgressIndicator(
@@ -157,21 +128,22 @@ fun AssetStatusScreen(
 
                 errorMessage != null && dashboardData == null -> {
                     Column(
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         Text(
                             text = errorMessage.orEmpty(),
                             color = MaterialTheme.colorScheme.error,
                             textAlign = TextAlign.Center,
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
+                        DashboardPillButton(
+                            label = stringResource(R.string.retry),
                             onClick = { loadDashboard() },
-                            colors = ButtonDefaults.buttonColors(containerColor = TextGold),
-                        ) {
-                            Text(stringResource(R.string.retry), color = Color.Black)
-                        }
+                            tone = AccentTone.Accent,
+                        )
                     }
                 }
 
@@ -181,8 +153,8 @@ fun AssetStatusScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(24.dp),
+                            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 132.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         TotalAssetsCard(data)
                         CashBalanceCard(data)
@@ -200,20 +172,35 @@ fun TotalAssetsCard(data: DashboardResponse) {
         maximumFractionDigits = 0
         minimumFractionDigits = 0
     }
+    val equityAmount = data.summary.totalAssetsKrw - data.summary.totalCashKrw
 
-    PremiumCard {
-        Column {
+    HeroTopSection {
+        SurfaceBadge(
+            label = stringResource(R.string.asset_status),
+            tone = AccentTone.Info,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = stringResource(R.string.all_assets),
                 style = MaterialTheme.typography.labelMedium,
                 color = TextSecondary,
-                letterSpacing = 1.sp,
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "₩${formatter.format(data.summary.totalAssetsKrw)}",
-                style = MaterialTheme.typography.displayMedium,
+            HeroHeadlineValue(
+                value = "₩${formatter.format(data.summary.totalAssetsKrw)}",
                 color = TextGold,
+            )
+            Text(
+                text = stringResource(R.string.cash_balance_label),
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+            )
+        }
+        HeroMetricGroup {
+            HeroMetricRow(
+                primaryLabel = stringResource(R.string.stock_evaluation_amount),
+                primaryValue = "₩${formatter.format(equityAmount)}",
+                secondaryLabel = stringResource(R.string.cash_balance_label),
+                secondaryValue = "₩${formatter.format(data.summary.totalCashKrw)}",
             )
         }
     }
@@ -227,68 +214,38 @@ fun CashBalanceCard(data: DashboardResponse) {
     }
     var isExpanded by remember { mutableStateOf(false) }
 
-    val totalCashKrw = data.summary.totalCashKrw
-
-    PremiumGlassCard(
-        modifier = Modifier.clickable { isExpanded = !isExpanded }
-    ) {
-        Column {
+    PremiumGlassCard {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = stringResource(R.string.cash_balance_label),
                         style = MaterialTheme.typography.labelMedium,
                         color = TextSecondary,
-                        letterSpacing = 1.sp,
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "₩${formatter.format(totalCashKrw)}",
+                        text = "₩${formatter.format(data.summary.totalCashKrw)}",
                         style = MaterialTheme.typography.titleLarge,
                         color = TextPrimary,
                     )
                 }
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = stringResource(R.string.expand_cash),
-                    tint = TextSecondary,
+                DashboardPillButton(
+                    label = if (isExpanded) "접기" else "상세",
+                    onClick = { isExpanded = !isExpanded },
+                    trailingIcon = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                 )
             }
 
             AnimatedVisibility(visible = isExpanded) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Divider(color = SurfaceBorder)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("KRW", color = TextSecondary)
-                        Text("₩${formatter.format(data.summary.cashKrw)}", color = TextPrimary, fontWeight = FontWeight.Medium)
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("USD", color = TextSecondary)
-                        Text("$${formatter.format(data.summary.cashUsd)}", color = TextPrimary, fontWeight = FontWeight.Medium)
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text("JPY", color = TextSecondary)
-                        Text("¥${formatter.format(data.summary.cashJpy)}", color = TextPrimary, fontWeight = FontWeight.Medium)
-                    }
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                    CurrencyBreakdownRow(label = "KRW", value = "₩${formatter.format(data.summary.cashKrw)}")
+                    CurrencyBreakdownRow(label = "USD", value = "$${formatter.format(data.summary.cashUsd)}")
+                    CurrencyBreakdownRow(label = "JPY", value = "¥${formatter.format(data.summary.cashJpy)}")
                 }
             }
         }
@@ -296,27 +253,51 @@ fun CashBalanceCard(data: DashboardResponse) {
 }
 
 @Composable
+private fun CurrencyBreakdownRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextSecondary,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            color = TextPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
 fun AssetDistributionCard(data: DashboardResponse) {
     val colors = listOf(
-        Color(0xFFD4AF37),
-        Color(0xFF4FC3F7),
-        Color(0xFF00E676),
-        Color(0xFFFF5252),
-        Color(0xFF9C27B0),
-        Color(0xFFFF9800),
-        Color(0xFF00BCD4),
-        Color(0xFF8BC34A),
+        ChartTone1,
+        ChartTone2,
+        ChartTone3,
+        ChartTone4,
+        ChartTone5,
+        ChartTone6,
     )
 
     PremiumGlassCard {
-        Column {
-            Text(
-                text = stringResource(R.string.asset_distribution),
-                style = MaterialTheme.typography.labelMedium,
-                color = TextSecondary,
-                letterSpacing = 1.sp,
-            )
-            Spacer(modifier = Modifier.height(24.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = stringResource(R.string.asset_distribution),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                )
+                Text(
+                    text = stringResource(R.string.asset_status),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                )
+            }
 
             if (data.assetDistribution.isEmpty()) {
                 Text(
@@ -329,10 +310,10 @@ fun AssetDistributionCard(data: DashboardResponse) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp),
+                        .height(220.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Canvas(modifier = Modifier.size(160.dp)) {
+                    Canvas(modifier = Modifier.size(180.dp)) {
                         var startAngle = -90f
                         data.assetDistribution.forEachIndexed { index, asset ->
                             val sweepAngle = (asset.weightPercent / 100f) * 360f
@@ -341,7 +322,7 @@ fun AssetDistributionCard(data: DashboardResponse) {
                                 startAngle = startAngle,
                                 sweepAngle = sweepAngle.toFloat(),
                                 useCenter = false,
-                                style = Stroke(width = 40f, cap = StrokeCap.Butt),
+                                style = Stroke(width = 42f, cap = StrokeCap.Round),
                             )
                             startAngle += sweepAngle.toFloat()
                         }
@@ -354,40 +335,44 @@ fun AssetDistributionCard(data: DashboardResponse) {
                             color = TextSecondary,
                         )
                         Text(
-                            text = "${data.assetDistribution.size}",
-                            style = MaterialTheme.typography.titleLarge,
+                            text = formatWholeNumber(data.assetDistribution.size.toDouble()),
+                            style = MaterialTheme.typography.displaySmall,
                             color = TextPrimary,
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
-
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     data.assetDistribution.forEachIndexed { index, asset ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(colors[index % colors.size]),
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .padding(0.dp),
+                                ) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        drawCircle(color = colors[index % colors.size])
+                                    }
+                                }
+                                Text(
+                                    text = asset.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextPrimary,
+                                )
+                            }
                             Text(
-                                text = asset.name,
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = formatSignedPercent(asset.weightPercent).removePrefix("+"),
+                                style = MaterialTheme.typography.titleSmall,
                                 color = TextPrimary,
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                            )
-                            Text(
-                            text = formatSignedPercent(asset.weightPercent).removePrefix("+"),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
                     }

@@ -106,7 +106,7 @@
         <!-- 1. LEFT COLUMN -->
         <div class="col-panel col-left">
             <div class="summary-grid">
-                <div class="glass-card summary-card flip-card animate-enter" id="assetSummaryCard"
+                <div class="glass-card primary summary-card flip-card animate-enter" id="assetSummaryCard"
                     onclick="toggleAssetCard()" onkeydown="handleAssetCardKeydown(event)"
                     role="button" tabindex="0" aria-label="총 평가금액 통화 상세 전환">
                     <div class="flip-card-inner">
@@ -153,7 +153,7 @@
 
                 <!-- Header & Date moved back up -->
 
-                <div class="glass-card summary-card profit-card animate-enter" style="animation-delay: 0.25s;"
+                <div class="glass-card primary summary-card profit-card animate-enter" style="animation-delay: 0.25s;"
                     id="profitSummaryCard" onclick="toggleProfitCard()" onkeydown="handleProfitCardKeydown(event)"
                     role="button" tabindex="0" aria-label="총 평가손익과 이번 달 실현손익 전환">
                     <div class="profit-card-inner">
@@ -191,7 +191,7 @@
                 </div>
 
                 <!-- NEW CASH PANEL -->
-                <div class="glass-card summary-card flip-card animate-enter" style="animation-delay: 0.3s;"
+                <div class="glass-card primary summary-card flip-card animate-enter" style="animation-delay: 0.3s;"
                     id="cashSummaryCard" onclick="toggleCashCard()" onkeydown="handleCashCardKeydown(event)"
                     role="button" tabindex="0" aria-pressed="false" aria-label="보유 현금 통화 상세 전환">
                     <div class="flip-card-inner">
@@ -260,7 +260,7 @@
                     </div>
                 </div>
                 <div class="table-wrapper">
-                    <table>
+                    <table class="holdings-table">
                         <thead>
                             <tr>
                                 <th>자산명/티커</th>

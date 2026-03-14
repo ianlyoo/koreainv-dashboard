@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -49,7 +50,8 @@ class KisRepository(
     private val client = OkHttpClient.Builder()
         .addInterceptor(loggingInterceptor)
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build()
 
     private val tokenMutex = Mutex()
@@ -62,7 +64,11 @@ class KisRepository(
     private var lastKnownUsdRate: Double = 1350.0
 
     fun peekDashboard(): DashboardResponse? = cachedDashboard?.second
-    fun peekTradeHistory(range: String = "this_month"): TradeHistoryResponse? = cachedTradeHistory[range]?.second
+    fun peekTradeHistory(range: String = "this_month"): TradeHistoryResponse? {
+        val normalizedRange = range.lowercase(Locale.US)
+        val cached = cachedTradeHistory[normalizedRange] ?: return null
+        return cached.second.takeIf { System.currentTimeMillis() - cached.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }
+    }
 
     suspend fun fetchDashboard(forceRefresh: Boolean = false): DashboardResponse = withContext(Dispatchers.IO) {
         if (!forceRefresh) {
@@ -95,13 +101,23 @@ class KisRepository(
             val startDate = resolved.first.format(JSON_FORMAT)
             val endDate = resolved.second.format(JSON_FORMAT)
 
-            val domesticTradeProfit = getDomesticRealizedTradeProfit(startDate, endDate)
-            val overseasTradeProfit = getOverseasRealizedTradeProfit(startDate, endDate)
-
-            val domesticTrades = getDomesticTradeHistory(startDate, endDate)
-            var overseasTrades = getOverseasTradeHistory(startDate, endDate)
-            if (!hasJapanTradeRows(overseasTrades)) {
-                overseasTrades = dedupeTradeRows(overseasTrades + getJapanTradeHistoryCcnl(startDate, endDate))
+            val (domesticTradeProfit, overseasTradeProfit, domesticTrades, overseasTrades) = coroutineScope {
+                val domesticProfitDeferred = async { getDomesticRealizedTradeProfit(startDate, endDate) }
+                val overseasProfitDeferred = async { getOverseasRealizedTradeProfit(startDate, endDate) }
+                val domesticTradesDeferred = async { getDomesticTradeHistory(startDate, endDate) }
+                val overseasTradesDeferred = async {
+                    var overseas = getOverseasTradeHistory(startDate, endDate)
+                    if (!hasJapanTradeRows(overseas)) {
+                        overseas = dedupeTradeRows(overseas + getJapanTradeHistoryCcnl(startDate, endDate))
+                    }
+                    overseas
+                }
+                Quadruple(
+                    domesticProfitDeferred.await(),
+                    overseasProfitDeferred.await(),
+                    domesticTradesDeferred.await(),
+                    overseasTradesDeferred.await(),
+                )
             }
 
             val allTrades = dedupeTradeRows(domesticTrades + overseasTrades)
@@ -232,8 +248,8 @@ class KisRepository(
 
     private suspend fun getOverseasBalance(): OverseasBalancePayload = coroutineScope {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[dashboard:overseas]")
-        val usDeferred = async { getSingleOverseasBalance(token, "840", "USD", "NASD", "TTTS3007R") }
-        val jpDeferred = async { getSingleOverseasBalance(token, "392", "JPY", "TKSE", null) }
+        val usDeferred = async { getSingleOverseasBalance(token, "840", "USD", "NASD") }
+        val jpDeferred = async { getSingleOverseasBalance(token, "392", "JPY", "TKSE") }
         val us = usDeferred.await()
         val jp = jpDeferred.await()
         OverseasBalancePayload(
@@ -251,7 +267,6 @@ class KisRepository(
         nationCode: String,
         currencyCode: String,
         fallbackExchange: String,
-        orderableTrId: String?,
     ): SingleOverseasBalancePayload {
         val response = getJson(
             path = "/uapi/overseas-stock/v1/trading/inquire-present-balance",
@@ -305,24 +320,18 @@ class KisRepository(
 
         val cash = when (currencyCode) {
             "USD" -> {
-                val balance = pickForeignBalanceFromOutput2(output2, "USD").takeIf { it > 0.0 }
+                getOverseasOrderableCash(token, "USD").takeIf { it > 0.0 }
                     ?: pickForeignBalanceFromHoldings(output1, "USD").takeIf { it > 0.0 }
+                    ?: pickForeignBalanceFromOutput2(output2, "USD").takeIf { it > 0.0 }
                     ?: output3?.let { pickFirstPositive(it, listOf("frcr_dncl_amt_2", "tot_frcr_cblc_smtl", "frcr_use_psbl_amt", "frcr_drwg_psbl_amt_1", "ord_psbl_frcr_amt")) }
-                    ?: if (orderableTrId != null) getOverseasOrderableUsd(token) else 0.0
-                val sellReuse = pickForeignSellReuseFromOutput2(output2, "USD").takeIf { it > 0.0 }
-                    ?: output3?.let { pickFirstPositive(it, listOf("sll_ruse_psbl_amt", "sl_ruse_frcr_amt", "frcr_sll_amt_smtl")) }
                     ?: 0.0
-                balance + sellReuse
             }
             "JPY" -> {
-                val balance = pickForeignBalanceFromHoldings(output1, currencyCode).takeIf { it > 0.0 }
+                getOverseasOrderableCash(token, currencyCode).takeIf { it > 0.0 }
+                    ?: pickForeignBalanceFromHoldings(output1, currencyCode).takeIf { it > 0.0 }
                     ?: pickForeignBalanceFromOutput2(output2, currencyCode).takeIf { it > 0.0 }
                     ?: output3?.let { pickFirstPositive(it, listOf("frcr_dncl_amt_2", "tot_frcr_cblc_smtl", "frcr_use_psbl_amt", "ord_psbl_frcr_amt", "frcr_drwg_psbl_amt_1")) }
                     ?: 0.0
-                val sellReuse = pickForeignSellReuseFromOutput2(output2, currencyCode).takeIf { it > 0.0 }
-                    ?: output3?.let { pickFirstPositive(it, listOf("sll_ruse_psbl_amt", "sl_ruse_frcr_amt", "frcr_sll_amt_smtl")) }
-                    ?: 0.0
-                balance + sellReuse
             }
             else -> 0.0
         }
@@ -335,8 +344,12 @@ class KisRepository(
         return SingleOverseasBalancePayload(cashBalance = cash, exchangeRate = exchangeRate, holdings = holdings)
     }
 
-    private suspend fun getOverseasOrderableUsd(token: String): Double {
-        val tries = listOf("NASD" to "QQQ", "NYSE" to "KO")
+    private suspend fun getOverseasOrderableCash(token: String, currencyCode: String): Double {
+        val tries = when (currencyCode.uppercase()) {
+            "USD" -> listOf("NASD" to "QQQ", "NYSE" to "KO")
+            "JPY" -> listOf("TKSE" to "7203")
+            else -> emptyList()
+        }
         for ((exchange, item) in tries) {
             val response = getJson(
                 path = "/uapi/overseas-stock/v1/trading/inquire-psamount",
@@ -411,11 +424,12 @@ class KisRepository(
         }.filter { it.date.isNotBlank() && it.symbol.isNotBlank() && it.quantity > 0.0 }
     }
 
-    private suspend fun getOverseasTradeHistory(startDate: String, endDate: String): List<TradeRow> = coroutineScope {
+    private suspend fun getOverseasTradeHistory(startDate: String, endDate: String): List<TradeRow> {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:overseas]")
         val exchanges = listOf("NAS", "NYS", "AMS", "TSE", "TKSE", "HKS", "SHS", "SZS", "HSX", "HNX")
-        exchanges.map { exchange ->
-            async {
+        return buildList {
+            exchanges.forEachIndexed { index, exchange ->
+                if (index > 0) delay(140L)
                 val pages = paginatedJson(
                     path = "/uapi/overseas-stock/v1/trading/inquire-period-trans",
                     trId = "CTOS4001R",
@@ -435,15 +449,17 @@ class KisRepository(
                     fkField = "ctx_area_fk100",
                     nkField = "ctx_area_nk100",
                 )
-                pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) }
+                addAll(pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) })
             }
-        }.awaitAll().flatten()
+        }
     }
 
     private suspend fun getJapanTradeHistoryCcnl(startDate: String, endDate: String): List<TradeRow> {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:japan-ccnl]")
         val exchanges = listOf("TKSE", "TSE")
-        return exchanges.flatMap { exchange ->
+        return buildList {
+            exchanges.forEachIndexed { index, exchange ->
+                if (index > 0) delay(140L)
             val pages = paginatedJson(
                 path = "/uapi/overseas-stock/v1/trading/inquire-ccnl",
                 trId = "TTTS3035R",
@@ -467,7 +483,8 @@ class KisRepository(
                 fkField = "ctx_area_fk200",
                 nkField = "ctx_area_nk200",
             )
-            pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) }
+                addAll(pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) })
+            }
         }
     }
 
@@ -515,7 +532,7 @@ class KisRepository(
         })
     }
 
-    private suspend fun getOverseasRealizedTradeProfit(startDate: String, endDate: String): List<RealizedTradeProfitRow> = coroutineScope {
+    private suspend fun getOverseasRealizedTradeProfit(startDate: String, endDate: String): List<RealizedTradeProfitRow> {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[realized-profit:overseas]")
         val exchanges = listOf(
             "NASD" to "USD",
@@ -526,8 +543,9 @@ class KisRepository(
             "SHAA" to "CNY",
             "HASE" to "VND",
         )
-        dedupeRealizedRows(exchanges.map { (exchange, currency) ->
-            async {
+        return dedupeRealizedRows(buildList {
+            exchanges.forEachIndexed { index, (exchange, currency) ->
+                if (index > 0) delay(140L)
                 val pages = paginatedJson(
                     path = "/uapi/overseas-stock/v1/trading/inquire-period-profit",
                     trId = "TTTS3039R",
@@ -548,7 +566,7 @@ class KisRepository(
                     fkField = "ctx_area_fk200",
                     nkField = "ctx_area_nk200",
                 )
-                pages.flatMap { page ->
+                addAll(pages.flatMap { page ->
                     jsonArray(page, "output1").mapNotNull { element ->
                         val row = element.asJsonObject
                         val tradeDate = string(row, "trad_day")
@@ -571,9 +589,9 @@ class KisRepository(
                             realizedReturnRate = string(row, "pftrt").takeIf { it.isNotBlank() }?.toDoubleOrNull(),
                         )
                     }
-                }
+                })
             }
-        }.awaitAll().flatten())
+        })
     }
 
     private fun buildDashboard(domestic: DomesticBalancePayload, overseas: OverseasBalancePayload): DashboardResponse {
@@ -707,6 +725,7 @@ class KisRepository(
         query: Map<String, String>,
         token: String,
         retryOnTokenError: Boolean = true,
+        retryOnRateLimit: Int = 2,
     ): JsonObject? {
         val urlBuilder = "$BASE_URL$path".toHttpUrlOrNull()?.newBuilder()
             ?: throw IllegalStateException("KIS_INVALID_URL[$trId] path=$path")
@@ -726,6 +745,10 @@ class KisRepository(
         client.newCall(request).execute().use { response ->
             val bodyString = response.body?.string().orEmpty()
             val json = parseObject(bodyString) ?: JsonObject()
+            if (retryOnRateLimit > 0 && isRateLimitError(response.code, json)) {
+                delay((3 - retryOnRateLimit) * 400L + 400L)
+                return getJson(path, trId, query, token, retryOnTokenError, retryOnRateLimit - 1)
+            }
             if (retryOnTokenError && isTokenError(response.code, json)) {
                 val currentToken = authToken?.value
                 val refreshed = if (!currentToken.isNullOrBlank() && currentToken != token) {
@@ -734,7 +757,7 @@ class KisRepository(
                     authToken = null
                     requireToken()
                 } ?: throw IllegalStateException("KIS_TOKEN_REFRESH_FAILED[$trId] path=$path")
-                return getJson(path, trId, query, refreshed, false)
+                return getJson(path, trId, query, refreshed, false, retryOnRateLimit)
             }
             if (!response.isSuccessful) {
                 throw IllegalStateException(
@@ -895,6 +918,11 @@ class KisRepository(
         return msgCode in setOf("EGW00123", "EGW00121") || "token" in msg
     }
 
+    private fun isRateLimitError(code: Int, json: JsonObject): Boolean {
+        val msg = string(json, "msg1")
+        return code >= 429 || msg.contains("초당 거래건수를 초과", ignoreCase = true)
+    }
+
     private fun getOverseasNationCode(exchangeCode: String): String = when (exchangeCode.uppercase()) {
         "NASD", "NYSE", "AMEX", "NAS", "NYS", "AMS" -> "840"
         "TKSE", "TSE", "JPX", "TYO" -> "392"
@@ -921,18 +949,17 @@ class KisRepository(
     }
 
     private fun pickForeignBalanceFromOutput2(rows: List<JsonObject>, currencyCode: String): Double {
-        val usdRows = rows.filter { string(it, "crcy_cd").uppercase() == "USD" }
         val keys = listOf(
             "frcr_dncl_amt_2",
             "tot_frcr_cblc_smtl",
             "frcr_use_psbl_amt",
+            "frcr_drwg_psbl_amt_1",
+            "frcr_drwg_psbl_amt1",
             "frcr_ord_psbl_amt1",
             "frcr_ord_psbl_amt2",
             "frcr_ord_psbl_amt",
             "ord_psbl_frcr_amt",
             "ovrs_ord_psbl_amt",
-            "frcr_drwg_psbl_amt_1",
-            "frcr_drwg_psbl_amt1",
             "ord_psbl_amt",
         )
         keys.forEach { key ->
@@ -1000,6 +1027,13 @@ class KisRepository(
             }
         }.getOrDefault(0.0)
 }
+
+private data class Quadruple<A, B, C, D>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D,
+)
 
 private data class DomesticHoldingRaw(
     val symbol: String,

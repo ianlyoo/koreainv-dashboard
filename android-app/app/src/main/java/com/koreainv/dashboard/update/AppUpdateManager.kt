@@ -13,6 +13,8 @@ import java.io.File
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class ReleaseAsset(
     val name: String,
@@ -41,24 +43,27 @@ class AppUpdateManager {
     }
 
     suspend fun checkForUpdate(context: Context): ReleaseInfo? {
-        val request = Request.Builder()
-            .url(RELEASE_API)
-            .header("Accept", "application/vnd.github+json")
-            .build()
+        return withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(RELEASE_API)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "KoreaInvDashboard-Android")
+                .build()
 
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val body = response.body?.string().orEmpty()
-            val json = JsonParser().parse(body).asJsonObject
-            val tagName = json.get("tag_name")?.asString?.trim().orEmpty()
-            if (!isNewerVersion(tagName, currentVersionName(context))) return null
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body?.string().orEmpty()
+                val json = JsonParser().parse(body).asJsonObject
+                val tagName = json.get("tag_name")?.asString?.trim().orEmpty()
+                if (!isNewerVersion(tagName, currentVersionName(context))) return@withContext null
 
-            val asset = findAndroidAsset(json) ?: return null
-            return ReleaseInfo(
-                tagName = tagName,
-                body = json.get("body")?.asString.orEmpty(),
-                asset = asset,
-            )
+                val asset = findAndroidAsset(json) ?: return@withContext null
+                ReleaseInfo(
+                    tagName = tagName,
+                    body = json.get("body")?.asString.orEmpty(),
+                    asset = asset,
+                )
+            }
         }
     }
 
@@ -67,16 +72,21 @@ class AppUpdateManager {
             return InstallPreparationResult.PermissionRequired
         }
 
-        val updatesDir = File(context.externalCacheDir, "updates").apply { mkdirs() }
-        val apkFile = File(updatesDir, release.asset.name)
-        val request = Request.Builder().url(release.asset.url).build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("download_failed_${response.code}")
-            apkFile.outputStream().use { output ->
-                response.body?.byteStream()?.copyTo(output)
+        return withContext(Dispatchers.IO) {
+            val updatesDir = File(context.externalCacheDir, "updates").apply { mkdirs() }
+            val apkFile = File(updatesDir, release.asset.name)
+            val request = Request.Builder()
+                .url(release.asset.url)
+                .header("User-Agent", "KoreaInvDashboard-Android")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("download_failed_${response.code}")
+                apkFile.outputStream().use { output ->
+                    response.body?.byteStream()?.copyTo(output)
+                }
             }
+            InstallPreparationResult.Ready(apkFile)
         }
-        return InstallPreparationResult.Ready(apkFile)
     }
 
     fun requestInstallPermission(context: Context) {

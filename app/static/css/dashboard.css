@@ -8,7 +8,10 @@
 
             /* Glassmorphism Panels */
             --panel-bg: rgba(22, 24, 32, 0.65);
+            --panel-bg-primary: rgba(28, 31, 41, 0.85);
+            --panel-bg-secondary: rgba(15, 17, 23, 0.5);
             --panel-border: rgba(255, 255, 255, 0.06);
+            --panel-border-primary: rgba(255, 255, 255, 0.12);
             --panel-hover: rgba(30, 33, 43, 0.8);
 
             /* Typography */
@@ -317,7 +320,7 @@
 
         /* Glass Cards */
         .glass-card {
-            background: var(--panel-bg);
+            background: var(--panel-bg-secondary);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
             border: 1px solid var(--panel-border);
@@ -326,12 +329,31 @@
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
         }
 
+        .glass-card.primary {
+            background: var(--panel-bg-primary);
+            border: 1px solid var(--panel-border-primary);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+        }
+
         /* Top Summaries */
         .summary-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 20px;
             animation-delay: 0.2s;
+            position: relative;
+        }
+
+        .summary-grid::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -10%;
+            width: 120%;
+            height: 200%;
+            background: radial-gradient(circle at 50% 50%, rgba(251, 191, 36, 0.04) 0%, transparent 60%);
+            pointer-events: none;
+            z-index: -1;
         }
 
         .summary-card {
@@ -354,12 +376,14 @@
         }
 
         .summary-label {
-            font-size: 14px;
-            font-weight: 500;
+            font-size: 13px;
+            font-weight: 600;
             color: var(--text-sub);
             display: flex;
             align-items: center;
             gap: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .summary-label-spacer {
@@ -367,8 +391,8 @@
         }
 
         .summary-value {
-            font-size: 26px;
-            font-weight: 700;
+            font-size: 28px;
+            font-weight: 800;
             font-variant-numeric: tabular-nums;
             letter-spacing: -0.5px;
             color: #fff;
@@ -459,7 +483,7 @@
         }
 
         .cash-summary-value {
-            color: var(--accent-gold);
+            color: #fff;
         }
 
         .cash-summary-sub {
@@ -728,8 +752,12 @@
             white-space: nowrap;
         }
 
-        tr:hover td {
-            background-color: var(--panel-hover);
+        .holdings-table tbody tr:nth-child(even) {
+            background-color: rgba(255, 255, 255, 0.01);
+        }
+
+        .holdings-table tr:hover td {
+            background-color: rgba(255, 255, 255, 0.04);
         }
 
         /* Indices Widget (Left half of bottom) */

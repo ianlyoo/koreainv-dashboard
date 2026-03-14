@@ -5,34 +5,26 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,18 +35,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.KisRepository
 import com.koreainv.dashboard.network.Trade
 import com.koreainv.dashboard.network.TradeHistoryResponse
 import com.koreainv.dashboard.ui.theme.Background
+import com.koreainv.dashboard.ui.theme.Error
 import com.koreainv.dashboard.ui.theme.Success
 import com.koreainv.dashboard.ui.theme.SurfaceBorder
 import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
@@ -64,13 +55,14 @@ import com.koreainv.dashboard.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
-import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TradeHistoryScreen(
     repository: KisRepository,
-    onBackClick: () -> Unit,
+    onCheckUpdatesClick: () -> Unit,
+    onLogoutClick: () -> Unit,
+    onTradeClick: (Trade, Double, String?) -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
 
@@ -79,16 +71,27 @@ fun TradeHistoryScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var tradeFilter by remember { mutableStateOf("all") }
     var selectedRange by remember { mutableStateOf("this_month") }
+    var selectedRangeLabel by remember { mutableStateOf(rangeLabel("this_month")) }
     var rangeExpanded by remember { mutableStateOf(false) }
     var filterExpanded by remember { mutableStateOf(false) }
     var currencyMode by remember { mutableStateOf(CurrencyDisplayMode.KRW) }
 
     fun loadTradeHistory(range: String = selectedRange, forceRefresh: Boolean = false) {
+        val resolvedLabel = rangeLabel(range)
+        val rangeChanged = range != selectedRange
+        selectedRange = range
+        selectedRangeLabel = resolvedLabel
         isLoading = true
         errorMessage = null
+        if (rangeChanged) {
+            tradeData = null
+        }
         coroutineScope.launch {
             runCatching { repository.fetchTradeHistory(range = range, forceRefresh = forceRefresh) }
-                .onSuccess { tradeData = it }
+                .onSuccess {
+                    tradeData = it
+                    selectedRangeLabel = it.period.label.ifBlank { resolvedLabel }
+                }
                 .onFailure {
                     val detail = it.message?.takeIf(String::isNotBlank) ?: it::class.simpleName ?: "unknown"
                     errorMessage = "거래내역을 불러오지 못했습니다. [$detail]"
@@ -98,62 +101,38 @@ fun TradeHistoryScreen(
     }
 
     LaunchedEffect(Unit) {
-        val cached = repository.peekTradeHistory(selectedRange)
-        if (cached != null) {
-            tradeData = cached
-            isLoading = false
-        } else {
-            loadTradeHistory()
-        }
+        loadTradeHistory(range = selectedRange)
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    InlineTitleWithSync(
-                        title = stringResource(R.string.trade_history_title),
-                        lastSynced = tradeData?.lastSynced,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = TextGold,
-                ),
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.back), tint = Color.White)
-                    }
-                },
+            DashboardTopBar(
+                title = stringResource(R.string.trade_history_title),
+                lastSynced = tradeData?.lastSynced,
                 actions = {
                     CompactCurrencyToggle(
                         mode = currencyMode,
                         onModeChange = { currencyMode = it },
                     )
                     if (isLoading && tradeData != null) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .padding(start = 10.dp, end = 16.dp)
-                                .size(20.dp),
-                            color = TextGold,
-                            strokeWidth = 2.dp,
-                        )
+                        HeaderLoadingIndicator()
                     } else {
-                        IconButton(onClick = { loadTradeHistory(range = selectedRange, forceRefresh = true) }) {
-                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.refresh), tint = Color.White)
-                        }
+                        HeaderIconButton(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.refresh),
+                            onClick = { loadTradeHistory(range = selectedRange, forceRefresh = true) },
+                        )
                     }
+                    DashboardUtilityMenu(
+                        onCheckUpdates = onCheckUpdatesClick,
+                        onLogout = onLogoutClick,
+                    )
                 },
             )
         },
-        containerColor = Color.Transparent,
+        containerColor = Background,
     ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Background)
-                .padding(paddingValues),
-        ) {
+        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
                 isLoading && tradeData == null -> {
                     CircularProgressIndicator(
@@ -164,115 +143,128 @@ fun TradeHistoryScreen(
 
                 errorMessage != null && tradeData == null -> {
                     Column(
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         Text(
                             text = errorMessage.orEmpty(),
                             color = MaterialTheme.colorScheme.error,
                             textAlign = TextAlign.Center,
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
+                        DashboardPillButton(
+                            label = stringResource(R.string.retry),
                             onClick = { loadTradeHistory() },
-                            colors = ButtonDefaults.buttonColors(containerColor = TextGold),
-                        ) {
-                            Text(stringResource(R.string.retry), color = Color.Black)
-                        }
+                            tone = AccentTone.Accent,
+                        )
                     }
                 }
 
                 tradeData != null -> {
                     val data = tradeData!!
+                    val filterTone = when (tradeFilter) {
+                        "buy" -> AccentTone.Positive
+                        "sell" -> AccentTone.Negative
+                        else -> AccentTone.Neutral
+                    }
                     val filteredTrades = data.trades.filter { trade ->
                         tradeFilter == "all" ||
                             (tradeFilter == "buy" && trade.side == stringResource(R.string.buy)) ||
                             (tradeFilter == "sell" && trade.side == stringResource(R.string.sell))
                     }
+
                     LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 132.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         item {
-                            TradeSummaryCard(data, currencyMode)
+                            TradeSummaryCard(
+                                data = data,
+                                currencyMode = currencyMode,
+                                selectedRangeLabel = selectedRangeLabel,
+                            )
                         }
 
                         item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp, bottom = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box {
-                                    TextButton(onClick = { rangeExpanded = true }) {
-                                        Text(
-                                            text = stringResource(R.string.trade_list_title, rangeLabel(selectedRange)),
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White.copy(alpha = 0.8f),
-                                            letterSpacing = 1.sp,
-                                        )
-                                        Icon(
-                                            imageVector = Icons.Default.ArrowDropDown,
-                                            contentDescription = stringResource(R.string.trade_period),
-                                            tint = Color.White.copy(alpha = 0.8f),
-                                        )
-                                    }
-                                    DropdownMenu(expanded = rangeExpanded, onDismissRequest = { rangeExpanded = false }) {
-                                        tradeRangeOptions().forEach { option ->
-                                            DropdownMenuItem(
-                                                text = { Text(option.second) },
-                                                onClick = {
-                                                    rangeExpanded = false
-                                                    selectedRange = option.first
-                                                    val cachedRange = repository.peekTradeHistory(option.first)
-                                                    if (cachedRange != null) {
-                                                        tradeData = cachedRange
-                                                        isLoading = false
-                                                    } else {
-                                                        loadTradeHistory(range = option.first)
-                                                    }
-                                                },
+                            SectionHeader(
+                                title = "",
+                                modifier = Modifier.padding(top = 8.dp),
+                                titleContent = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        SectionTitle(title = stringResource(R.string.trade_list))
+                                        Box {
+                                            DashboardPillButton(
+                                                label = selectedRangeLabel,
+                                                onClick = { rangeExpanded = true },
+                                                trailingIcon = Icons.Default.ArrowDropDown,
                                             )
+                                            DropdownMenu(
+                                                expanded = rangeExpanded,
+                                                onDismissRequest = { rangeExpanded = false },
+                                                modifier = Modifier
+                                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                                                    .background(SurfaceGlassLight)
+                                                    .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
+                                            ) {
+                                                tradeRangeOptions().forEach { option ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(option.second, color = TextPrimary) },
+                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                        onClick = {
+                                                            rangeExpanded = false
+                                                            loadTradeHistory(range = option.first)
+                                                        },
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                                Box {
-                                    TextButton(onClick = { filterExpanded = true }) {
-                                        Text(
-                                            text = when (tradeFilter) {
+                                },
+                                action = {
+                                    Box {
+                                        DashboardPillButton(
+                                            label = when (tradeFilter) {
                                                 "buy" -> stringResource(R.string.buy)
                                                 "sell" -> stringResource(R.string.sell)
                                                 else -> stringResource(R.string.all)
                                             },
-                                            color = TextGold,
+                                            onClick = { filterExpanded = true },
+                                            trailingIcon = Icons.Default.ArrowDropDown,
+                                            tone = filterTone,
                                         )
-                                        Icon(
-                                            imageVector = Icons.Default.ArrowDropDown,
-                                            contentDescription = stringResource(R.string.trade_filter),
-                                            tint = TextGold,
-                                        )
+                                        DropdownMenu(
+                                            expanded = filterExpanded,
+                                            onDismissRequest = { filterExpanded = false },
+                                            modifier = Modifier
+                                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                                                .background(SurfaceGlassLight)
+                                                .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.all), color = TextPrimary) },
+                                                colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                onClick = { tradeFilter = "all"; filterExpanded = false },
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.buy), color = TextPrimary) },
+                                                colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                onClick = { tradeFilter = "buy"; filterExpanded = false },
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.sell), color = TextPrimary) },
+                                                colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                onClick = { tradeFilter = "sell"; filterExpanded = false },
+                                            )
+                                        }
                                     }
-                                    DropdownMenu(expanded = filterExpanded, onDismissRequest = { filterExpanded = false }) {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.all)) },
-                                            onClick = { tradeFilter = "all"; filterExpanded = false },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.buy)) },
-                                            onClick = { tradeFilter = "buy"; filterExpanded = false },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.sell)) },
-                                            onClick = { tradeFilter = "sell"; filterExpanded = false },
-                                        )
-                                    }
-                                }
-                            }
+                                },
+                            )
                         }
 
                         if (filteredTrades.isEmpty()) {
@@ -280,21 +272,22 @@ fun TradeHistoryScreen(
                                 Text(
                                     text = stringResource(R.string.no_trades_found),
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = Color.White.copy(alpha = 0.5f),
+                                    color = TextSecondary,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 32.dp),
+                                        .padding(vertical = 24.dp),
                                     textAlign = TextAlign.Center,
                                 )
                             }
                         } else {
                             items(filteredTrades) { trade ->
-                                TradeItemCard(trade = trade, currencyMode = currencyMode, usdRate = data.usdExchangeRate)
+                                TradeItemCard(
+                                    trade = trade,
+                                    currencyMode = currencyMode,
+                                    usdRate = data.usdExchangeRate,
+                                    onClick = { onTradeClick(trade, data.usdExchangeRate, data.lastSynced) },
+                                )
                             }
-                        }
-
-                        item {
-                            Spacer(modifier = Modifier.height(32.dp))
                         }
                     }
                 }
@@ -304,78 +297,110 @@ fun TradeHistoryScreen(
 }
 
 @Composable
-fun TradeSummaryCard(data: TradeHistoryResponse, currencyMode: CurrencyDisplayMode) {
-    val isPositive = data.summary.totalRealizedProfitKrw >= 0
+fun TradeSummaryCard(
+    data: TradeHistoryResponse,
+    currencyMode: CurrencyDisplayMode,
+    selectedRangeLabel: String,
+) {
     val profitColor = when {
         data.summary.totalRealizedProfitKrw > 0 -> Success
-        data.summary.totalRealizedProfitKrw < 0 -> MaterialTheme.colorScheme.error
+        data.summary.totalRealizedProfitKrw < 0 -> Error
         else -> TextPrimary
     }
 
-    PremiumCard {
-        Column {
+    HeroTopSection {
+        SurfaceBadge(
+            label = stringResource(R.string.trade_history_title),
+            tone = AccentTone.Info,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = stringResource(R.string.realized_profit),
                 style = MaterialTheme.typography.labelMedium,
                 color = TextSecondary,
-                letterSpacing = 1.sp,
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = formatCurrencyAmount(data.summary.totalRealizedProfitKrw, currencyMode, data.usdExchangeRate, signed = true),
-                style = MaterialTheme.typography.displayMedium,
+            HeroHeadlineValue(
+                value = formatCurrencyAmount(
+                    data.summary.totalRealizedProfitKrw,
+                    currencyMode,
+                    data.usdExchangeRate,
+                    signed = true,
+                ),
                 color = profitColor,
             )
-            Spacer(modifier = Modifier.height(24.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column {
-                    Text(
-                        text = stringResource(R.string.domestic),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TextSecondary,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = formatCurrencyAmount(data.summary.domesticRealizedProfitKrw, currencyMode, data.usdExchangeRate, signed = true),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (data.summary.domesticRealizedProfitKrw > 0) Success else if (data.summary.domesticRealizedProfitKrw < 0) MaterialTheme.colorScheme.error else TextPrimary,
-                    )
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = stringResource(R.string.overseas),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TextSecondary,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = formatCurrencyAmount(data.summary.overseasRealizedProfitKrw, currencyMode, data.usdExchangeRate, signed = true),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (data.summary.overseasRealizedProfitKrw > 0) Success else if (data.summary.overseasRealizedProfitKrw < 0) MaterialTheme.colorScheme.error else TextPrimary,
-                    )
-                }
-            }
+            Text(
+                text = selectedRangeLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+            )
+        }
+        HeroMetricGroup {
+            HeroMetricRow(
+                primaryLabel = stringResource(R.string.domestic),
+                primaryValue = formatCurrencyAmount(
+                    data.summary.domesticRealizedProfitKrw,
+                    currencyMode,
+                    data.usdExchangeRate,
+                    signed = true,
+                ),
+                primaryValueColor = profitColorForAmount(data.summary.domesticRealizedProfitKrw),
+                secondaryLabel = stringResource(R.string.overseas),
+                secondaryValue = formatCurrencyAmount(
+                    data.summary.overseasRealizedProfitKrw,
+                    currencyMode,
+                    data.usdExchangeRate,
+                    signed = true,
+                ),
+                secondaryValueColor = profitColorForAmount(data.summary.overseasRealizedProfitKrw),
+            )
         }
     }
 }
 
 @Composable
-fun TradeItemCard(trade: Trade, currencyMode: CurrencyDisplayMode, usdRate: Double) {
-    val isBuy = trade.side == "매수"
-    val typeColor = if (isBuy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+fun TradeItemCard(
+    trade: Trade,
+    currencyMode: CurrencyDisplayMode,
+    usdRate: Double,
+    onClick: () -> Unit,
+) {
+    val isBuy = trade.side == stringResource(R.string.buy)
+    val sideTone = if (isBuy) AccentTone.Positive else AccentTone.Negative
+    val sideColor = if (isBuy) Success else Error
 
-    PremiumListItem {
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    PremiumListItem(onClick = onClick) {
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(modifier = Modifier.padding(top = 2.dp)) {
+                    SurfaceBadge(label = trade.side, tone = sideTone)
+                }
                 Text(
-                    text = trade.side,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = typeColor,
-                    modifier = Modifier.padding(end = 8.dp),
+                    text = trade.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.share_quantity_price,
+                        formatWholeNumber(trade.quantity),
+                        formatTradeUnitPrice(trade, currencyMode, usdRate),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
                 )
                 Text(
                     text = trade.date,
@@ -383,43 +408,46 @@ fun TradeItemCard(trade: Trade, currencyMode: CurrencyDisplayMode, usdRate: Doub
                     color = TextSecondary,
                 )
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = trade.name,
-                style = MaterialTheme.typography.titleMedium,
-                color = TextPrimary,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(
-                    R.string.share_quantity_price,
-                    formatWholeNumber(trade.quantity),
-                    formatTradeUnitPrice(trade, currencyMode, usdRate),
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-                color = TextSecondary,
-            )
         }
 
-        Column(horizontalAlignment = Alignment.End) {
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(
+            modifier = Modifier.width(116.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Text(
                 text = formatTradeAmount(trade, currencyMode, usdRate),
                 style = MaterialTheme.typography.titleMedium,
                 color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End,
             )
             if (trade.realizedProfitKrw != null && !isBuy) {
-                Spacer(modifier = Modifier.height(6.dp))
-                val isProfitPositive = trade.realizedProfitKrw >= 0
-                val profitColor = if (isProfitPositive) Success else MaterialTheme.colorScheme.error
                 Text(
                     text = formatCurrencyAmount(trade.realizedProfitKrw, currencyMode, usdRate, signed = true),
                     style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = profitColor,
+                    color = if (trade.realizedProfitKrw >= 0) Success else Error,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.End,
+                )
+            } else {
+                Text(
+                    text = trade.market,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = sideColor,
+                    textAlign = TextAlign.End,
                 )
             }
         }
     }
+}
+
+private fun profitColorForAmount(amount: Double) = when {
+    amount > 0 -> Success
+    amount < 0 -> Error
+    else -> TextPrimary
 }
 
 private fun formatTradeAmount(trade: Trade, currencyMode: CurrencyDisplayMode, usdRate: Double): String {
