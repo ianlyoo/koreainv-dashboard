@@ -744,7 +744,7 @@ private fun heroMetricValueTextSpec(value: String, maxWidth: androidx.compose.ui
     val availablePx = with(density) { maxWidth.toPx() }
     val chosen = styles.firstOrNull { style ->
         val fontPx = with(density) { style.fontSize.toPx() }
-        (value.length * fontPx * 0.62f) <= availablePx
+        (value.length * fontPx * 0.52f) <= availablePx
     }
     return if (chosen != null) {
         MetricTextSpec(style = chosen, maxLines = 1, softWrap = false)

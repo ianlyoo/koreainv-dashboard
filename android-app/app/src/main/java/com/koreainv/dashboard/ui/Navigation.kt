@@ -47,6 +47,7 @@ import com.koreainv.dashboard.update.AppUpdateManager
 import com.koreainv.dashboard.update.InstallPreparationResult
 import com.koreainv.dashboard.update.ReleaseInfo
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 sealed class Screen(val route: String) {
@@ -88,11 +89,15 @@ fun KoreaInvApp() {
     )
     val primaryRoutes = remember(primaryTabs) { primaryTabs.map { it.route }.toSet() }
 
-    LaunchedEffect(unlockedCredentials, hasAutoCheckedUpdate) {
-        if (unlockedCredentials != null && !hasAutoCheckedUpdate) {
+    LaunchedEffect(unlockedCredentials, hasAutoCheckedUpdate, currentRoute) {
+        if (unlockedCredentials != null && !hasAutoCheckedUpdate && currentRoute in primaryRoutes) {
             hasAutoCheckedUpdate = true
+            delay(900L)
             availableUpdate = try {
-                updateManager.checkForUpdate(context)
+                updateManager.checkForUpdate(context) ?: run {
+                    delay(1200L)
+                    updateManager.checkForUpdate(context)
+                }
             } catch (_: Exception) {
                 null
             }
