@@ -410,6 +410,8 @@ fun SectionTitle(
         style = MaterialTheme.typography.titleLarge,
         color = TextPrimary,
         modifier = modifier,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 
@@ -675,6 +677,8 @@ fun SurfaceBadge(
             color = palette.content,
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.6.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
