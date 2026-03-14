@@ -349,6 +349,7 @@ fun TradeSummaryCard(
                     signed = true,
                 ),
                 secondaryValueColor = profitColorForAmount(data.summary.overseasRealizedProfitKrw),
+                syncValueSizing = true,
             )
         }
     }

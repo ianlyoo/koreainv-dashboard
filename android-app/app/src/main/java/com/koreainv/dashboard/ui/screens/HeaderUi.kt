@@ -277,31 +277,42 @@ fun HeroMetricRow(
     secondaryValue: String? = null,
     primaryValueColor: Color = TextPrimary,
     secondaryValueColor: Color = TextPrimary,
+    syncValueSizing: Boolean = false,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        HeroMetricCell(
-            label = primaryLabel,
-            value = primaryValue,
-            valueColor = primaryValueColor,
-            modifier = Modifier.weight(1f),
-        )
-        if (secondaryLabel != null && secondaryValue != null) {
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(42.dp)
-                    .background(SurfaceBorder.copy(alpha = 0.85f)),
-            )
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val sharedSpec = if (syncValueSizing && secondaryLabel != null && secondaryValue != null) {
+            heroMetricSharedTextSpec(primaryValue, secondaryValue, maxWidth)
+        } else {
+            null
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
             HeroMetricCell(
-                label = secondaryLabel,
-                value = secondaryValue,
-                valueColor = secondaryValueColor,
+                label = primaryLabel,
+                value = primaryValue,
+                valueColor = primaryValueColor,
                 modifier = Modifier.weight(1f),
+                forcedSpec = sharedSpec,
             )
+            if (secondaryLabel != null && secondaryValue != null) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(42.dp)
+                        .background(SurfaceBorder.copy(alpha = 0.85f)),
+                )
+                HeroMetricCell(
+                    label = secondaryLabel,
+                    value = secondaryValue,
+                    valueColor = secondaryValueColor,
+                    modifier = Modifier.weight(1f),
+                    forcedSpec = sharedSpec,
+                )
+            }
         }
     }
 }
@@ -704,6 +715,7 @@ private fun HeroMetricCell(
     value: String,
     valueColor: Color,
     modifier: Modifier = Modifier,
+    forcedSpec: MetricTextSpec? = null,
 ) {
     Column(
         modifier = modifier,
@@ -715,7 +727,7 @@ private fun HeroMetricCell(
             color = TextSecondary,
         )
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val metricSpec = heroMetricValueTextSpec(value, maxWidth)
+            val metricSpec = forcedSpec ?: heroMetricValueTextSpec(value, maxWidth)
             Text(
                 text = value,
                 style = metricSpec.style,
@@ -755,6 +767,30 @@ private fun heroMetricValueTextSpec(value: String, maxWidth: androidx.compose.ui
             softWrap = true,
         )
     }
+}
+
+@Composable
+private fun heroMetricSharedTextSpec(
+    primaryValue: String,
+    secondaryValue: String,
+    rowWidth: androidx.compose.ui.unit.Dp,
+): MetricTextSpec {
+    val cellWidth = (rowWidth - 24.dp) / 2
+    val primarySpec = heroMetricValueTextSpec(primaryValue, cellWidth)
+    val secondarySpec = heroMetricValueTextSpec(secondaryValue, cellWidth)
+    val orderedStyles = listOf(
+        MaterialTheme.typography.titleLarge,
+        MaterialTheme.typography.titleMedium,
+        MaterialTheme.typography.titleSmall,
+        MaterialTheme.typography.bodyLarge,
+        MaterialTheme.typography.bodyMedium,
+        MaterialTheme.typography.bodySmall,
+        MaterialTheme.typography.labelLarge,
+    )
+    fun indexOf(style: TextStyle): Int = orderedStyles.indexOfFirst {
+        it.fontSize == style.fontSize && it.lineHeight == style.lineHeight
+    }.let { if (it == -1) orderedStyles.lastIndex else it }
+    return if (indexOf(primarySpec.style) >= indexOf(secondarySpec.style)) primarySpec else secondarySpec
 }
 
 private data class MetricTextSpec(
