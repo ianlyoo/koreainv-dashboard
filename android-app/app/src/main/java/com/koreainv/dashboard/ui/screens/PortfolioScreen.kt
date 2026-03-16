@@ -1,5 +1,6 @@
 package com.koreainv.dashboard.ui.screens
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +49,8 @@ import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.DashboardResponse
 import com.koreainv.dashboard.network.Holding
 import com.koreainv.dashboard.network.KisRepository
+import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_INTERVAL_MILLIS
+import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_WINDOW_MILLIS
 import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.Error
 import com.koreainv.dashboard.ui.theme.MarketJapanBg
@@ -62,6 +65,7 @@ import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,6 +106,19 @@ fun PortfolioScreen(
             isLoading = false
         } else {
             loadDashboard()
+        }
+    }
+
+    LaunchedEffect(dashboardData?.usMarketStatus?.session) {
+        val current = dashboardData ?: return@LaunchedEffect
+        if (current.usMarketStatus.session != "day_market") return@LaunchedEffect
+
+        val startedAt = SystemClock.elapsedRealtime()
+        while (SystemClock.elapsedRealtime() - startedAt < US_DAY_MARKET_REFRESH_WINDOW_MILLIS) {
+            val refreshed = runCatching { repository.refreshDashboardQuotes() }.getOrNull() ?: break
+            dashboardData = refreshed
+            if (refreshed.usMarketStatus.session != "day_market") break
+            delay(US_DAY_MARKET_REFRESH_INTERVAL_MILLIS)
         }
     }
 
@@ -326,13 +343,18 @@ fun HoldingItem(
                 )
                 Text(
                     text = holding.name,
+                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (holding.market == "USA" && holding.quoteSession == "day_market" && holding.quoteStale) {
+                    SurfaceBadge(label = "종가", tone = AccentTone.Neutral)
+                }
             }
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -340,11 +362,16 @@ fun HoldingItem(
                     text = holding.symbol,
                     style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = stringResource(R.string.share_count, formatWholeNumber(holding.quantity)),
+                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -358,10 +385,14 @@ fun HoldingItem(
         ) {
             Text(
                 text = formatCurrencyAmount(holding.totalValueKrw, currencyMode, usdRate),
+                modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.titleMedium,
                 color = TextPrimary,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.End,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = formatSignedPercent(holding.profitLossRate),

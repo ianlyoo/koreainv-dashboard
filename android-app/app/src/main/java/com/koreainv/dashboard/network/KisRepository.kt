@@ -56,12 +56,16 @@ class KisRepository(
 
     private val tokenMutex = Mutex()
     private val dashboardCacheMutex = Mutex()
+    private val dashboardLoadMutex = Mutex()
+    private val quoteRefreshMutex = Mutex()
     private val tradeHistoryCacheMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
     private var authToken: AuthToken? = null
+    private var cachedBaseDashboard: Pair<Long, DashboardResponse>? = null
     private var cachedDashboard: Pair<Long, DashboardResponse>? = null
     private var cachedTradeHistory: MutableMap<String, Pair<Long, TradeHistoryResponse>> = mutableMapOf()
     private var lastKnownUsdRate: Double = 1350.0
+    private val usQuoteService = KisUsQuoteService(credentials, client)
 
     fun peekDashboard(): DashboardResponse? = cachedDashboard?.second
     fun peekTradeHistory(range: String = "this_month"): TradeHistoryResponse? {
@@ -71,20 +75,46 @@ class KisRepository(
     }
 
     suspend fun fetchDashboard(forceRefresh: Boolean = false): DashboardResponse = withContext(Dispatchers.IO) {
-        if (!forceRefresh) {
-            dashboardCacheMutex.withLock {
-                cachedDashboard?.takeIf { System.currentTimeMillis() - it.first <= DASHBOARD_CACHE_TTL_MILLIS }?.let {
-                    return@withContext it.second
+        dashboardLoadMutex.withLock {
+            if (!forceRefresh) {
+                val cachedBase = dashboardCacheMutex.withLock {
+                    cachedBaseDashboard?.takeIf { System.currentTimeMillis() - it.first <= DASHBOARD_CACHE_TTL_MILLIS }?.second
+                }
+                if (cachedBase != null) {
+                    val refreshed = refreshDashboardFromBase(cachedBase, forceRetry = false)
+                    dashboardCacheMutex.withLock {
+                        cachedDashboard = System.currentTimeMillis() to refreshed
+                    }
+                    return@withLock refreshed
                 }
             }
-        }
-        val domestic = getDomesticBalance()
-        val overseas = getOverseasBalance()
-        buildDashboard(domestic, overseas).also { built ->
+
+            val domestic = getDomesticBalance()
+            val overseas = getOverseasBalance()
+            val baseDashboard = buildDashboard(domestic, overseas)
+            val refreshed = refreshDashboardFromBase(baseDashboard, forceRetry = forceRefresh)
+            val cachedAt = System.currentTimeMillis()
             dashboardCacheMutex.withLock {
-                cachedDashboard = System.currentTimeMillis() to built
+                cachedBaseDashboard = cachedAt to baseDashboard
+                cachedDashboard = cachedAt to refreshed
             }
+            refreshed
         }
+    }
+
+    suspend fun refreshDashboardQuotes(): DashboardResponse? = withContext(Dispatchers.IO) {
+        quoteRefreshMutex.withLock {
+            val baseDashboard = dashboardCacheMutex.withLock { cachedBaseDashboard?.second } ?: return@withLock null
+            val refreshed = refreshDashboardFromBase(baseDashboard, forceRetry = false)
+            dashboardCacheMutex.withLock {
+                cachedDashboard = System.currentTimeMillis() to refreshed
+            }
+            refreshed
+        }
+    }
+
+    fun close() {
+        usQuoteService.close()
     }
 
     suspend fun fetchTradeHistory(range: String = "this_month", forceRefresh: Boolean = false): TradeHistoryResponse = withContext(Dispatchers.IO) {
@@ -609,6 +639,7 @@ class KisRepository(
                     profitLossKrw = holding.quantity * (holding.currentPrice - holding.averageCost),
                     profitLossRate = if (holding.averageCost > 0.0) ((holding.currentPrice - holding.averageCost) / holding.averageCost) * 100.0 else 0.0,
                     currency = "KRW",
+                    exchangeRate = 1.0,
                 )
             })
             addAll(overseas.usHoldings.map { holding -> overseasHoldingToUi(holding, "USD") })
@@ -645,6 +676,7 @@ class KisRepository(
             ),
             holdings = allHoldings,
             assetDistribution = buildAssetDistribution(allHoldings),
+            usMarketStatus = UsMarketStatus(),
         )
     }
 
@@ -665,6 +697,39 @@ class KisRepository(
             profitLossKrw = profitLoss,
             profitLossRate = if (costValue > 0.0) profitLoss / costValue * 100.0 else 0.0,
             currency = currency,
+            exchangeRate = holding.exchangeRate,
+            exchangeCode = holding.exchangeCode,
+        )
+    }
+
+    private suspend fun refreshDashboardFromBase(
+        baseDashboard: DashboardResponse,
+        forceRetry: Boolean,
+    ): DashboardResponse {
+        val usHoldings = baseDashboard.holdings.filter { it.market == "USA" }
+        usQuoteService.syncHoldings(usHoldings, forceRetry = forceRetry)
+
+        val enrichedUsHoldings = usQuoteService.enrichHoldings(usHoldings).associateBy { it.symbol }
+        val mergedHoldings = baseDashboard.holdings.map { holding ->
+            if (holding.market == "USA") enrichedUsHoldings[holding.symbol] ?: holding else holding
+        }.sortedByDescending { it.totalValueKrw }
+
+        val totalCashKrw = baseDashboard.summary.totalCashKrw
+        val totalAssets = mergedHoldings.sumOf { it.totalValueKrw } + totalCashKrw
+        val totalPurchase = mergedHoldings.sumOf { it.totalCostKrw }
+        val totalProfit = mergedHoldings.sumOf { it.profitLossKrw }
+
+        return baseDashboard.copy(
+            summary = baseDashboard.summary.copy(
+                totalAssetsKrw = totalAssets,
+                totalPurchaseKrw = totalPurchase,
+                totalProfitKrw = totalProfit,
+                totalProfitRate = if (totalPurchase > 0.0) totalProfit / totalPurchase * 100.0 else 0.0,
+                lastSynced = OffsetDateTime.now(ZoneOffset.ofHours(9)).format(ISO_FORMAT),
+            ),
+            holdings = mergedHoldings,
+            assetDistribution = buildAssetDistribution(mergedHoldings),
+            usMarketStatus = usQuoteService.getMarketStatus(mergedHoldings.filter { it.market == "USA" }),
         )
     }
 

@@ -25,6 +25,7 @@ data class DashboardResponse(
     val summary: DashboardSummary,
     val holdings: List<Holding>,
     val assetDistribution: List<AssetDistribution>,
+    val usMarketStatus: UsMarketStatus = UsMarketStatus(),
 )
 
 data class DashboardSummary(
@@ -54,6 +55,23 @@ data class Holding(
     val profitLossKrw: Double,
     val profitLossRate: Double,
     val currency: String,
+    val exchangeRate: Double = 0.0,
+    val exchangeCode: String? = null,
+    val quoteSession: String? = null,
+    val quoteSource: String? = null,
+    val quoteStale: Boolean = false,
+    val quoteTimestamp: String? = null,
+    val quoteTrKey: String? = null,
+)
+
+data class UsMarketStatus(
+    val session: String = "closed",
+    val isOpen: Boolean = false,
+    val usesDayPrefix: Boolean = false,
+    val sourceState: String = "idle",
+    val trackedCount: Int = 0,
+    val freshCount: Int = 0,
+    val fallbackCount: Int = 0,
 )
 
 data class AssetDistribution(

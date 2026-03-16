@@ -1,5 +1,6 @@
 package com.koreainv.dashboard.ui.screens
 
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,14 +32,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
+import com.koreainv.dashboard.network.DashboardResponse
 import com.koreainv.dashboard.network.Holding
 import com.koreainv.dashboard.network.KisRepository
+import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_INTERVAL_MILLIS
+import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_WINDOW_MILLIS
 import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.Error
 import com.koreainv.dashboard.ui.theme.Success
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
@@ -58,17 +63,21 @@ fun HoldingDetailScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var currencyMode by remember { mutableStateOf(CurrencyDisplayMode.KRW) }
 
+    fun applyDashboard(dashboard: DashboardResponse) {
+        usdRate = dashboard.summary.usdExchangeRate
+        holding = dashboard.holdings.find { it.symbol == symbol }
+        if (holding == null) {
+            errorMessage = "종목 정보를 찾을 수 없습니다. [$symbol]"
+        }
+    }
+
     fun loadHolding(forceRefresh: Boolean = false) {
         isLoading = true
         errorMessage = null
         scope.launch {
             runCatching { repository.fetchDashboard(forceRefresh = forceRefresh) }
                 .onSuccess { dashboard ->
-                    usdRate = dashboard.summary.usdExchangeRate
-                    holding = dashboard.holdings.find { it.symbol == symbol }
-                    if (holding == null) {
-                        errorMessage = "종목 정보를 찾을 수 없습니다. [$symbol]"
-                    }
+                    applyDashboard(dashboard)
                 }
                 .onFailure {
                     val detail = it.message?.takeIf(String::isNotBlank) ?: it::class.simpleName ?: "unknown"
@@ -81,14 +90,27 @@ fun HoldingDetailScreen(
     LaunchedEffect(symbol) {
         val cached = repository.peekDashboard()
         if (cached != null) {
-            usdRate = cached.summary.usdExchangeRate
-            holding = cached.holdings.find { it.symbol == symbol }
+            applyDashboard(cached)
             isLoading = false
             if (holding == null) {
                 loadHolding()
             }
         } else {
             loadHolding()
+        }
+    }
+
+    LaunchedEffect(symbol, holding?.quoteSession) {
+        val current = holding ?: return@LaunchedEffect
+        if (current.market != "USA" || current.quoteSession != "day_market") return@LaunchedEffect
+
+        val startedAt = SystemClock.elapsedRealtime()
+        while (SystemClock.elapsedRealtime() - startedAt < US_DAY_MARKET_REFRESH_WINDOW_MILLIS) {
+            val refreshed = runCatching { repository.refreshDashboardQuotes() }.getOrNull() ?: break
+            applyDashboard(refreshed)
+            val updated = holding ?: break
+            if (updated.quoteSession != "day_market") break
+            delay(US_DAY_MARKET_REFRESH_INTERVAL_MILLIS)
         }
     }
 
@@ -165,7 +187,12 @@ fun HoldingDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         HeroTopSection {
-                            SurfaceBadge(label = data.market, tone = AccentTone.Info)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                SurfaceBadge(label = data.market, tone = AccentTone.Info)
+                                if (data.market == "USA" && data.quoteSession == "day_market" && data.quoteStale) {
+                                    SurfaceBadge(label = "종가", tone = AccentTone.Neutral)
+                                }
+                            }
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(
                                     text = data.name,
