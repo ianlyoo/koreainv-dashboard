@@ -1,5 +1,7 @@
 package com.koreainv.dashboard.ui
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +44,7 @@ import com.koreainv.dashboard.ui.screens.PortfolioScreen
 import com.koreainv.dashboard.ui.screens.SetupScreen
 import com.koreainv.dashboard.ui.screens.TradeDetailScreen
 import com.koreainv.dashboard.ui.screens.TradeHistoryScreen
+import com.koreainv.dashboard.ui.screens.TradeHistorySessionState
 import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.update.AppUpdateManager
@@ -82,6 +85,7 @@ fun KoreaInvApp() {
     var selectedTrade by remember { mutableStateOf<Trade?>(null) }
     var selectedTradeUsdRate by remember { mutableStateOf(1350.0) }
     var selectedTradeLastSynced by remember { mutableStateOf<String?>(null) }
+    var tradeHistorySessionState by remember { mutableStateOf(TradeHistorySessionState()) }
     val repository = remember(unlockedCredentials) { unlockedCredentials?.let { KisRepository(it) } }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -146,6 +150,7 @@ fun KoreaInvApp() {
             selectedTrade = null
             selectedTradeUsdRate = 1350.0
             selectedTradeLastSynced = null
+            tradeHistorySessionState = TradeHistorySessionState()
             navController.navigate(Screen.Unlock.route) {
                 popUpTo(Screen.Portfolio.route) { inclusive = true }
                 launchSingleTop = true
@@ -162,7 +167,14 @@ fun KoreaInvApp() {
             modifier = Modifier
                 .fillMaxSize(),
         ) {
-            NavHost(navController = navController, startDestination = Screen.Splash.route) {
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Splash.route,
+                enterTransition = { EnterTransition.None },
+                exitTransition = { ExitTransition.None },
+                popEnterTransition = { EnterTransition.None },
+                popExitTransition = { ExitTransition.None },
+            ) {
                 composable(Screen.Splash.route) {
                     var isChecking by remember { mutableStateOf(true) }
 
@@ -266,6 +278,8 @@ fun KoreaInvApp() {
                             repository = activeRepository,
                             onCheckUpdatesClick = ::checkForUpdates,
                             onLogoutClick = ::logout,
+                            sessionState = tradeHistorySessionState,
+                            onSessionStateChange = { tradeHistorySessionState = it },
                             onTradeClick = { trade, usdRate, lastSynced ->
                                 selectedTrade = trade
                                 selectedTradeUsdRate = usdRate

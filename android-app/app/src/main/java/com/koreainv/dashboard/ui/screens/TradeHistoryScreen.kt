@@ -64,18 +64,32 @@ fun TradeHistoryScreen(
     onCheckUpdatesClick: () -> Unit,
     onLogoutClick: () -> Unit,
     onTradeClick: (Trade, Double, String?) -> Unit,
+    sessionState: TradeHistorySessionState,
+    onSessionStateChange: (TradeHistorySessionState) -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    var tradeData by remember { mutableStateOf<TradeHistoryResponse?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
+    var tradeData by remember(sessionState) { mutableStateOf(sessionState.tradeData) }
+    var isLoading by remember(sessionState) { mutableStateOf(sessionState.tradeData == null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var tradeFilter by remember { mutableStateOf("all") }
-    var selectedRange by remember { mutableStateOf("this_month") }
-    var selectedRangeLabel by remember { mutableStateOf(rangeLabel("this_month")) }
+    var tradeFilter by remember(sessionState) { mutableStateOf(sessionState.tradeFilter) }
+    var selectedRange by remember(sessionState) { mutableStateOf(sessionState.selectedRange) }
+    var selectedRangeLabel by remember(sessionState) { mutableStateOf(sessionState.selectedRangeLabel) }
     var rangeExpanded by remember { mutableStateOf(false) }
     var filterExpanded by remember { mutableStateOf(false) }
-    var currencyMode by remember { mutableStateOf(CurrencyDisplayMode.KRW) }
+    var currencyMode by remember(sessionState) { mutableStateOf(sessionState.currencyMode) }
+
+    fun persistSessionState() {
+        onSessionStateChange(
+            TradeHistorySessionState(
+                tradeData = tradeData,
+                tradeFilter = tradeFilter,
+                selectedRange = selectedRange,
+                selectedRangeLabel = selectedRangeLabel,
+                currencyMode = currencyMode,
+            ),
+        )
+    }
 
     fun loadTradeHistory(range: String = selectedRange, forceRefresh: Boolean = false) {
         val resolvedLabel = rangeLabel(range)
@@ -87,22 +101,27 @@ fun TradeHistoryScreen(
         if (rangeChanged) {
             tradeData = null
         }
+        persistSessionState()
         coroutineScope.launch {
             runCatching { repository.fetchTradeHistory(range = range, forceRefresh = forceRefresh) }
                 .onSuccess {
                     tradeData = it
                     selectedRangeLabel = it.period.label.ifBlank { resolvedLabel }
+                    persistSessionState()
                 }
                 .onFailure {
                     val detail = it.message?.takeIf(String::isNotBlank) ?: it::class.simpleName ?: "unknown"
                     errorMessage = "거래내역을 불러오지 못했습니다. [$detail]"
+                    persistSessionState()
                 }
             isLoading = false
         }
     }
 
     LaunchedEffect(Unit) {
-        loadTradeHistory(range = selectedRange)
+        if (tradeData == null) {
+            loadTradeHistory(range = selectedRange)
+        }
     }
 
     Scaffold(
@@ -113,7 +132,10 @@ fun TradeHistoryScreen(
                 actions = {
                     CompactCurrencyToggle(
                         mode = currencyMode,
-                        onModeChange = { currencyMode = it },
+                        onModeChange = {
+                            currencyMode = it
+                            persistSessionState()
+                        },
                     )
                     if (isLoading && tradeData != null) {
                         HeaderLoadingIndicator()
@@ -250,17 +272,29 @@ fun TradeHistoryScreen(
                                             DropdownMenuItem(
                                                 text = { Text(stringResource(R.string.all), color = TextPrimary) },
                                                 colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                onClick = { tradeFilter = "all"; filterExpanded = false },
+                                                onClick = {
+                                                    tradeFilter = "all"
+                                                    filterExpanded = false
+                                                    persistSessionState()
+                                                },
                                             )
                                             DropdownMenuItem(
                                                 text = { Text(stringResource(R.string.buy), color = TextPrimary) },
                                                 colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                onClick = { tradeFilter = "buy"; filterExpanded = false },
+                                                onClick = {
+                                                    tradeFilter = "buy"
+                                                    filterExpanded = false
+                                                    persistSessionState()
+                                                },
                                             )
                                             DropdownMenuItem(
                                                 text = { Text(stringResource(R.string.sell), color = TextPrimary) },
                                                 colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                onClick = { tradeFilter = "sell"; filterExpanded = false },
+                                                onClick = {
+                                                    tradeFilter = "sell"
+                                                    filterExpanded = false
+                                                    persistSessionState()
+                                                },
                                             )
                                         }
                                     }
@@ -296,6 +330,14 @@ fun TradeHistoryScreen(
         }
     }
 }
+
+data class TradeHistorySessionState(
+    val tradeData: TradeHistoryResponse? = null,
+    val tradeFilter: String = "all",
+    val selectedRange: String = "this_month",
+    val selectedRangeLabel: String = rangeLabel("this_month"),
+    val currencyMode: CurrencyDisplayMode = CurrencyDisplayMode.KRW,
+)
 
 @Composable
 fun TradeSummaryCard(
