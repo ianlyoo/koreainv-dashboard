@@ -1,69 +1,155 @@
 # Korea Investment Dashboard
 
-Current release: `v1.4.4`
+Current release: `v1.6.7`
 
-한국투자증권 API 기반 개인 계좌 대시보드입니다.  
-설치 후 실행하면 로컬에서 대시보드가 열리고, 계좌/종목 데이터를 한 화면에서 확인할 수 있습니다.
+한국투자증권 API 기반 개인 계좌 대시보드입니다.
+
+이 저장소에는 아래 세 가지가 함께 포함되어 있습니다.
+
+- 웹/데스크톱 대시보드 (`app/`)
+- Android 앱 (`android-app/`)
+- GitHub Actions 기반 릴리스 파이프라인 (`.github/workflows/release.yml`)
 
 ## 주요 기능
 
-- 포트폴리오 요약: `총 평가금액`, `총 평가손익`, `보유 현금(KRW/USD)`를 상단 카드로 표시
-- 보유 자산 상세: 종목/수량/평가금액/평균단가/현재가/평가손익/수익률, 마지막 동기화 시각 표시
-- 통화 토글: `$` 기준/`원` 기준 표시 전환
-- 종목 검색: 국내/해외 종목 검색 후 즉시 선택
-- 인사이트 패널(종목정보):
-  - 핵심 지표: 선행 PER, ROE, 부채비율, Beta, 시총, 공매도비중, 목표가, 분석가 평가
-  - 시세 컨텍스트: 52주 범위, 차트
-  - 파생/뉴스: 옵션 체인 요약(PCR/IV/Max Pain 등), 최신 뉴스
-- 시장 정보: 주요 지표 위젯 + 증시 캘린더
-- 사용 편의:
-  - 새로고침 버튼으로 즉시 동기화
-  - 화면 잠금(PIN)
-  - 로그아웃 시 기기 내 API/PIN 설정 초기화
-- 자동 업데이트:
-  - 실행 시 최신 릴리스 확인
-  - 릴리스 본문에 `mandatory-update`(또는 `update_policy: mandatory`, `필수 업데이트`)를 포함하면 필수 업데이트로 동작
-  - 필수 업데이트: 앱 시작 시 OS 관계없이 즉시 업데이트(건너뛰기 불가)
-  - 권장 업데이트(기본값): 앱 시작 시 팝업 없음, 앱 메뉴 `업데이트 확인`에서만 선택 가능
-  - 업데이트 완료 후 `업데이트 완료했습니다. 앱을 다시 시작합니다.` 안내
-- 버전 확인:
-  - Windows 트레이 메뉴 `버전 확인`
-  - macOS Dock 앱 메뉴 `버전 확인`
-- 수동 업데이트 확인:
-  - Windows 트레이 메뉴 `업데이트 확인`
-  - macOS Dock 앱 메뉴 `업데이트 확인`
+- 포트폴리오 요약
+  - 총 평가금액, 평가손익, 수익률, 자산 현황 확인
+- 자산 상세
+  - 보유종목, 수량, 평가금액, 손익, 자산 분포 확인
+- 거래내역
+  - 국내/해외 거래내역 및 실현손익 확인
+- 통화 전환
+  - Android 앱에서 주요 금액 KRW/USD 표시 전환 지원
+- 보안
+  - Android 앱 PIN 잠금 및 로컬 자격정보 저장
+- 업데이트
+  - GitHub Releases 기반 최신 버전 확인
+  - 릴리스 정책에 따라 권장/필수 업데이트 처리
 
-## 다운로드 및 설치
+## 다운로드
 
-릴리스 페이지: [GitHub Releases](https://github.com/ianlyoo/koreainv-dashboard/releases)
+릴리스 페이지:
+
+- https://github.com/ianlyoo/koreainv-dashboard/releases
+
+릴리스 아티팩트 이름:
+
+- Android: `KISDashboard-android.apk`
+- Windows: `KISDashboard-win64.zip`
+- macOS: `KISDashboard-mac-arm64.zip`
+
+## 설치 및 실행
+
+### Android
+
+1. 릴리스 페이지에서 `KISDashboard-android.apk` 다운로드
+2. 기기에서 APK 설치
+3. 앱 첫 실행 후 계좌/앱 설정 진행
+
+참고:
+
+- Android APK는 GitHub Releases를 통해 배포됩니다.
+- 기기/정책에 따라 설치 시 보안 경고 또는 Play Protect 경고가 표시될 수 있습니다.
 
 ### Windows
 
 1. `KISDashboard-win64.zip` 다운로드
-2. 압축 해제 후 `KISDashboard.exe` 실행
-3. 브라우저에서 `http://127.0.0.1:8000` 자동 오픈 확인
+2. 압축 해제
+3. 실행 파일 실행
+4. 브라우저에서 `http://127.0.0.1:8000` 열림 확인
 
 ### macOS (Apple Silicon)
 
 1. `KISDashboard-mac-arm64.zip` 다운로드
-2. 압축 해제 후 `KISDashboard.app` 실행
-3. 브라우저에서 `http://127.0.0.1:8000` 자동 오픈 확인
+2. 압축 해제
+3. `KISDashboard.app` 실행
+4. 브라우저에서 `http://127.0.0.1:8000` 열림 확인
 
 참고:
-- 현재 macOS 앱은 ad-hoc 서명(Developer ID/Notarization 없음)입니다.
-- 다운로드 앱 실행이 차단되면:
+
+- 현재 macOS 앱은 notarization 없는 배포본일 수 있습니다.
+- 실행 차단 시 아래 명령으로 quarantine 제거:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/KISDashboard.app
 ```
 
-## 첫 실행 설정
+## Android 첫 실행
 
-1. `APP_KEY`, `APP_SECRET` 입력
-2. 계좌번호, PIN 설정
-3. 이후 PIN으로 잠금 해제하여 사용
+1. 한국투자증권 API 정보 입력
+2. 계좌번호 입력
+3. PIN 설정
+4. 이후 PIN으로 잠금 해제 후 사용
 
-## 문제 해결 (로그 위치)
+## 개발
+
+### 웹/로컬 앱 실행
+
+```bash
+python -m app.main
+```
+
+### Windows 배포본 빌드
+
+```bat
+build_windows.bat
+```
+
+### macOS 배포본 빌드
+
+```bash
+./scripts/build_mac_app.sh
+```
+
+### Android 빌드
+
+```bash
+cd android-app
+./gradlew assembleDebug
+./gradlew assembleRelease
+```
+
+## 릴리스 방식
+
+이 저장소는 GitHub Actions `Build And Release` 워크플로로 릴리스됩니다.
+
+- 태그 푸시: `v*`
+- 워크플로 파일: `.github/workflows/release.yml`
+- 태그 버전은 아래 두 값과 일치해야 합니다.
+  - `app/version.py`
+  - `android-app/app/build.gradle.kts`
+
+예시:
+
+```bash
+git tag -a v1.6.5 -m "Prepare v1.6.5 release"
+git push origin v1.6.5
+```
+
+### 필수 업데이트 릴리스
+
+아래 문자열이 annotated tag 메시지에 포함되면 릴리스가 필수 업데이트로 처리됩니다.
+
+- `[mandatory-update]`
+- `mandatory-update`
+- `update_policy: mandatory`
+- `필수 업데이트`
+
+예시:
+
+```bash
+git tag -a v1.6.5 -m "[mandatory-update]
+Prepare v1.6.5 mandatory release"
+git push origin v1.6.5
+```
+
+## 유지보수 참고
+
+- 릴리스 정책 문서: `RELEASE_POLICY.md`
+- Android 버전: `android-app/app/build.gradle.kts`
+- Desktop/Web 버전: `app/version.py`
+
+## 문제 해결
 
 ### Windows
 
@@ -80,25 +166,4 @@ xattr -dr com.apple.quarantine /Applications/KISDashboard.app
 ## 안내
 
 - 본 프로젝트는 투자 보조 도구이며 투자 손실에 대한 책임을 지지 않습니다.
-- API/계좌정보가 포함된 설정 파일은 외부로 공유하지 마세요.
-
-## 개발/배포 (Maintainer)
-
-- 릴리스 업데이트 정책 문서: `RELEASE_POLICY.md`
-
-```bash
-python -m app.main
-```
-
-```bat
-build_windows.bat
-```
-
-```bash
-./scripts/build_mac_app.sh
-```
-
-```bash
-git tag v1.4.4
-git push origin v1.4.4
-```
+- API 키, 계좌번호, PIN, 설정 파일은 외부에 공유하지 마세요.
