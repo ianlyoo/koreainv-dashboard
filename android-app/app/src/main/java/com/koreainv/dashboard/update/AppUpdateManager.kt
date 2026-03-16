@@ -16,6 +16,20 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+internal val MANDATORY_POLICY_TOKENS = listOf(
+    "[mandatory-update]",
+    "mandatory-update",
+    "update_policy: mandatory",
+    "업데이트정책:필수",
+    "업데이트 정책: 필수",
+    "필수 업데이트",
+)
+
+enum class ReleasePolicy {
+    MANDATORY,
+    RECOMMENDED,
+}
+
 data class ReleaseAsset(
     val name: String,
     val url: String,
@@ -25,6 +39,7 @@ data class ReleaseInfo(
     val tagName: String,
     val body: String,
     val asset: ReleaseAsset,
+    val policy: ReleasePolicy,
 )
 
 sealed interface InstallPreparationResult {
@@ -42,7 +57,7 @@ class AppUpdateManager {
             .build()
     }
 
-    suspend fun checkForUpdate(context: Context): ReleaseInfo? {
+    suspend fun checkForUpdate(context: Context, includeRecommended: Boolean = true): ReleaseInfo? {
         return withContext(Dispatchers.IO) {
             val request = Request.Builder()
                 .url(RELEASE_API)
@@ -54,14 +69,10 @@ class AppUpdateManager {
                 if (!response.isSuccessful) return@withContext null
                 val body = response.body?.string().orEmpty()
                 val json = JsonParser().parse(body).asJsonObject
-                val tagName = json.get("tag_name")?.asString?.trim().orEmpty()
-                if (!isNewerVersion(tagName, currentVersionName(context))) return@withContext null
-
-                val asset = findAndroidAsset(json) ?: return@withContext null
-                ReleaseInfo(
-                    tagName = tagName,
-                    body = json.get("body")?.asString.orEmpty(),
-                    asset = asset,
+                parseReleaseInfo(
+                    json = json,
+                    currentVersion = currentVersionName(context),
+                    includeRecommended = includeRecommended,
                 )
             }
         }
@@ -117,40 +128,72 @@ class AppUpdateManager {
         }
     }
 
-    private fun findAndroidAsset(json: JsonObject): ReleaseAsset? {
-        val assets = json.getAsJsonArray("assets") ?: return null
-        assets.forEach { element ->
-            val asset = element.asJsonObject
-            val name = asset.get("name")?.asString.orEmpty()
-            val lower = name.lowercase()
-            if (lower == "kisdashboard-android.apk" || lower == "app-release.apk") {
-                return ReleaseAsset(
-                    name = name,
-                    url = asset.get("browser_download_url")?.asString.orEmpty(),
-                )
-            }
-        }
-        return null
-    }
-
-    private fun isNewerVersion(remote: String, local: String): Boolean {
-        fun normalize(version: String): List<Int> = version.removePrefix("v")
-            .split('.')
-            .map { it.takeWhile(Char::isDigit) }
-            .filter { it.isNotBlank() }
-            .map { it.toIntOrNull() ?: 0 }
-
-        val remoteParts = normalize(remote)
-        val localParts = normalize(local)
-        val maxSize = maxOf(remoteParts.size, localParts.size)
-        for (i in 0 until maxSize) {
-            val r = remoteParts.getOrElse(i) { 0 }
-            val l = localParts.getOrElse(i) { 0 }
-            if (r != l) return r > l
-        }
-        return false
-    }
-
     private fun currentVersionName(context: Context): String =
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.0"
+}
+
+internal fun parseReleaseInfo(
+    json: JsonObject,
+    currentVersion: String,
+    includeRecommended: Boolean,
+): ReleaseInfo? {
+    val tagName = json.get("tag_name")?.asString?.trim().orEmpty()
+    if (!isNewerVersion(tagName, currentVersion)) return null
+
+    val asset = findAndroidAsset(json) ?: return null
+    val body = json.get("body")?.asString.orEmpty()
+    val policy = parseReleasePolicy(body)
+    if (!includeRecommended && policy != ReleasePolicy.MANDATORY) return null
+
+    return ReleaseInfo(
+        tagName = tagName,
+        body = body,
+        asset = asset,
+        policy = policy,
+    )
+}
+
+internal fun parseReleasePolicy(body: String): ReleasePolicy {
+    val normalizedBody = body.lowercase()
+    val compactBody = normalizedBody.filterNot(Char::isWhitespace)
+    val isMandatory = MANDATORY_POLICY_TOKENS.any { token ->
+        val normalizedToken = token.lowercase()
+        normalizedToken in normalizedBody || normalizedToken.filterNot(Char::isWhitespace) in compactBody
+    }
+
+    return if (isMandatory) ReleasePolicy.MANDATORY else ReleasePolicy.RECOMMENDED
+}
+
+internal fun isNewerVersion(remote: String, local: String): Boolean {
+    fun normalize(version: String): List<Int> = version.removePrefix("v")
+        .split('.')
+        .map { it.takeWhile(Char::isDigit) }
+        .filter { it.isNotBlank() }
+        .map { it.toIntOrNull() ?: 0 }
+
+    val remoteParts = normalize(remote)
+    val localParts = normalize(local)
+    val maxSize = maxOf(remoteParts.size, localParts.size)
+    for (i in 0 until maxSize) {
+        val r = remoteParts.getOrElse(i) { 0 }
+        val l = localParts.getOrElse(i) { 0 }
+        if (r != l) return r > l
+    }
+    return false
+}
+
+private fun findAndroidAsset(json: JsonObject): ReleaseAsset? {
+    val assets = json.getAsJsonArray("assets") ?: return null
+    assets.forEach { element ->
+        val asset = element.asJsonObject
+        val name = asset.get("name")?.asString.orEmpty()
+        val lower = name.lowercase()
+        if (lower == "kisdashboard-android.apk" || lower == "app-release.apk") {
+            return ReleaseAsset(
+                name = name,
+                url = asset.get("browser_download_url")?.asString.orEmpty(),
+            )
+        }
+    }
+    return null
 }

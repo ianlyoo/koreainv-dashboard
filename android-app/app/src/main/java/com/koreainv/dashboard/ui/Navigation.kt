@@ -9,6 +9,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,7 +47,9 @@ import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.update.AppUpdateManager
 import com.koreainv.dashboard.update.InstallPreparationResult
 import com.koreainv.dashboard.update.ReleaseInfo
+import com.koreainv.dashboard.update.ReleasePolicy
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -89,18 +92,27 @@ fun KoreaInvApp() {
     )
     val primaryRoutes = remember(primaryTabs) { primaryTabs.map { it.route }.toSet() }
 
-    LaunchedEffect(unlockedCredentials, hasAutoCheckedUpdate, currentRoute) {
-        if (unlockedCredentials != null && !hasAutoCheckedUpdate && currentRoute in primaryRoutes) {
-            hasAutoCheckedUpdate = true
-            delay(900L)
-            availableUpdate = try {
-                updateManager.checkForUpdate(context) ?: run {
-                    delay(1200L)
-                    updateManager.checkForUpdate(context)
-                }
-            } catch (_: Exception) {
-                null
+    DisposableEffect(repository) {
+        onDispose {
+            repository?.close()
+        }
+    }
+
+    LaunchedEffect(unlockedCredentials) {
+        if (unlockedCredentials == null || hasAutoCheckedUpdate) return@LaunchedEffect
+
+        navController.currentBackStackEntryFlow
+            .map { it.destination.route in primaryRoutes }
+            .first { it }
+        hasAutoCheckedUpdate = true
+        delay(900L)
+        availableUpdate = try {
+            updateManager.checkForUpdate(context, includeRecommended = false) ?: run {
+                delay(1200L)
+                updateManager.checkForUpdate(context, includeRecommended = false)
             }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -310,15 +322,29 @@ fun KoreaInvApp() {
 
     if (availableUpdate != null) {
         val release = availableUpdate!!
+        val isMandatoryUpdate = release.policy == ReleasePolicy.MANDATORY
         AlertDialog(
-            onDismissRequest = { availableUpdate = null },
+            onDismissRequest = {
+                if (!isMandatoryUpdate) {
+                    availableUpdate = null
+                }
+            },
             title = { Text(stringResource(R.string.update_available_title)) },
-            text = { Text("새 버전 ${release.tagName}을 다운로드할 수 있습니다.") },
+            text = {
+                Text(
+                    if (isMandatoryUpdate) {
+                        "필수 업데이트 ${release.tagName}을 다운로드해야 계속 사용할 수 있습니다."
+                    } else {
+                        "새 버전 ${release.tagName}을 다운로드할 수 있습니다."
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
                         scope.launch {
                             isDownloadingUpdate = true
+                            var launchedInstaller = false
                             try {
                                 when (val result = updateManager.downloadUpdate(context, release)) {
                                     InstallPreparationResult.PermissionRequired -> {
@@ -328,20 +354,27 @@ fun KoreaInvApp() {
 
                                     is InstallPreparationResult.Ready -> {
                                         updateManager.launchInstaller(context, result.apkFile)
+                                        launchedInstaller = true
                                     }
                                 }
                             } catch (_: Exception) {
                                 updateMessage = context.getString(R.string.download_update_failed)
                             }
                             isDownloadingUpdate = false
-                            availableUpdate = null
+                            if (shouldCloseUpdateDialog(release.policy, launchedInstaller)) {
+                                availableUpdate = null
+                            }
                         }
                     },
                 ) { Text(stringResource(R.string.update_now)) }
             },
-            dismissButton = {
-                TextButton(onClick = { availableUpdate = null }) {
-                    Text(stringResource(R.string.later))
+            dismissButton = if (isMandatoryUpdate) {
+                null
+            } else {
+                {
+                    TextButton(onClick = { availableUpdate = null }) {
+                        Text(stringResource(R.string.later))
+                    }
                 }
             },
         )
@@ -370,4 +403,8 @@ fun KoreaInvApp() {
             CircularProgressIndicator(color = TextGold)
         }
     }
+}
+
+internal fun shouldCloseUpdateDialog(policy: ReleasePolicy, launchedInstaller: Boolean): Boolean {
+    return launchedInstaller || policy != ReleasePolicy.MANDATORY
 }
