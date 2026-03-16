@@ -189,6 +189,21 @@
             return normalized;
         }
 
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function escapeAttributeValue(value) {
+            return String(value ?? '')
+                .replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"');
+        }
+
         function calcHoldingProfitRate(nowPrice, avgPrice) {
             const parseNum = (v) => {
                 if (typeof v === 'number') return v;
@@ -286,6 +301,13 @@
             let quoteBadgeHtml = '';
             let pricePrefix = '';
             let dp = 0;
+            const tickerText = String(item.ticker || '');
+            const nameText = String(item.name || '-');
+            const normalizedTicker = normalizeTicker(tickerText);
+            const safeTicker = escapeHtml(tickerText);
+            const safeName = escapeHtml(nameText);
+            const safeTickerAttr = escapeAttributeValue(normalizedTicker);
+            const onClickArgs = `${JSON.stringify(tickerText)}, ${JSON.stringify(String(item.type || ''))}`;
 
             let displayAvg = item.avg_price;
             let displayNow = item.now_price;
@@ -336,14 +358,14 @@
             let profitAmtFormatted = `${profitAmtSign}${pricePrefix}${formatNumber(Math.abs(profitAmtLocal).toFixed(dp))}`;
 
             return `
-                <tr data-ticker="${normalizeTicker(item.ticker)}" onclick="fetchAssetInsight('${item.ticker}', '${item.type}')" style="cursor: pointer; transition: background 0.2s;">
+                <tr data-ticker="${safeTickerAttr}" onclick='fetchAssetInsight(${onClickArgs})' style="cursor: pointer; transition: background 0.2s;">
                     <td>
                         <div class="ticker-cell">
-                            <span class="ticker-name">${item.name}</span>
+                            <span class="ticker-name">${safeName}</span>
                             <div class="ticker-meta-row">
                                 ${badgeHtml}
                                 ${quoteBadgeHtml}
-                                ${item.ticker ? `<span class="ticker-symbol">${item.ticker}</span>` : ''}
+                                ${tickerText ? `<span class="ticker-symbol">${safeTicker}</span>` : ''}
                             </div>
                         </div>
                     </td>
@@ -361,7 +383,8 @@
             changedTickers.forEach((ticker) => {
                 const item = cachedItems.find((entry) => entry.type === 'USA' && normalizeTicker(entry.ticker) === ticker);
                 if (!item) return;
-                const row = document.querySelector(`#all_list tr[data-ticker="${ticker}"]`);
+                const selectorTicker = escapeAttributeValue(ticker);
+                const row = document.querySelector(`#all_list tr[data-ticker="${selectorTicker}"]`);
                 if (row) {
                     row.outerHTML = buildHoldingRowHtml(item).trim();
                 }
@@ -1959,6 +1982,12 @@
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 stopUsQuotePolling();
+                return;
+            }
+
+            const hasUsHoldings = cachedItems.some((item) => item.type === 'USA');
+            if (hasUsHoldings && lastUsMarketStatus?.session === 'day_market') {
+                startUsQuotePollingWindow(lastUsMarketStatus);
             }
         });
 

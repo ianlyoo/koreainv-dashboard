@@ -140,6 +140,17 @@ class DashboardSmokeTests(unittest.TestCase):
             dashboard_js,
         )
 
+    def test_dashboard_js_escapes_holding_markup_and_resumes_day_market_polling(self):
+        dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+
+        self.assertIn("function escapeHtml(value)", dashboard_js)
+        self.assertIn("onclick='fetchAssetInsight(${onClickArgs})'", dashboard_js)
+        self.assertIn(
+            "if (hasUsHoldings && lastUsMarketStatus?.session === 'day_market') {",
+            dashboard_js,
+        )
+        self.assertIn("startUsQuotePollingWindow(lastUsMarketStatus);", dashboard_js)
+
 
 if __name__ == "__main__":
     unittest.main()
