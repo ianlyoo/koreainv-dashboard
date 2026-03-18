@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from app import auth
+from app import api_client, auth
 from app.session_store import (
     SessionData,
     clear_all_sessions,
@@ -191,6 +191,7 @@ async def reset_settings(request: Request):
 
     if auth.delete_settings():
         _remove_quote_session(request)
+        api_client.clear_persisted_token_cache()
         clear_all_sessions()
         response = JSONResponse({"status": "success", "message": "Settings reset"})
         clear_session_cookie(response)

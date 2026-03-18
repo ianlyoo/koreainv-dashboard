@@ -1,19 +1,25 @@
 ﻿from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import datetime
 import json
 import logging
+import os
+import tempfile
 import threading
 import time
 
 import requests
 
 from app import config
+from app import runtime_paths
 
-_cached_token = None
-_token_issue_time = 0
-_token_expires_at = 0
+_cached_tokens: dict[str, str] = {}
+_token_issue_times: dict[str, float] = {}
+_token_expiry_times: dict[str, float] = {}
+_persisted_token_cache: dict[str, dict[str, object]] | None = None
 _realized_cache = {}
 _inflight_trade_profit_rows = {}
 _MAX_PARALLEL_WORKERS = 4
@@ -21,6 +27,109 @@ _REALIZED_CACHE_TTL_SECONDS = 120
 _token_lock = threading.RLock()
 _cache_lock = threading.RLock()
 logger = logging.getLogger(__name__)
+
+
+def _token_cache_file_path() -> str:
+    return os.path.join(runtime_paths.get_user_data_dir(), "token_cache.json")
+
+
+def _token_scope_key(app_key: str, app_secret: str) -> str:
+    raw = f"{str(app_key or '').strip()}::{str(app_secret or '').strip()}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _load_persisted_token_cache_locked() -> dict[str, dict[str, object]]:
+    global _persisted_token_cache
+    if _persisted_token_cache is not None:
+        return _persisted_token_cache
+
+    path = _token_cache_file_path()
+    if not os.path.exists(path):
+        _persisted_token_cache = {}
+        return _persisted_token_cache
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        logger.warning("Failed to load token cache file", exc_info=True)
+        _persisted_token_cache = {}
+        return _persisted_token_cache
+
+    if not isinstance(payload, dict):
+        _persisted_token_cache = {}
+        return _persisted_token_cache
+
+    entries = payload.get("entries")
+    _persisted_token_cache = entries if isinstance(entries, dict) else {}
+    return _persisted_token_cache
+
+
+def _save_persisted_token_cache_locked() -> None:
+    cache = _load_persisted_token_cache_locked()
+    path = _token_cache_file_path()
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix="token_cache_", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"entries": cache}, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def _load_persisted_token_for_scope_locked(scope_key: str) -> str | None:
+    cache = _load_persisted_token_cache_locked()
+    entry = cache.get(scope_key)
+    if not isinstance(entry, dict):
+        return None
+
+    token = str(entry.get("access_token") or "").strip()
+    issued_at = _to_float(entry.get("issued_at") or 0)
+    expires_at = _to_float(entry.get("expires_at") or 0)
+    now = time.time()
+    if not token or issued_at <= 0 or expires_at <= 0 or now >= max(expires_at - 60, issued_at):
+        cache.pop(scope_key, None)
+        _save_persisted_token_cache_locked()
+        return None
+
+    _cached_tokens[scope_key] = token
+    _token_issue_times[scope_key] = issued_at
+    _token_expiry_times[scope_key] = expires_at
+    return token
+
+
+def _persist_token_locked(scope_key: str, access_token: str, issued_at: float, expires_at: float) -> None:
+    cache = _load_persisted_token_cache_locked()
+    cache[scope_key] = {
+        "access_token": access_token,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+    }
+    _save_persisted_token_cache_locked()
+
+
+def clear_persisted_token_cache() -> None:
+    global _persisted_token_cache
+    with _token_lock:
+        _cached_tokens.clear()
+        _token_issue_times.clear()
+        _token_expiry_times.clear()
+        _persisted_token_cache = {}
+        path = _token_cache_file_path()
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                logger.warning("Failed to remove token cache file", exc_info=True)
 
 
 def _get_ci(row: dict, wanted_key: str):
@@ -112,14 +221,22 @@ def _get_domestic_quote_output(token, app_key, app_secret, ticker: str, market_d
     }
     url = f"{config.URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
     try:
-        res = requests.get(url, headers=headers, params=params, timeout=5)
+        res, data, _headers = _authorized_request_once(
+            requests.get,
+            url,
+            headers,
+            params=params,
+            timeout=5,
+            app_key=app_key,
+            app_secret=app_secret,
+        )
         if res.status_code != 200:
             return None
-        data = res.json()
         out = data.get("output") or {}
-        if not out:
+        if not isinstance(out, dict) or not out:
             return None
-        return out
+        out_dict: dict[object, object] = out
+        return out_dict
     except Exception:
         return None
 
@@ -518,11 +635,19 @@ def get_domestic_orderable_cash(token, app_key, app_secret, cano, acnt_prdt_cd):
     }
     url = f"{config.URL_BASE}/uapi/domestic-stock/v1/trading/inquire-psbl-order"
     try:
-        res = requests.get(url, headers=headers, params=params, timeout=8)
+        res, data, _headers = _authorized_request_once(
+            requests.get,
+            url,
+            headers,
+            params=params,
+            timeout=8,
+            app_key=app_key,
+            app_secret=app_secret,
+        )
         if res.status_code != 200:
             return 0, "psbl_api_http_error"
-        data = res.json()
-        out = data.get("output") or {}
+        out_raw = data.get("output") or {}
+        out: dict[str, object] = out_raw if isinstance(out_raw, dict) else {}
         for k in ["nrcvb_buy_amt", "ord_psbl_cash", "ord_psbl_amt", "max_buy_amt"]:
             raw, actual = _get_ci(out, k)
             if actual is None:
@@ -534,22 +659,39 @@ def get_domestic_orderable_cash(token, app_key, app_secret, cano, acnt_prdt_cd):
     except Exception:
         return 0, "psbl_api_exception"
 
-def _invalidate_access_token():
-    global _cached_token, _token_issue_time, _token_expires_at
+def _invalidate_access_token(app_key: str | None = None, app_secret: str | None = None):
     with _token_lock:
-        _cached_token = None
-        _token_issue_time = 0
-        _token_expires_at = 0
+        if app_key is None or app_secret is None:
+            _cached_tokens.clear()
+            _token_issue_times.clear()
+            _token_expiry_times.clear()
+            clear_persisted_token_cache()
+            return
+
+        scope_key = _token_scope_key(app_key, app_secret)
+        _cached_tokens.pop(scope_key, None)
+        _token_issue_times.pop(scope_key, None)
+        _token_expiry_times.pop(scope_key, None)
+        cache = _load_persisted_token_cache_locked()
+        if cache.pop(scope_key, None) is not None:
+            _save_persisted_token_cache_locked()
 
 
 def get_access_token(app_key, app_secret):
-    global _cached_token, _token_issue_time, _token_expires_at
+    scope_key = _token_scope_key(app_key, app_secret)
     with _token_lock:
         now = time.time()
-        if _cached_token and now < max(_token_expires_at - 60, _token_issue_time):
-            return _cached_token
+        cached_token = _cached_tokens.get(scope_key)
+        cached_issue_time = _token_issue_times.get(scope_key, 0)
+        cached_expires_at = _token_expiry_times.get(scope_key, 0)
+        if cached_token and now < max(cached_expires_at - 60, cached_issue_time):
+            return cached_token
 
-        if not _cached_token and _token_issue_time > 0 and (now - _token_issue_time) < 65:
+        persisted_token = _load_persisted_token_for_scope_locked(scope_key)
+        if persisted_token:
+            return persisted_token
+
+        if not cached_token and cached_issue_time > 0 and (now - cached_issue_time) < 65:
             return None
 
         headers = {"content-type": "application/json"}
@@ -559,27 +701,79 @@ def get_access_token(app_key, app_secret):
             "appsecret": app_secret,
         }
         url = f"{config.URL_BASE}/oauth2/tokenP"
-        _token_issue_time = now
+        _token_issue_times[scope_key] = now
         try:
             res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
         except Exception:
-            _token_issue_time = 0
+            _token_issue_times.pop(scope_key, None)
             logger.exception("Failed to get access token")
             return None
 
         if res.status_code == 200:
             body = res.json()
-            _cached_token = body.get("access_token")
+            access_token = str(body.get("access_token") or "").strip()
             expires_in = _to_int(body.get("expires_in") or 0)
-            _token_expires_at = now + expires_in if expires_in > 0 else now + 43200
-            return _cached_token
+            expires_at = now + expires_in if expires_in > 0 else now + 43200
+            if not access_token:
+                _token_issue_times.pop(scope_key, None)
+                return None
+            _cached_tokens[scope_key] = access_token
+            _token_issue_times[scope_key] = now
+            _token_expiry_times[scope_key] = expires_at
+            _persist_token_locked(scope_key, access_token, now, expires_at)
+            return access_token
 
-        _token_issue_time = 0
+        _token_issue_times.pop(scope_key, None)
         logger.warning("Token request failed status=%s body=%s", res.status_code, res.text[:300])
         return None
 
 
-def _is_token_error_response(res, data: dict) -> bool:
+def _authorized_request_once(
+    request_fn,
+    url: str,
+    headers: dict[str, str],
+    *,
+    params: Mapping[str, object] | None = None,
+    data: str | None = None,
+    timeout: int = 10,
+    app_key: str | None = None,
+    app_secret: str | None = None,
+):
+    request_headers = dict(headers)
+    refreshed = False
+
+    while True:
+        res = request_fn(url, headers=request_headers, params=params, data=data, timeout=timeout)
+        payload: dict[str, object] = {}
+        try:
+            parsed = res.json()
+            payload = parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            payload = {}
+
+        if _is_token_error_response(res, payload) and app_key and app_secret and not refreshed:
+            refreshed = True
+            _invalidate_access_token(app_key, app_secret)
+            new_token = get_access_token(app_key, app_secret)
+            if not new_token:
+                return res, payload, request_headers
+            request_headers = dict(request_headers)
+            request_headers["authorization"] = f"Bearer {new_token}"
+            continue
+
+        return res, payload, request_headers
+
+
+def _bearer_token_from_headers(headers: Mapping[str, str], fallback_token: str) -> str:
+    authorization = str(headers.get("authorization") or "").strip()
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        if token:
+            return token
+    return fallback_token
+
+
+def _is_token_error_response(res, data: dict[str, object]) -> bool:
     if getattr(res, "status_code", None) == 401:
         return True
     msg_cd = str((data or {}).get("msg_cd", "")).strip()
@@ -607,7 +801,7 @@ def _authorized_paginated_request(url, headers, params, fk_field: str, nk_field:
 
         if _is_token_error_response(res, data) and app_key and app_secret and not refreshed:
             refreshed = True
-            _invalidate_access_token()
+            _invalidate_access_token(app_key, app_secret)
             new_token = get_access_token(app_key, app_secret)
             if not new_token:
                 break
@@ -639,15 +833,29 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
         "CTX_AREA_NK100": ""
     }
     url = f"{config.URL_BASE}/uapi/domestic-stock/v1/trading/inquire-balance"
-    res = requests.get(url, headers=headers, params=params)
+    res, data, headers = _authorized_request_once(
+        requests.get,
+        url,
+        headers,
+        params=params,
+        timeout=10,
+        app_key=app_key,
+        app_secret=app_secret,
+    )
+    token = _bearer_token_from_headers(headers, token)
     
-    result = {"summary": {}, "items": []}
+    items: list[dict[str, object]] = []
+    result: dict[str, object] = {"summary": {}, "items": items}
     quote_lookup_count = 0
     if res.status_code == 200:
-        data = res.json()
-        output2_rows = data.get("output2") or []
+        output2_raw = data.get("output2") or []
+        output2_rows: list[dict[str, object]] = (
+            [row for row in output2_raw if isinstance(row, dict)]
+            if isinstance(output2_raw, list)
+            else []
+        )
         if len(output2_rows) > 0:
-            summary = output2_rows[0]
+            summary = output2_rows[0] if isinstance(output2_rows[0], dict) else {}
             psbl_cash, psbl_key = get_domestic_orderable_cash(
                 token, app_key, app_secret, cano, acnt_prdt_cd
             )
@@ -672,7 +880,13 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 "total_profit_loss": _to_int(summary.get('evlu_pfls_smtl_amt', 0)),
                 "cash_balance": orderable_cash
             }
-        for item in (data.get("output1") or []):
+        output1_raw = data.get("output1") or []
+        output1_rows: list[dict[str, object]] = (
+            [row for row in output1_raw if isinstance(row, dict)]
+            if isinstance(output1_raw, list)
+            else []
+        )
+        for item in output1_rows:
                 ticker = item.get("pdno", "")
                 qty = _to_int(item.get("hldg_qty", "0"))
                 if qty <= 0:
@@ -686,7 +900,7 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                     app_key,
                     app_secret,
                 )
-                result["items"].append({
+                items.append({
                     "name": item.get("prdt_name", "알수없음"),
                     "ticker": ticker,
                     "qty": qty,
@@ -707,11 +921,12 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
         "us_items": [],
         "jp_items": [],
     }
+    token_holder = {"value": token}
 
     def _balance_headers() -> dict[str, str]:
         return {
             "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {token_holder['value']}",
             "appkey": app_key,
             "appsecret": app_secret,
             "tr_id": "CTRP6504R",
@@ -720,7 +935,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
     def _get_overseas_orderable_cash(currency_code: str):
         headers_ps = {
             "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {token_holder['value']}",
             "appkey": app_key,
             "appsecret": app_secret,
             "tr_id": "TTTS3007R",
@@ -745,17 +960,28 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 "ITEM_CD": item,
             }
             try:
-                rr = requests.get(url_ps, headers=headers_ps, params=params_ps, timeout=8)
+                rr, body, headers_ps = _authorized_request_once(
+                    requests.get,
+                    url_ps,
+                    headers_ps,
+                    params=params_ps,
+                    timeout=8,
+                    app_key=app_key,
+                    app_secret=app_secret,
+                )
+                token_holder["value"] = _bearer_token_from_headers(
+                    headers_ps, token_holder["value"]
+                )
                 if rr.status_code != 200:
                     continue
-                body = rr.json()
                 if str(body.get("rt_cd")) != "0":
                     continue
                 out = body.get("output") or {}
-                ovrs_amt = _to_float(out.get("ovrs_ord_psbl_amt"))
+                out_dict: dict[str, object] = out if isinstance(out, dict) else {}
+                ovrs_amt = _to_float(out_dict.get("ovrs_ord_psbl_amt"))
                 if ovrs_amt > 0:
                     return ovrs_amt, "inquire-psamount.ovrs_ord_psbl_amt"
-                ord_psbl = _to_float(out.get("ord_psbl_frcr_amt"))
+                ord_psbl = _to_float(out_dict.get("ord_psbl_frcr_amt"))
                 if ord_psbl > 0:
                     return ord_psbl, "inquire-psamount.ord_psbl_frcr_amt"
             except Exception:
@@ -779,15 +1005,29 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
 
         try:
             while True:
-                res = requests.get(url, headers=headers, params=params_us_foreign, timeout=10)
+                res, data, headers = _authorized_request_once(
+                    requests.get,
+                    url,
+                    headers,
+                    params=params_us_foreign,
+                    timeout=10,
+                    app_key=app_key,
+                    app_secret=app_secret,
+                )
+                token_holder["value"] = _bearer_token_from_headers(
+                    headers, token_holder["value"]
+                )
                 if res.status_code != 200:
                     break
-                data = res.json()
                 if data.get("rt_cd") != "0":
                     break
 
-                if "output1" in data:
-                    for item in data["output1"]:
+                output1_page_raw = data.get("output1") or []
+                if isinstance(output1_page_raw, list):
+                    output1_page: list[dict[str, object]] = (
+                        [row for row in output1_page_raw if isinstance(row, dict)]
+                    )
+                    for item in output1_page:
                         avg_unpr3 = _to_float(item.get("avg_unpr3", "0"))
                         ovrs_now_pric1 = _to_float(item.get("ovrs_now_pric1", "0"))
                         bass_exrt = _to_float(item.get("bass_exrt", "1"))
@@ -805,19 +1045,23 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                             "bass_exrt": bass_exrt,
                         })
 
-                if "output3" in data and not us_result["us_summary"]:
-                    out3 = data["output3"]
+                out3_raw = data.get("output3") or {}
+                if isinstance(out3_raw, dict) and not us_result["us_summary"]:
+                    out3: dict[str, object] = out3_raw if isinstance(out3_raw, dict) else {}
                     usd_cash = 0.0
                     usd_exrt = 0.0
                     usd_cash_key = "none"
                     output1_rows = _normalize_balance_rows(data.get("output1"))
                     usd_cash, usd_cash_key = _get_overseas_orderable_cash("USD")
-                    if "output2" in data:
-                        _, usd_exrt, _ = _pick_foreign_balance_from_output2(data["output2"], "USD")
+                    output2_page_raw = data.get("output2") or []
+                    if isinstance(output2_page_raw, list):
+                        output2_page = output2_page_raw
+                        _, usd_exrt, _ = _pick_foreign_balance_from_output2(output2_page, "USD")
                     if usd_cash <= 0 and output1_rows:
                         usd_cash, usd_exrt, usd_cash_key = _pick_foreign_cash_balance_from_output1_cash_row(output1_rows, "USD")
-                    if usd_cash <= 0 and "output2" in data:
-                        usd_cash, usd_exrt, usd_cash_key = _pick_foreign_cash_balance_from_output2(data["output2"], "USD")
+                    if usd_cash <= 0 and isinstance(output2_page_raw, list):
+                        output2_page = output2_page_raw
+                        usd_cash, usd_exrt, usd_cash_key = _pick_foreign_cash_balance_from_output2(output2_page, "USD")
                     if usd_cash <= 0:
                         fallback_cash, fallback_key = _pick_foreign_cash_balance_from_output3(out3)
                         if fallback_cash > 0:
@@ -864,10 +1108,20 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
         jp_result: dict[str, object] = {"jp_summary": {}, "jp_items": jp_items}
 
         try:
-            res = requests.get(url, headers=headers, params=params_jp_foreign, timeout=10)
+            res, data, headers = _authorized_request_once(
+                requests.get,
+                url,
+                headers,
+                params=params_jp_foreign,
+                timeout=10,
+                app_key=app_key,
+                app_secret=app_secret,
+            )
+            token_holder["value"] = _bearer_token_from_headers(
+                headers, token_holder["value"]
+            )
             if res.status_code != 200:
                 return jp_result
-            data = res.json()
             if data.get("rt_cd") != "0":
                 return jp_result
 
@@ -877,7 +1131,10 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
 
             output1_rows = _normalize_balance_rows(data.get("output1"))
             output2_rows = _normalize_balance_rows(data.get("output2"))
-            output3_row = data.get("output3") or {}
+            output3_row_raw = data.get("output3") or {}
+            output3_row: dict[str, object] = (
+                output3_row_raw if isinstance(output3_row_raw, dict) else {}
+            )
 
             jp_cash, jp_cash_key = _get_overseas_orderable_cash("JPY")
 
