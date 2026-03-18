@@ -6,9 +6,11 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
+import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
@@ -27,6 +29,10 @@ class SettingsManager(private val context: Context) {
         private val ENCRYPTED_CREDENTIALS_KEY = stringPreferencesKey("encrypted_credentials")
         private val CREDENTIAL_SALT_KEY = stringPreferencesKey("credential_salt")
         private val CREDENTIAL_IV_KEY = stringPreferencesKey("credential_iv")
+        private val TOKEN_SCOPE_KEY = stringPreferencesKey("token_scope")
+        private val ACCESS_TOKEN_KEY = stringPreferencesKey("access_token")
+        private val TOKEN_ISSUED_AT_KEY = longPreferencesKey("token_issued_at")
+        private val TOKEN_EXPIRES_AT_KEY = longPreferencesKey("token_expires_at")
         private const val KDF_ITERATIONS = 390000
         private const val KEY_LENGTH_BITS = 256
         private const val GCM_TAG_LENGTH_BITS = 128
@@ -57,6 +63,7 @@ class SettingsManager(private val context: Context) {
             preferences[ENCRYPTED_CREDENTIALS_KEY] = encrypted
             preferences[CREDENTIAL_SALT_KEY] = encodeBase64(salt)
             preferences[CREDENTIAL_IV_KEY] = encodeBase64(iv)
+            clearAuthToken(preferences)
         }
         return credentials
     }
@@ -81,6 +88,47 @@ class SettingsManager(private val context: Context) {
             preferences.remove(ENCRYPTED_CREDENTIALS_KEY)
             preferences.remove(CREDENTIAL_SALT_KEY)
             preferences.remove(CREDENTIAL_IV_KEY)
+            clearAuthToken(preferences)
+        }
+    }
+
+    suspend fun loadAuthToken(credentials: AppCredentials): AuthToken? {
+        val values = context.dataStore.data.map { preferences ->
+            TokenStoreRecord(
+                scope = preferences[TOKEN_SCOPE_KEY],
+                value = preferences[ACCESS_TOKEN_KEY],
+                issuedAtMillis = preferences[TOKEN_ISSUED_AT_KEY],
+                expiresAtMillis = preferences[TOKEN_EXPIRES_AT_KEY],
+            )
+        }.first()
+        if (values.scope != tokenScope(credentials)) {
+            return null
+        }
+        val value = values.value?.trim().orEmpty()
+        val issuedAtMillis = values.issuedAtMillis ?: return null
+        val expiresAtMillis = values.expiresAtMillis ?: return null
+        if (value.isBlank() || expiresAtMillis <= issuedAtMillis) {
+            return null
+        }
+        return AuthToken(
+            value = value,
+            issuedAtMillis = issuedAtMillis,
+            expiresAtMillis = expiresAtMillis,
+        )
+    }
+
+    suspend fun saveAuthToken(credentials: AppCredentials, token: AuthToken) {
+        context.dataStore.edit { preferences ->
+            preferences[TOKEN_SCOPE_KEY] = tokenScope(credentials)
+            preferences[ACCESS_TOKEN_KEY] = token.value
+            preferences[TOKEN_ISSUED_AT_KEY] = token.issuedAtMillis
+            preferences[TOKEN_EXPIRES_AT_KEY] = token.expiresAtMillis
+        }
+    }
+
+    suspend fun clearAuthToken() {
+        context.dataStore.edit { preferences ->
+            clearAuthToken(preferences)
         }
     }
 
@@ -121,4 +169,29 @@ class SettingsManager(private val context: Context) {
     private fun encodeBase64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
     private fun decodeBase64(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
+
+    private fun tokenScope(credentials: AppCredentials): String {
+        val raw = listOf(
+            credentials.appKey.trim(),
+            credentials.appSecret.trim(),
+            credentials.cano.trim(),
+            credentials.acntPrdtCd.trim(),
+        ).joinToString("::")
+        val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun clearAuthToken(preferences: androidx.datastore.preferences.core.MutablePreferences) {
+        preferences.remove(TOKEN_SCOPE_KEY)
+        preferences.remove(ACCESS_TOKEN_KEY)
+        preferences.remove(TOKEN_ISSUED_AT_KEY)
+        preferences.remove(TOKEN_EXPIRES_AT_KEY)
+    }
+
+    private data class TokenStoreRecord(
+        val scope: String?,
+        val value: String?,
+        val issuedAtMillis: Long?,
+        val expiresAtMillis: Long?,
+    )
 }

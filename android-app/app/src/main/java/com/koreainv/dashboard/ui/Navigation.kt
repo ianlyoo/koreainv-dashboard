@@ -86,7 +86,7 @@ fun KoreaInvApp() {
     var selectedTradeUsdRate by remember { mutableStateOf(1350.0) }
     var selectedTradeLastSynced by remember { mutableStateOf<String?>(null) }
     var tradeHistorySessionState by remember { mutableStateOf(TradeHistorySessionState()) }
-    val repository = remember(unlockedCredentials) { unlockedCredentials?.let { KisRepository(it) } }
+    val repository = remember(unlockedCredentials) { unlockedCredentials?.let { KisRepository(it, settingsManager) } }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val primaryTabs = listOf(

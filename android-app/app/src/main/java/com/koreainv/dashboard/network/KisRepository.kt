@@ -32,6 +32,7 @@ import kotlinx.coroutines.withContext
 
 class KisRepository(
     private val credentials: AppCredentials,
+    private val settingsManager: SettingsManager,
 ) {
     companion object {
         private const val BASE_URL = "https://openapi.koreainvestment.com:9443"
@@ -756,6 +757,12 @@ class KisRepository(
     private suspend fun requireToken(): String? = tokenMutex.withLock {
         val now = System.currentTimeMillis()
         authToken?.takeIf { now < it.expiresAtMillis - TOKEN_BUFFER_SECONDS * 1000 }?.let { return it.value }
+        settingsManager.loadAuthToken(credentials)
+            ?.takeIf { now < it.expiresAtMillis - TOKEN_BUFFER_SECONDS * 1000 }
+            ?.let {
+                authToken = it
+                return it.value
+            }
 
         val requestBody = JsonObject().apply {
             addProperty("grant_type", "client_credentials")
@@ -780,6 +787,7 @@ class KisRepository(
             if (accessToken.isBlank()) return null
             val expiresIn = number(json, "expires_in").takeIf { it > 0.0 }?.toLong() ?: 43200L
             authToken = AuthToken(accessToken, now, now + expiresIn * 1000)
+            authToken?.let { settingsManager.saveAuthToken(credentials, it) }
             return accessToken
         }
     }
@@ -820,6 +828,7 @@ class KisRepository(
                     currentToken
                 } else {
                     authToken = null
+                    settingsManager.clearAuthToken()
                     requireToken()
                 } ?: throw IllegalStateException("KIS_TOKEN_REFRESH_FAILED[$trId] path=$path")
                 return getJson(path, trId, query, refreshed, false, retryOnRateLimit)
