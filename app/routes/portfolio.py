@@ -330,17 +330,7 @@ async def get_realized_profit_detail(request: Request, start: str, end: str):
                 status_code=500, detail="Failed to get access token from API"
             )
 
-        payload_task = asyncio.to_thread(
-            api_client.get_realized_profit_summary,
-            token,
-            session.app_key,
-            session.app_secret,
-            session.cano,
-            session.acnt_prdt_cd,
-            start_day.strftime("%Y%m%d"),
-            end_day.strftime("%Y%m%d"),
-        )
-        trade_payload_task = asyncio.to_thread(
+        trade_payload = await asyncio.to_thread(
             api_client.get_trade_history,
             token,
             session.app_key,
@@ -350,12 +340,11 @@ async def get_realized_profit_detail(request: Request, start: str, end: str):
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
         )
-        payload, trade_payload = await asyncio.gather(payload_task, trade_payload_task)
         trades = trade_payload.get("items", []) if isinstance(trade_payload, dict) else []
         return _serialize_realized_profit_payload(
             start_day,
             end_day,
-            _with_realized_profit_trades(payload, trades),
+            _with_realized_profit_trades(trade_payload, trades),
         )
     except HTTPException:
         raise

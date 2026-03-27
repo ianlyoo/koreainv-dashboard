@@ -140,6 +140,44 @@ class DashboardSmokeTests(unittest.TestCase):
             dashboard_js,
         )
 
+    @patch("app.routes.portfolio.api_client.get_realized_profit_summary")
+    @patch("app.routes.portfolio.api_client.get_trade_history")
+    @patch("app.routes.portfolio.api_client.get_access_token", return_value="token")
+    def test_realized_profit_detail_reuses_trade_history_summary(
+        self,
+        _get_access_token,
+        mock_get_trade_history,
+        mock_get_realized_profit_summary,
+    ):
+        active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
+        self.client.cookies.set("session", "test-session")
+        mock_get_trade_history.return_value = {
+            "summary": {
+                "domestic_realized_profit_krw": 5000,
+                "overseas_realized_profit_krw": 0,
+                "total_realized_profit_krw": 5000,
+                "total_realized_return_rate": 3.5,
+                "trade_days": 1,
+            },
+            "daily": [
+                {
+                    "date": "20260305",
+                    "domestic_realized_profit_krw": 5000,
+                    "overseas_realized_profit_krw": 0,
+                    "total_realized_profit_krw": 5000,
+                }
+            ],
+            "items": [],
+        }
+
+        response = self.client.get("/api/realized-profit/detail?start=2026-03-01&end=2026-03-31")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["total_realized_profit_krw"], 5000)
+        self.assertEqual(len(payload["daily"]), 1)
+        mock_get_realized_profit_summary.assert_not_called()
+
     def test_dashboard_js_escapes_holding_markup_and_resumes_day_market_polling(self):
         dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
 

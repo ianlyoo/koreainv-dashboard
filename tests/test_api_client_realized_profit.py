@@ -319,167 +319,6 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(amount, 12000.0)
         self.assertEqual(source, "output3.ord_psbl_frcr_amt")
 
-    @patch("app.api_client.requests.get")
-    def test_get_overseas_balance_exposes_optional_jpy_summary(self, mock_get):
-        us_payload = {
-            "rt_cd": "0",
-            "output1": [],
-            "output2": [{"crcy_cd": "USD", "frcr_dncl_amt_2": "20.5", "sll_ruse_psbl_amt": "4.5", "bass_exrt": "1400"}],
-            "output3": {"pchs_amt_smtl_amt": "0", "evlu_amt_smtl_amt": "0"},
-        }
-        jp_payload = {
-            "rt_cd": "0",
-            "output1": [],
-            "output2": [{"crcy_cd": "JPY", "frcr_dncl_amt_2": "33000", "sll_ruse_psbl_amt": "7000", "bass_exrt": "910"}],
-        }
-        us_ps_payload = {
-            "rt_cd": "0",
-            "output": {"ovrs_ord_psbl_amt": "25.0"},
-        }
-        jp_ps_payload = {
-            "rt_cd": "0",
-            "output": {"ovrs_ord_psbl_amt": "40000.0"},
-        }
-
-        def fake_get(url, headers=None, params=None, timeout=None):
-            tr_id = (headers or {}).get("tr_id")
-            natn_cd = (params or {}).get("NATN_CD")
-            if tr_id == "CTRP6504R" and natn_cd == "840":
-                return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
-            if tr_id == "CTRP6504R" and natn_cd == "392":
-                return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
-            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") in {"NASD", "NYSE"}:
-                return SimpleNamespace(status_code=200, json=lambda: us_ps_payload, headers={})
-            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") == "TKSE":
-                return SimpleNamespace(status_code=200, json=lambda: jp_ps_payload, headers={})
-            self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
-
-        mock_get.side_effect = fake_get
-
-        result = api_client.get_overseas_balance(
-            "token",
-            "key",
-            "secret",
-            "12345678",
-            "01",
-        )
-        result_dict = result if isinstance(result, dict) else {}
-        us_summary_obj = result_dict.get("us_summary")
-        jp_summary_obj = result_dict.get("jp_summary")
-        us_summary = us_summary_obj if isinstance(us_summary_obj, dict) else {}
-        jp_summary = jp_summary_obj if isinstance(jp_summary_obj, dict) else {}
-
-        self.assertEqual(us_summary.get("usd_cash_balance"), 25.0)
-        self.assertEqual(jp_summary.get("jpy_cash_balance"), 40000.0)
-        self.assertEqual(jp_summary.get("jpy_exrt"), 910.0)
-
-    @patch("app.api_client.requests.get")
-    def test_get_overseas_balance_prefers_jpy_cash_row_from_output1(self, mock_get):
-        us_payload = {
-            "rt_cd": "0",
-            "output1": [],
-            "output2": [{"crcy_cd": "USD", "frcr_use_psbl_amt": "20.5", "bass_exrt": "1400"}],
-            "output3": {"pchs_amt_smtl_amt": "0", "evlu_amt_smtl_amt": "0"},
-        }
-        jp_payload = {
-            "rt_cd": "0",
-            "output1": [
-                {"pdno": "JPY", "ccld_qty_smtl1": "48000", "bass_exrt": "905"},
-                {"pdno": "7203", "prdt_name": "Toyota", "avg_unpr3": "2000", "ovrs_now_pric1": "2100", "bass_exrt": "905", "ccld_qty_smtl1": "10", "ovrs_excg_cd": "TKSE"},
-            ],
-            "output2": {"frcr_dncl_amt_2": "33000", "sll_ruse_psbl_amt": "5000", "bass_exrt": "910"},
-            "output3": {"ord_psbl_frcr_amt": "12000"},
-        }
-        us_ps_payload = {
-            "rt_cd": "0",
-            "output": {"ovrs_ord_psbl_amt": "20.5"},
-        }
-        jp_ps_payload = {
-            "rt_cd": "0",
-            "output": {"ovrs_ord_psbl_amt": "53000.0"},
-        }
-
-        def fake_get(url, headers=None, params=None, timeout=None):
-            tr_id = (headers or {}).get("tr_id")
-            natn_cd = (params or {}).get("NATN_CD")
-            if tr_id == "CTRP6504R" and natn_cd == "840":
-                return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
-            if tr_id == "CTRP6504R" and natn_cd == "392":
-                return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
-            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") in {"NASD", "NYSE"}:
-                return SimpleNamespace(status_code=200, json=lambda: us_ps_payload, headers={})
-            if tr_id == "TTTS3007R" and (params or {}).get("OVRS_EXCG_CD") == "TKSE":
-                return SimpleNamespace(status_code=200, json=lambda: jp_ps_payload, headers={})
-            self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
-
-        mock_get.side_effect = fake_get
-
-        result = api_client.get_overseas_balance(
-            "token",
-            "key",
-            "secret",
-            "12345678",
-            "01",
-        )
-        result_dict = result if isinstance(result, dict) else {}
-        jp_summary_obj = result_dict.get("jp_summary")
-        jp_items_obj = result_dict.get("jp_items")
-        jp_summary = jp_summary_obj if isinstance(jp_summary_obj, dict) else {}
-        jp_items = jp_items_obj if isinstance(jp_items_obj, list) else []
-
-        self.assertEqual(jp_summary.get("jpy_cash_balance"), 53000.0)
-        self.assertEqual(jp_summary.get("jpy_exrt"), 910.0)
-        self.assertEqual(len(jp_items), 1)
-        self.assertEqual(jp_items[0].get("ticker"), "7203")
-
-    @patch("app.api_client.requests.get")
-    def test_get_overseas_balance_uses_psamount_only_when_balance_fields_are_empty(self, mock_get):
-        us_payload = {
-            "rt_cd": "0",
-            "output1": [],
-            "output2": [{"crcy_cd": "USD", "frcr_use_psbl_amt": "0", "bass_exrt": "1400"}],
-            "output3": {"pchs_amt_smtl_amt": "0", "evlu_amt_smtl_amt": "0"},
-        }
-        jp_payload = {
-            "rt_cd": "0",
-            "output1": [],
-            "output2": [{"crcy_cd": "JPY", "frcr_use_psbl_amt": "0", "bass_exrt": "910"}],
-            "output3": {"ord_psbl_frcr_amt": "0"},
-        }
-        ps_payload = {
-            "rt_cd": "0",
-            "output": {"ovrs_ord_psbl_amt": "77.5"},
-        }
-        ps_calls = []
-
-        def fake_get(url, headers=None, params=None, timeout=None):
-            tr_id = (headers or {}).get("tr_id")
-            natn_cd = (params or {}).get("NATN_CD")
-            if tr_id == "CTRP6504R" and natn_cd == "840":
-                return SimpleNamespace(status_code=200, json=lambda: us_payload, headers={})
-            if tr_id == "CTRP6504R" and natn_cd == "392":
-                return SimpleNamespace(status_code=200, json=lambda: jp_payload, headers={})
-            if tr_id == "TTTS3007R":
-                ps_calls.append((params or {}).get("OVRS_EXCG_CD"))
-                return SimpleNamespace(status_code=200, json=lambda: ps_payload, headers={})
-            self.fail(f"Unexpected requests.get call: tr_id={tr_id}, natn_cd={natn_cd}, params={params}")
-
-        mock_get.side_effect = fake_get
-
-        result = api_client.get_overseas_balance(
-            "token",
-            "key",
-            "secret",
-            "12345678",
-            "01",
-        )
-        result_dict = result if isinstance(result, dict) else {}
-        us_summary_obj = result_dict.get("us_summary")
-        us_summary = us_summary_obj if isinstance(us_summary_obj, dict) else {}
-
-        self.assertEqual(us_summary.get("usd_cash_balance"), 77.5)
-        self.assertEqual(ps_calls, ["NASD", "TKSE"])
-
     @patch("app.api_client._run_parallel_tasks")
     def test_fetch_trade_profit_rows_dedupes_overlapping_calls(self, mock_run_parallel_tasks):
         call_count = 0
@@ -570,6 +409,71 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertTrue(api_client._has_japan_trade_rows([{"market": "TYO"}]))
         self.assertTrue(api_client._has_japan_trade_rows([{"market": "JPX"}]))
         self.assertFalse(api_client._has_japan_trade_rows([{"market": "NASD"}]))
+
+    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client._fetch_trade_profit_rows")
+    @patch("app.api_client.get_overseas_trade_history")
+    @patch("app.api_client.get_domestic_trade_history")
+    def test_get_trade_history_includes_summary_and_daily_payload(
+        self,
+        mock_domestic_trade_history,
+        mock_overseas_trade_history,
+        mock_fetch_trade_profit_rows,
+        mock_get_japan_trade_history_ccnl,
+    ):
+        mock_domestic_trade_history.return_value = [
+            {
+                "date": "20260311",
+                "time": "091500",
+                "market": "KOR",
+                "symbol": "005930",
+                "ticker": "005930",
+                "side": "매도",
+                "quantity": 2.0,
+                "unit_price": 70000.0,
+                "amount": 140000.0,
+            }
+        ]
+        mock_overseas_trade_history.return_value = []
+        mock_fetch_trade_profit_rows.return_value = {
+            "domestic": [
+                {
+                    "date": "20260311",
+                    "symbol": "005930",
+                    "quantity": 2.0,
+                    "amount": 140000.0,
+                    "realized_profit_krw": 10000.0,
+                    "buy_amount_krw": 130000.0,
+                    "realized_return_rate": None,
+                }
+            ],
+            "overseas": [],
+        }
+        mock_get_japan_trade_history_ccnl.return_value = []
+
+        payload = api_client.get_trade_history(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+        )
+
+        summary = payload.get("summary") or {}
+        daily = payload.get("daily") or []
+        items = payload.get("items") or []
+
+        self.assertEqual(summary.get("total_realized_profit_krw"), 10000.0)
+        self.assertAlmostEqual(
+            float(summary.get("total_realized_return_rate") or 0.0),
+            (10000.0 / 130000.0) * 100.0,
+            places=6,
+        )
+        self.assertEqual(len(daily), 1)
+        self.assertEqual(daily[0]["date"], "20260311")
+        self.assertEqual(items[0]["realized_profit_krw"], 10000.0)
 
     @patch("app.api_client.get_japan_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")

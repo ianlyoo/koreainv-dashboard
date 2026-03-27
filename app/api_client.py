@@ -1312,6 +1312,82 @@ def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, sta
                 inflight_event.set()
 
 
+def _build_realized_profit_summary_payload(trade_profit_rows: Mapping[str, object]) -> dict[str, object]:
+    domestic_source = trade_profit_rows.get("domestic", [])
+    overseas_source = trade_profit_rows.get("overseas", [])
+    domestic_rows = domestic_source if isinstance(domestic_source, list) else []
+    overseas_rows = overseas_source if isinstance(overseas_source, list) else []
+
+    by_date: dict[str, dict] = {}
+    for row in domestic_rows:
+        bucket = by_date.setdefault(row["date"], {
+            "date": row["date"],
+            "domestic_realized_profit_krw": 0.0,
+            "overseas_realized_profit_krw": 0.0,
+            "domestic_buy_amount_krw": 0.0,
+            "overseas_buy_amount_krw": 0.0,
+        })
+        bucket["domestic_realized_profit_krw"] += row.get("realized_profit_krw", 0.0)
+        bucket["domestic_buy_amount_krw"] += row.get("buy_amount_krw", 0.0)
+
+    for row in overseas_rows:
+        bucket = by_date.setdefault(row["date"], {
+            "date": row["date"],
+            "domestic_realized_profit_krw": 0.0,
+            "overseas_realized_profit_krw": 0.0,
+            "domestic_buy_amount_krw": 0.0,
+            "overseas_buy_amount_krw": 0.0,
+        })
+        bucket["overseas_realized_profit_krw"] += row.get("realized_profit_krw", 0.0)
+        bucket["overseas_buy_amount_krw"] += row.get("buy_amount_krw", 0.0)
+
+    daily_rows = []
+    for date_key in sorted(by_date.keys()):
+        row = by_date[date_key]
+        row["total_realized_profit_krw"] = row["domestic_realized_profit_krw"] + row["overseas_realized_profit_krw"]
+        daily_rows.append(row)
+
+    domestic_total = sum(row["domestic_realized_profit_krw"] for row in daily_rows)
+    overseas_total = sum(row["overseas_realized_profit_krw"] for row in daily_rows)
+    domestic_buy_total = sum(
+        row.get("buy_amount_krw", 0.0)
+        for row in domestic_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
+    overseas_buy_total = sum(
+        row.get("buy_amount_krw", 0.0)
+        for row in overseas_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
+    domestic_rate_profit_total = sum(
+        row.get("realized_profit_krw", 0.0)
+        for row in domestic_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
+    overseas_rate_profit_total = sum(
+        row.get("realized_profit_krw", 0.0)
+        for row in overseas_rows
+        if row.get("buy_amount_krw", 0.0) > 0
+    )
+    total_buy_amount = domestic_buy_total + overseas_buy_total
+    total_realized_return_rate = (
+        ((domestic_rate_profit_total + overseas_rate_profit_total) / total_buy_amount * 100)
+        if total_buy_amount > 0
+        else 0.0
+    )
+
+    return {
+        "summary": {
+            "domestic_realized_profit_krw": domestic_total,
+            "overseas_realized_profit_krw": overseas_total,
+            "total_realized_profit_krw": domestic_total + overseas_total,
+            "total_realized_return_rate": total_realized_return_rate,
+            "trade_days": len(daily_rows),
+        },
+        "daily": daily_rows,
+    }
+
+
 def _normalize_domestic_realized_rows(rows: list[dict]) -> list[dict]:
     normalized = []
     for row in rows or []:
@@ -1508,7 +1584,8 @@ def get_overseas_realized_profit(token, app_key, app_secret, cano, acnt_prdt_cd,
     url = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-period-profit"
     rows = []
 
-    for exchange_code, currency_code in exchange_queries:
+    def fetch_exchange(exchange_query: tuple[str, str]) -> list[dict]:
+        exchange_code, currency_code = exchange_query
         headers = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {token}",
@@ -1530,19 +1607,22 @@ def get_overseas_realized_profit(token, app_key, app_secret, cano, acnt_prdt_cd,
             "CTX_AREA_NK200": "",
         }
         pages = _request_with_pagination(url, headers, params, "ctx_area_fk200", "ctx_area_nk200", app_key=app_key, app_secret=app_secret)
-        exchange_row_count = 0
+        exchange_rows = []
         for _, data in pages:
             page_rows = data.get("output1") or []
             if isinstance(page_rows, dict):
                 page_rows = [page_rows]
             normalized_rows = _normalize_overseas_realized_rows(page_rows)
-            normalized_rows = [
+            exchange_rows.extend(
                 row
                 for row in normalized_rows
                 if _is_yyyymmdd_in_range(str(row.get("date", "")), start_date, end_date)
-            ]
-            exchange_row_count += len(normalized_rows)
-            rows.extend(normalized_rows)
+            )
+        return exchange_rows
+
+    with ThreadPoolExecutor(max_workers=min(len(exchange_queries), _MAX_PARALLEL_WORKERS)) as executor:
+        for exchange_rows in executor.map(fetch_exchange, exchange_queries):
+            rows.extend(exchange_rows)
 
     return _dedupe_realized_profit_rows(rows)
 
@@ -1554,77 +1634,7 @@ def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, 
         return cached
 
     trade_profit_rows = _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
-    domestic_rows = trade_profit_rows["domestic"]
-    overseas_rows = trade_profit_rows["overseas"]
-
-    by_date: dict[str, dict] = {}
-    for row in domestic_rows:
-        bucket = by_date.setdefault(row["date"], {
-            "date": row["date"],
-            "domestic_realized_profit_krw": 0.0,
-            "overseas_realized_profit_krw": 0.0,
-            "domestic_buy_amount_krw": 0.0,
-            "overseas_buy_amount_krw": 0.0,
-        })
-        bucket["domestic_realized_profit_krw"] += row.get("realized_profit_krw", 0.0)
-        bucket["domestic_buy_amount_krw"] += row.get("buy_amount_krw", 0.0)
-
-    for row in overseas_rows:
-        bucket = by_date.setdefault(row["date"], {
-            "date": row["date"],
-            "domestic_realized_profit_krw": 0.0,
-            "overseas_realized_profit_krw": 0.0,
-            "domestic_buy_amount_krw": 0.0,
-            "overseas_buy_amount_krw": 0.0,
-        })
-        bucket["overseas_realized_profit_krw"] += row.get("realized_profit_krw", 0.0)
-        bucket["overseas_buy_amount_krw"] += row.get("buy_amount_krw", 0.0)
-
-    daily_rows = []
-    for date_key in sorted(by_date.keys()):
-        row = by_date[date_key]
-        row["total_realized_profit_krw"] = row["domestic_realized_profit_krw"] + row["overseas_realized_profit_krw"]
-        daily_rows.append(row)
-
-    domestic_total = sum(row["domestic_realized_profit_krw"] for row in daily_rows)
-    overseas_total = sum(row["overseas_realized_profit_krw"] for row in daily_rows)
-    domestic_buy_total = sum(
-        row.get("buy_amount_krw", 0.0)
-        for row in domestic_rows
-        if row.get("buy_amount_krw", 0.0) > 0
-    )
-    overseas_buy_total = sum(
-        row.get("buy_amount_krw", 0.0)
-        for row in overseas_rows
-        if row.get("buy_amount_krw", 0.0) > 0
-    )
-    domestic_rate_profit_total = sum(
-        row.get("realized_profit_krw", 0.0)
-        for row in domestic_rows
-        if row.get("buy_amount_krw", 0.0) > 0
-    )
-    overseas_rate_profit_total = sum(
-        row.get("realized_profit_krw", 0.0)
-        for row in overseas_rows
-        if row.get("buy_amount_krw", 0.0) > 0
-    )
-    total_buy_amount = domestic_buy_total + overseas_buy_total
-    total_realized_return_rate = (
-        ((domestic_rate_profit_total + overseas_rate_profit_total) / total_buy_amount * 100)
-        if total_buy_amount > 0
-        else 0.0
-    )
-
-    result = {
-        "summary": {
-            "domestic_realized_profit_krw": domestic_total,
-            "overseas_realized_profit_krw": overseas_total,
-            "total_realized_profit_krw": domestic_total + overseas_total,
-            "total_realized_return_rate": total_realized_return_rate,
-            "trade_days": len(daily_rows),
-        },
-        "daily": daily_rows,
-    }
+    result = _build_realized_profit_summary_payload(trade_profit_rows)
     _set_cached_payload(cache_key, result)
     return result
 
@@ -1993,12 +2003,14 @@ def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date
     results = _run_parallel_tasks({
         "domestic_trades": (get_domestic_trade_history, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
         "overseas_trades": (get_overseas_trade_history, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+        "pnl_rows": (_fetch_trade_profit_rows, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
     })
-    pnl_rows = _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
     domestic_trade_result = results.get("domestic_trades")
     overseas_trade_result = results.get("overseas_trades")
+    pnl_result = results.get("pnl_rows")
     domestic_rows: list[dict] = domestic_trade_result if isinstance(domestic_trade_result, list) else []
     overseas_rows: list[dict] = overseas_trade_result if isinstance(overseas_trade_result, list) else []
+    pnl_rows: dict[str, list[dict]] = pnl_result if isinstance(pnl_result, dict) else {"domestic": [], "overseas": []}
     japan_ccnl_rows: list[dict] = []
     if not _has_japan_trade_rows(overseas_rows):
         japan_ccnl_result = get_japan_trade_history_ccnl(
@@ -2018,6 +2030,11 @@ def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date
     all_rows = _dedupe_trade_rows(domestic_rows + overseas_rows)
     all_rows = _attach_realized_profit_to_sell_trades(all_rows, domestic_pnl_rows, overseas_pnl_rows)
     all_rows.sort(key=lambda row: f"{row.get('date', '')}{row.get('time', '')}", reverse=True)
-    result = {"items": all_rows}
+    summary_payload = _build_realized_profit_summary_payload(pnl_rows)
+    result = {
+        "items": all_rows,
+        "summary": summary_payload.get("summary", {}),
+        "daily": summary_payload.get("daily", []),
+    }
     _set_cached_payload(cache_key, result)
     return result

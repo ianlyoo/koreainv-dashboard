@@ -413,24 +413,14 @@ async def get_mobile_trade_history(request: Request, range: str | None = None):
         start_day.strftime("%Y%m%d"),
         end_day.strftime("%Y%m%d"),
     )
-    summary_payload = await asyncio.to_thread(
-        api_client.get_realized_profit_summary,
-        token,
-        session.app_key,
-        session.app_secret,
-        session.cano,
-        session.acnt_prdt_cd,
-        start_day.strftime("%Y%m%d"),
-        end_day.strftime("%Y%m%d"),
-    )
     serialized = {
         "period": {
             "start": start_day.isoformat(),
             "end": end_day.isoformat(),
         },
         "summary": (
-            summary_payload.get("summary", {})
-            if isinstance(summary_payload, Mapping)
+            detail_payload.get("summary", {})
+            if isinstance(detail_payload, Mapping)
             else {}
         ),
         "trades": detail_payload.get("items", []) if isinstance(detail_payload, Mapping) else [],

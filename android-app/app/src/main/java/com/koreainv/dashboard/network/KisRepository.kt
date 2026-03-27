@@ -27,7 +27,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 class KisRepository(
@@ -39,6 +41,7 @@ class KisRepository(
         private const val TOKEN_BUFFER_SECONDS = 60L
         private const val DASHBOARD_CACHE_TTL_MILLIS = 15_000L
         private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 20_000L
+        private const val EXCHANGE_QUERY_CONCURRENCY = 4
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val JSON_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd")
         private val ISO_FORMAT = DateTimeFormatter.ISO_OFFSET_DATE_TIME
@@ -458,9 +461,7 @@ class KisRepository(
     private suspend fun getOverseasTradeHistory(startDate: String, endDate: String): List<TradeRow> {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:overseas]")
         val exchanges = listOf("NAS", "NYS", "AMS", "TSE", "TKSE", "HKS", "SHS", "SZS", "HSX", "HNX")
-        return buildList {
-            exchanges.forEachIndexed { index, exchange ->
-                if (index > 0) delay(140L)
+        return fetchExchangeRows(exchanges) { exchange ->
                 val pages = paginatedJson(
                     path = "/uapi/overseas-stock/v1/trading/inquire-period-trans",
                     trId = "CTOS4001R",
@@ -480,17 +481,14 @@ class KisRepository(
                     fkField = "ctx_area_fk100",
                     nkField = "ctx_area_nk100",
                 )
-                addAll(pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) })
-            }
+            pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) }
         }
     }
 
     private suspend fun getJapanTradeHistoryCcnl(startDate: String, endDate: String): List<TradeRow> {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:japan-ccnl]")
         val exchanges = listOf("TKSE", "TSE")
-        return buildList {
-            exchanges.forEachIndexed { index, exchange ->
-                if (index > 0) delay(140L)
+        return fetchExchangeRows(exchanges) { exchange ->
             val pages = paginatedJson(
                 path = "/uapi/overseas-stock/v1/trading/inquire-ccnl",
                 trId = "TTTS3035R",
@@ -514,8 +512,7 @@ class KisRepository(
                 fkField = "ctx_area_fk200",
                 nkField = "ctx_area_nk200",
             )
-                addAll(pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) })
-            }
+            pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) }
         }
     }
 
@@ -574,9 +571,7 @@ class KisRepository(
             "SHAA" to "CNY",
             "HASE" to "VND",
         )
-        return dedupeRealizedRows(buildList {
-            exchanges.forEachIndexed { index, (exchange, currency) ->
-                if (index > 0) delay(140L)
+        return dedupeRealizedRows(fetchExchangeRows(exchanges) { (exchange, currency) ->
                 val pages = paginatedJson(
                     path = "/uapi/overseas-stock/v1/trading/inquire-period-profit",
                     trId = "TTTS3039R",
@@ -597,7 +592,7 @@ class KisRepository(
                     fkField = "ctx_area_fk200",
                     nkField = "ctx_area_nk200",
                 )
-                addAll(pages.flatMap { page ->
+            pages.flatMap { page ->
                     jsonArray(page, "output1").mapNotNull { element ->
                         val row = element.asJsonObject
                         val tradeDate = string(row, "trad_day")
@@ -620,9 +615,22 @@ class KisRepository(
                             realizedReturnRate = string(row, "pftrt").takeIf { it.isNotBlank() }?.toDoubleOrNull(),
                         )
                     }
-                })
-            }
+                }
         })
+    }
+
+    private suspend fun <T, R> fetchExchangeRows(
+        exchanges: List<T>,
+        fetch: suspend (T) -> List<R>,
+    ): List<R> = coroutineScope {
+        val semaphore = Semaphore(EXCHANGE_QUERY_CONCURRENCY)
+        exchanges.map { exchange ->
+            async {
+                semaphore.withPermit {
+                    fetch(exchange)
+                }
+            }
+        }.awaitAll().flatten()
     }
 
     private fun buildDashboard(domestic: DomesticBalancePayload, overseas: OverseasBalancePayload): DashboardResponse {

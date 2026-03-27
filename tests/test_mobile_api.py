@@ -177,14 +177,12 @@ class MobileApiTests(unittest.TestCase):
         self.assertEqual(len(payload["asset_distribution"]), 2)
         self.assertIn("last_synced", payload["summary"])
 
-    @patch("app.routes.mobile.api_client.get_realized_profit_summary")
     @patch("app.routes.mobile.api_client.get_trade_history")
     @patch("app.routes.mobile.api_client.get_access_token", return_value="token")
     def test_mobile_trade_history_returns_realized_summary_and_trades(
         self,
         _get_access_token,
         mock_get_trade_history,
-        mock_get_realized_profit_summary,
     ):
         active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
         self.client.cookies.set("session", "test-session")
@@ -204,15 +202,13 @@ class MobileApiTests(unittest.TestCase):
                     "realized_profit_krw": None,
                     "realized_return_rate": None,
                 }
-            ]
-        }
-        mock_get_realized_profit_summary.return_value = {
+            ],
             "summary": {
                 "total_realized_profit_krw": 120000,
                 "domestic_realized_profit_krw": 120000,
                 "overseas_realized_profit_krw": 0,
                 "total_realized_return_rate": 5.4,
-            }
+            },
         }
 
         response = self.client.get("/api/mobile/trade-history")
