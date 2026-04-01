@@ -1086,8 +1086,26 @@
             renderRealizedProfitDetail(currentRealizedProfitDetail);
         }
 
-        async function getRealizedProfitDetailPayload(start, end, force = false) {
-            const cacheKey = `${start}:${end}`;
+        function getActiveTradeHistoryPage() {
+            return activeProfitModalTab === 'sell' ? realizedProfitSellPage : realizedProfitBuyPage;
+        }
+
+        function buildRealizedProfitDetailCacheKey(start, end, options = {}) {
+            const side = options.side || activeProfitModalTab || 'buy';
+            const market = options.market || activeProfitMarketFilter || 'all';
+            const page = options.page || getActiveTradeHistoryPage();
+            const pageSize = options.pageSize || REALIZED_PROFIT_PAGE_SIZE;
+            const includeTrades = options.includeTrades !== false;
+            return `${start}:${end}:${side}:${market}:${page}:${pageSize}:${includeTrades ? '1' : '0'}`;
+        }
+
+        async function getRealizedProfitDetailPayload(start, end, options = {}, force = false) {
+            const side = options.side || activeProfitModalTab || 'buy';
+            const market = options.market || activeProfitMarketFilter || 'all';
+            const page = options.page || getActiveTradeHistoryPage();
+            const pageSize = options.pageSize || REALIZED_PROFIT_PAGE_SIZE;
+            const includeTrades = options.includeTrades !== false;
+            const cacheKey = buildRealizedProfitDetailCacheKey(start, end, { side, market, page, pageSize, includeTrades });
             const cached = getFreshRealizedCacheEntry(realizedProfitDetailCache, cacheKey);
             if (!force && cached) {
                 return cached;
@@ -1098,7 +1116,16 @@
             }
             const request = (async () => {
                 try {
-                    const res = await fetch(`/api/realized-profit/detail?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+                    const params = new URLSearchParams({
+                        start,
+                        end,
+                        side,
+                        market,
+                        page: String(page),
+                        page_size: String(pageSize),
+                        include_trades: includeTrades ? '1' : '0',
+                    });
+                    const res = await fetch(`/api/realized-profit/detail?${params.toString()}`);
                     if (res.status === 401) {
                         window.location.href = '/login';
                         return null;
@@ -1140,7 +1167,7 @@
             }
 
             try {
-                const yearPayload = await getRealizedProfitDetailPayload(yearStart, yearEnd);
+                const yearPayload = await getRealizedProfitDetailPayload(yearStart, yearEnd, { includeTrades: false });
                 if (!yearPayload || yearPayload.status !== 'success') {
                     realizedProfitTaxEstimate = null;
                     renderCapitalGainsTaxEstimate();
@@ -1219,27 +1246,20 @@
             captionEl.innerText = `${formatDisplayDate(detailPayload.period.start)} ~ ${formatDisplayDate(detailPayload.period.end)}`;
 
             const trades = Array.isArray(detailPayload.trades) ? detailPayload.trades : [];
-            const marketFilteredTrades = trades.filter((trade) => {
-                if (activeProfitMarketFilter === 'domestic') return trade.market === 'KOR';
-                if (activeProfitMarketFilter === 'overseas') return trade.market !== 'KOR';
-                return true;
-            });
-            const buyTrades = marketFilteredTrades.filter((trade) => trade.side === '매수');
-            const sellTrades = marketFilteredTrades.filter((trade) => trade.side === '매도');
+            const filters = detailPayload.filters || {};
+            const pagination = detailPayload.pagination || { page: 1, total_pages: 1, total_items: trades.length };
+            const activeSide = filters.side === 'sell' ? 'sell' : 'buy';
             const marketLabel = activeProfitMarketFilter === 'domestic' ? '국내' : activeProfitMarketFilter === 'overseas' ? '해외' : '선택한 조건';
 
-            const buyPageData = paginateTrades(buyTrades, realizedProfitBuyPage);
-            const sellPageData = paginateTrades(sellTrades, realizedProfitSellPage);
-            realizedProfitBuyPage = buyPageData.page;
-            realizedProfitSellPage = sellPageData.page;
-
-            if (!buyTrades.length) {
-                buyRowsEl.innerHTML = '';
-                buyEmptyEl.classList.add('active');
-                buyEmptyEl.innerText = `${marketLabel} 매수 거래내역이 없습니다.`;
-            } else {
-                buyEmptyEl.classList.remove('active');
-                buyRowsEl.innerHTML = buyPageData.items.map((trade) => `
+            if (activeSide === 'buy') {
+                realizedProfitBuyPage = Number(pagination.page || 1);
+                if (!trades.length) {
+                    buyRowsEl.innerHTML = '';
+                    buyEmptyEl.classList.add('active');
+                    buyEmptyEl.innerText = `${marketLabel} 매수 거래내역이 없습니다.`;
+                } else {
+                    buyEmptyEl.classList.remove('active');
+                    buyRowsEl.innerHTML = trades.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
                         <td>${trade.ticker || trade.symbol || '-'}</td>
@@ -1249,16 +1269,18 @@
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
                     </tr>
                 `).join('');
-                renderTradePagination('buy', buyTrades.length, buyPageData.page, buyPageData.totalPages);
-            }
-
-            if (!sellTrades.length) {
-                sellRowsEl.innerHTML = '';
-                sellEmptyEl.classList.add('active');
-                sellEmptyEl.innerText = `${marketLabel} 매도 거래내역이 없습니다.`;
+                }
+                renderTradePagination('buy', Number(pagination.total_items || 0), realizedProfitBuyPage, Number(pagination.total_pages || 1));
+                renderTradePagination('sell', 0, 1, 1);
             } else {
-                sellEmptyEl.classList.remove('active');
-                sellRowsEl.innerHTML = sellPageData.items.map((trade) => `
+                realizedProfitSellPage = Number(pagination.page || 1);
+                if (!trades.length) {
+                    sellRowsEl.innerHTML = '';
+                    sellEmptyEl.classList.add('active');
+                    sellEmptyEl.innerText = `${marketLabel} 매도 거래내역이 없습니다.`;
+                } else {
+                    sellEmptyEl.classList.remove('active');
+                    sellRowsEl.innerHTML = trades.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
                         <td>${trade.ticker || trade.symbol || '-'}</td>
@@ -1270,7 +1292,9 @@
                         <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '-' : formatSignedPercent(trade.realized_return_rate)}</td>
                     </tr>
                 `).join('');
-                renderTradePagination('sell', sellTrades.length, sellPageData.page, sellPageData.totalPages);
+                }
+                renderTradePagination('sell', Number(pagination.total_items || 0), realizedProfitSellPage, Number(pagination.total_pages || 1));
+                renderTradePagination('buy', 0, 1, 1);
             }
         }
 
@@ -1282,7 +1306,12 @@
             document.getElementById('sellHistoryEmpty').classList.remove('active');
 
             try {
-                const data = await getRealizedProfitDetailPayload(start, end, force);
+                const data = await getRealizedProfitDetailPayload(start, end, {
+                    side: activeProfitModalTab || 'buy',
+                    market: activeProfitMarketFilter || 'all',
+                    page: getActiveTradeHistoryPage(),
+                    pageSize: REALIZED_PROFIT_PAGE_SIZE,
+                }, force);
                 renderRealizedProfitDetail(data);
                 return data;
             } catch (err) {
@@ -1304,8 +1333,8 @@
 
             const overlay = document.getElementById('realizedProfitModal');
             overlay.classList.add('active');
-            setProfitModalTab(activeProfitModalTab || 'buy');
-            setProfitMarketFilter(activeProfitMarketFilter || 'all');
+            setProfitModalTab(activeProfitModalTab || 'buy', false);
+            setProfitMarketFilter(activeProfitMarketFilter || 'all', false);
             setRealizedPreset(activeRealizedPreset || 'thisMonth', true);
         }
 
@@ -1329,12 +1358,14 @@
         function onRealizedRangeInputChange() {
             activeRealizedPreset = 'custom';
             const presetButtons = document.querySelectorAll('[data-profit-preset]');
-            presetButtons.forEach((button) => button.classList.remove('active'));
+            presetButtons.forEach((button) => {
+                button.classList.remove('active');
+            });
             realizedProfitBuyPage = 1;
             realizedProfitSellPage = 1;
         }
 
-        function setProfitModalTab(tab) {
+        function setProfitModalTab(tab, shouldFetch = true) {
             activeProfitModalTab = tab === 'sell' ? 'sell' : 'buy';
             if (activeProfitModalTab === 'sell') realizedProfitSellPage = 1;
             else realizedProfitBuyPage = 1;
@@ -1343,9 +1374,15 @@
             });
             document.getElementById('buyHistoryPanel').classList.toggle('active', activeProfitModalTab === 'buy');
             document.getElementById('sellHistoryPanel').classList.toggle('active', activeProfitModalTab === 'sell');
+            if (!shouldFetch) return;
+            const start = document.getElementById('realizedProfitStart').value;
+            const end = document.getElementById('realizedProfitEnd').value;
+            if (start && end) {
+                loadRealizedProfitDetail(start, end);
+            }
         }
 
-        function setProfitMarketFilter(filter) {
+        function setProfitMarketFilter(filter, shouldFetch = true) {
             activeProfitMarketFilter = ['domestic', 'overseas'].includes(filter) ? filter : 'all';
             realizedProfitBuyPage = 1;
             realizedProfitSellPage = 1;
@@ -1356,11 +1393,8 @@
             const start = document.getElementById('realizedProfitStart').value;
             const end = document.getElementById('realizedProfitEnd').value;
             if (!start || !end) return;
-
-            const cacheKey = `${start}:${end}`;
-            const cached = getFreshRealizedCacheEntry(realizedProfitDetailCache, cacheKey);
-            if (cached) {
-                renderRealizedProfitDetail(cached);
+            if (shouldFetch) {
+                loadRealizedProfitDetail(start, end);
             }
         }
 

@@ -142,7 +142,7 @@ def _serialize_realized_profit_payload(
             }
         )
 
-    return {
+    result: dict[str, object] = {
         "status": "success",
         "period": {
             "start": start_day.isoformat(),
@@ -166,6 +166,13 @@ def _serialize_realized_profit_payload(
         "daily": daily_rows,
         "trades": payload_dict.get("trades", []),
     }
+    pagination = payload_dict.get("pagination")
+    if isinstance(pagination, dict):
+        result["pagination"] = pagination
+    filters = payload_dict.get("filters")
+    if isinstance(filters, dict):
+        result["filters"] = filters
+    return result
 
 
 def _with_realized_profit_trades(payload: object, trades: Sequence[object]) -> dict[str, object]:
@@ -173,6 +180,32 @@ def _with_realized_profit_trades(payload: object, trades: Sequence[object]) -> d
     result = dict(payload_dict)
     result["trades"] = trades
     return result
+
+
+def _parse_trade_history_side(side: Optional[str]) -> str:
+    normalized = str(side or "all").strip().lower()
+    if normalized in {"buy", "sell", "all"}:
+        return normalized
+    raise HTTPException(status_code=400, detail="Invalid side. Use all, buy, or sell.")
+
+
+def _parse_trade_history_market(market: Optional[str]) -> str:
+    normalized = str(market or "all").strip().lower()
+    if normalized in {"all", "domestic", "overseas"}:
+        return normalized
+    raise HTTPException(status_code=400, detail="Invalid market. Use all, domestic, or overseas.")
+
+
+def _parse_trade_history_page(page: int) -> int:
+    if page < 1:
+        raise HTTPException(status_code=400, detail="page must be at least 1")
+    return page
+
+
+def _parse_trade_history_page_size(page_size: int) -> int:
+    if page_size < 1 or page_size > 100:
+        raise HTTPException(status_code=400, detail="page_size must be between 1 and 100")
+    return page_size
 
 
 @router.get("/api/sync")
@@ -310,10 +343,23 @@ async def get_realized_profit_summary(request: Request, month: Optional[str] = N
 
 
 @router.get("/api/realized-profit/detail")
-async def get_realized_profit_detail(request: Request, start: str, end: str):
+async def get_realized_profit_detail(
+    request: Request,
+    start: str,
+    end: str,
+    side: Optional[str] = None,
+    market: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 10,
+    include_trades: bool = True,
+):
     session = require_session(request)
     start_day = _parse_date_value(start, "start")
     end_day = _parse_date_value(end, "end")
+    normalized_side = _parse_trade_history_side(side)
+    normalized_market = _parse_trade_history_market(market)
+    safe_page = _parse_trade_history_page(page)
+    safe_page_size = _parse_trade_history_page_size(page_size)
     if start_day > end_day:
         raise HTTPException(
             status_code=400, detail="start must be before or equal to end"
@@ -330,21 +376,41 @@ async def get_realized_profit_detail(request: Request, start: str, end: str):
                 status_code=500, detail="Failed to get access token from API"
             )
 
-        trade_payload = await asyncio.to_thread(
-            api_client.get_trade_history,
-            token,
-            session.app_key,
-            session.app_secret,
-            session.cano,
-            session.acnt_prdt_cd,
-            start_day.strftime("%Y%m%d"),
-            end_day.strftime("%Y%m%d"),
-        )
-        trades = trade_payload.get("items", []) if isinstance(trade_payload, dict) else []
+        if include_trades:
+            trade_payload = await asyncio.to_thread(
+                api_client.get_trade_history,
+                token,
+                session.app_key,
+                session.app_secret,
+                session.cano,
+                session.acnt_prdt_cd,
+                start_day.strftime("%Y%m%d"),
+                end_day.strftime("%Y%m%d"),
+                side_filter=normalized_side,
+                market_filter=normalized_market,
+                page=safe_page,
+                page_size=safe_page_size,
+            )
+        else:
+            summary_payload = await asyncio.to_thread(
+                api_client.get_realized_profit_summary,
+                token,
+                session.app_key,
+                session.app_secret,
+                session.cano,
+                session.acnt_prdt_cd,
+                start_day.strftime("%Y%m%d"),
+                end_day.strftime("%Y%m%d"),
+            )
+            trade_payload = _with_realized_profit_trades(summary_payload, [])
+
+        payload_dict = trade_payload if isinstance(trade_payload, dict) else {}
+        trades_value = payload_dict.get("items", []) if include_trades else payload_dict.get("trades", [])
+        trades = trades_value if isinstance(trades_value, list) else []
         return _serialize_realized_profit_payload(
             start_day,
             end_day,
-            _with_realized_profit_trades(trade_payload, trades),
+            _with_realized_profit_trades(payload_dict, trades),
         )
     except HTTPException:
         raise
