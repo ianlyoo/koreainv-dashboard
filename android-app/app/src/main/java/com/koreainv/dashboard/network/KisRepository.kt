@@ -40,7 +40,7 @@ class KisRepository(
         private const val BASE_URL = "https://openapi.koreainvestment.com:9443"
         private const val TOKEN_BUFFER_SECONDS = 60L
         private const val DASHBOARD_CACHE_TTL_MILLIS = 15_000L
-        private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 20_000L
+        private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 120_000L
         private const val EXCHANGE_QUERY_CONCURRENCY = 4
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val JSON_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd")
@@ -121,7 +121,11 @@ class KisRepository(
         usQuoteService.close()
     }
 
-    suspend fun fetchTradeHistory(range: String = "this_month", forceRefresh: Boolean = false): TradeHistoryResponse = withContext(Dispatchers.IO) {
+    suspend fun fetchTradeHistory(
+        range: String = "this_month",
+        forceRefresh: Boolean = false,
+        onSummaryReady: (suspend (TradeHistoryResponse) -> Unit)? = null,
+    ): TradeHistoryResponse = withContext(Dispatchers.IO) {
         tradeHistoryLoadMutex.withLock {
             val normalizedRange = range.lowercase(Locale.US)
             if (!forceRefresh) {
@@ -146,9 +150,23 @@ class KisRepository(
                     }
                     overseas
                 }
+                val domesticProfit = domesticProfitDeferred.await()
+                val overseasProfit = overseasProfitDeferred.await()
+                val summaryOnly = buildTradeHistoryResponse(
+                    resolved = resolved,
+                    domesticTradeProfit = domesticProfit,
+                    overseasTradeProfit = overseasProfit,
+                    trades = emptyList(),
+                )
+                onSummaryReady?.let { callback ->
+                    withContext(Dispatchers.Main) {
+                        callback(summaryOnly)
+                    }
+                }
+
                 Quadruple(
-                    domesticProfitDeferred.await(),
-                    overseasProfitDeferred.await(),
+                    domesticProfit,
+                    overseasProfit,
                     domesticTradesDeferred.await(),
                     overseasTradesDeferred.await(),
                 )
@@ -158,28 +176,48 @@ class KisRepository(
             attachRealizedProfitToSellTrades(allTrades, domesticTradeProfit, overseasTradeProfit)
             val sortedTrades = allTrades.sortedByDescending { "${it.date}${if (it.market == "KOR") "1" else "0"}${it.symbol}" }
 
-            val domesticProfit = domesticTradeProfit.sumOf { it.realizedProfitKrw }
-            val overseasProfit = overseasTradeProfit.sumOf { it.realizedProfitKrw }
-            val totalBuyAmount = domesticTradeProfit.sumOf { it.buyAmountKrw } + overseasTradeProfit.sumOf { it.buyAmountKrw }
-            val totalReturnRate = if (totalBuyAmount > 0.0) {
-                (domesticTradeProfit.sumOf { it.realizedProfitKrw } + overseasTradeProfit.sumOf { it.realizedProfitKrw }) / totalBuyAmount * 100.0
-            } else {
-                0.0
-            }
+            val built = buildTradeHistoryResponse(
+                resolved = resolved,
+                domesticTradeProfit = domesticTradeProfit,
+                overseasTradeProfit = overseasTradeProfit,
+                trades = sortedTrades,
+            )
 
-            val built = TradeHistoryResponse(
-                period = TradePeriod(
-                    start = resolved.first.toString(),
-                    end = resolved.second.toString(),
-                    label = resolved.third,
-                ),
-                summary = TradeSummary(
-                    totalRealizedProfitKrw = domesticProfit + overseasProfit,
-                    domesticRealizedProfitKrw = domesticProfit,
-                    overseasRealizedProfitKrw = overseasProfit,
-                    totalRealizedReturnRate = totalReturnRate,
-                ),
-                trades = sortedTrades.map { trade ->
+            tradeHistoryCacheMutex.withLock {
+                cachedTradeHistory[normalizedRange] = System.currentTimeMillis() to built
+            }
+            built
+        }
+    }
+
+    private fun buildTradeHistoryResponse(
+        resolved: Triple<LocalDate, LocalDate, String>,
+        domesticTradeProfit: List<RealizedTradeProfitRow>,
+        overseasTradeProfit: List<RealizedTradeProfitRow>,
+        trades: List<TradeRow>,
+    ): TradeHistoryResponse {
+        val domesticProfit = domesticTradeProfit.sumOf { it.realizedProfitKrw }
+        val overseasProfit = overseasTradeProfit.sumOf { it.realizedProfitKrw }
+        val totalBuyAmount = domesticTradeProfit.sumOf { it.buyAmountKrw } + overseasTradeProfit.sumOf { it.buyAmountKrw }
+        val totalReturnRate = if (totalBuyAmount > 0.0) {
+            (domesticTradeProfit.sumOf { it.realizedProfitKrw } + overseasTradeProfit.sumOf { it.realizedProfitKrw }) / totalBuyAmount * 100.0
+        } else {
+            0.0
+        }
+
+        return TradeHistoryResponse(
+            period = TradePeriod(
+                start = resolved.first.toString(),
+                end = resolved.second.toString(),
+                label = resolved.third,
+            ),
+            summary = TradeSummary(
+                totalRealizedProfitKrw = domesticProfit + overseasProfit,
+                domesticRealizedProfitKrw = domesticProfit,
+                overseasRealizedProfitKrw = overseasProfit,
+                totalRealizedReturnRate = totalReturnRate,
+            ),
+            trades = trades.map { trade ->
                 Trade(
                     date = trade.date,
                     side = trade.side,
@@ -194,15 +232,10 @@ class KisRepository(
                     realizedProfitKrw = trade.realizedProfitKrw,
                     returnRate = trade.realizedReturnRate,
                 )
-                },
-                lastSynced = OffsetDateTime.now(ZoneOffset.ofHours(9)).format(ISO_FORMAT),
-                usdExchangeRate = lastKnownUsdRate,
-            )
-            tradeHistoryCacheMutex.withLock {
-                cachedTradeHistory[normalizedRange] = System.currentTimeMillis() to built
-            }
-            built
-        }
+            },
+            lastSynced = OffsetDateTime.now(ZoneOffset.ofHours(9)).format(ISO_FORMAT),
+            usdExchangeRate = lastKnownUsdRate,
+        )
     }
 
     private suspend fun getDomesticBalance(): DomesticBalancePayload {
@@ -784,7 +817,7 @@ class KisRepository(
             .header("content-type", "application/json")
             .build()
 
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).execute().use { response: okhttp3.Response ->
             if (!response.isSuccessful) {
                 authToken = null
                 return null

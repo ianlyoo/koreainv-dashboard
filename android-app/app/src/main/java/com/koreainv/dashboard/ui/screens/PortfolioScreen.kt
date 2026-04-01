@@ -122,6 +122,12 @@ fun PortfolioScreen(
         }
     }
 
+    LaunchedEffect(dashboardData != null) {
+        if (dashboardData == null) return@LaunchedEffect
+        if (repository.peekTradeHistory() != null) return@LaunchedEffect
+        runCatching { repository.fetchTradeHistory() }
+    }
+
     Scaffold(
         topBar = {
             DashboardTopBar(
