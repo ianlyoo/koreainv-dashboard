@@ -590,5 +590,85 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(len(payload.get("items") or []), 1)
         mock_get_japan_trade_history_ccnl.assert_called_once()
 
+    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client._fetch_trade_profit_rows")
+    @patch("app.api_client.get_overseas_trade_history")
+    @patch("app.api_client.get_domestic_trade_history")
+    def test_get_trade_history_filters_market_side_and_paginates(
+        self,
+        mock_domestic_trade_history,
+        mock_overseas_trade_history,
+        mock_fetch_trade_profit_rows,
+        mock_get_japan_trade_history_ccnl,
+    ):
+        mock_domestic_trade_history.return_value = [
+            {
+                "date": "20260312",
+                "time": "110000",
+                "market": "KOR",
+                "symbol": "005930",
+                "ticker": "005930",
+                "side": "매수",
+                "quantity": 1.0,
+                "amount": 70000.0,
+            },
+            {
+                "date": "20260311",
+                "time": "100000",
+                "market": "KOR",
+                "symbol": "000660",
+                "ticker": "000660",
+                "side": "매수",
+                "quantity": 2.0,
+                "amount": 140000.0,
+            },
+            {
+                "date": "20260310",
+                "time": "090000",
+                "market": "KOR",
+                "symbol": "035420",
+                "ticker": "035420",
+                "side": "매도",
+                "quantity": 3.0,
+                "amount": 210000.0,
+            },
+        ]
+        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
+        mock_overseas_trade_history.return_value = []
+        mock_get_japan_trade_history_ccnl.return_value = []
+
+        payload = api_client.get_trade_history(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+            side_filter="buy",
+            market_filter="domestic",
+            page=2,
+            page_size=1,
+        )
+
+        self.assertEqual([item["ticker"] for item in payload.get("items") or []], ["000660"])
+        self.assertEqual(payload.get("filters"), {"side": "buy", "market": "domestic"})
+        self.assertEqual(
+            payload.get("pagination"),
+            {"page": 2, "page_size": 1, "total_items": 2, "total_pages": 2},
+        )
+        mock_domestic_trade_history.assert_called_once_with(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+            "buy",
+        )
+        mock_overseas_trade_history.assert_not_called()
+        mock_get_japan_trade_history_ccnl.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

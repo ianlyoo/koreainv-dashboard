@@ -6,6 +6,7 @@ import hashlib
 import datetime
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -1878,6 +1879,47 @@ def _has_japan_trade_rows(rows: list[dict]) -> bool:
     return False
 
 
+def _normalize_trade_side_filter(side_filter: str | None) -> str:
+    normalized = str(side_filter or "all").strip().lower()
+    if normalized in {"buy", "매수", "02"}:
+        return "buy"
+    if normalized in {"sell", "매도", "01"}:
+        return "sell"
+    return "all"
+
+
+def _normalize_trade_market_filter(market_filter: str | None) -> str:
+    normalized = str(market_filter or "all").strip().lower()
+    if normalized in {"domestic", "kor", "korea", "국내"}:
+        return "domestic"
+    if normalized in {"overseas", "global", "foreign", "해외"}:
+        return "overseas"
+    return "all"
+
+
+def _trade_side_code(side_filter: str | None) -> str:
+    normalized = _normalize_trade_side_filter(side_filter)
+    if normalized == "buy":
+        return "02"
+    if normalized == "sell":
+        return "01"
+    return "00"
+
+
+def _paginate_trade_rows(rows: list[dict], page: int | None, page_size: int | None) -> tuple[list[dict], dict[str, int]]:
+    safe_page_size = max(1, min(int(page_size or 10), 100))
+    total_items = len(rows)
+    total_pages = max(1, math.ceil(total_items / safe_page_size))
+    safe_page = min(max(1, int(page or 1)), total_pages)
+    start_index = (safe_page - 1) * safe_page_size
+    return rows[start_index:start_index + safe_page_size], {
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+    }
+
+
 def _build_realized_profit_matchers(rows: list[dict]) -> dict:
     matchers: dict[tuple[str, str], list[dict]] = {}
     for row in rows:
@@ -1917,7 +1959,7 @@ def _attach_realized_profit_to_sell_trades(trades: list[dict], domestic_pnl_rows
     return trades
 
 
-def get_domestic_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
+def get_domestic_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str, side_filter: str | None = None):
     headers = {
         "content-type": "application/json; charset=utf-8",
         "authorization": f"Bearer {token}",
@@ -1935,7 +1977,7 @@ def get_domestic_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, s
         "ACNT_PRDT_CD": acnt_prdt_cd,
         "INQR_STRT_DT": start_date,
         "INQR_END_DT": end_date,
-        "SLL_BUY_DVSN_CD": "00",
+        "SLL_BUY_DVSN_CD": _trade_side_code(side_filter),
         "PDNO": "",
         "CCLD_DVSN": "01",
         "INQR_DVSN": "00",
@@ -1954,7 +1996,7 @@ def get_domestic_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, s
     return rows
 
 
-def get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
+def get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str, side_filter: str | None = None):
     exchange_queries = ["NAS", "NYS", "AMS", "TSE", "TKSE", "HKS", "SHS", "SZS", "HSX", "HNX"]
     url = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-period-trans"
     rows = []
@@ -1974,7 +2016,7 @@ def get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, s
             "ERLM_END_DT": end_date,
             "OVRS_EXCG_CD": exchange_code,
             "PDNO": "",
-            "SLL_BUY_DVSN_CD": "00",
+            "SLL_BUY_DVSN_CD": _trade_side_code(side_filter),
             "LOAN_DVSN_CD": "",
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
@@ -1994,17 +2036,54 @@ def get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, s
     return rows
 
 
-def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
-    cache_key = ("trade_history", cano, acnt_prdt_cd, start_date, end_date)
+def get_trade_history(
+    token,
+    app_key,
+    app_secret,
+    cano,
+    acnt_prdt_cd,
+    start_date: str,
+    end_date: str,
+    *,
+    side_filter: str | None = None,
+    market_filter: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+):
+    normalized_side = _normalize_trade_side_filter(side_filter)
+    normalized_market = _normalize_trade_market_filter(market_filter)
+    safe_page = max(1, int(page or 1))
+    safe_page_size = max(1, min(int(page_size or 10), 100))
+    cache_key = (
+        "trade_history",
+        cano,
+        acnt_prdt_cd,
+        start_date,
+        end_date,
+        normalized_side,
+        normalized_market,
+        safe_page,
+        safe_page_size,
+    )
     cached = _get_cached_payload(cache_key)
     if cached is not None:
         return cached
 
-    results = _run_parallel_tasks({
-        "domestic_trades": (get_domestic_trade_history, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
-        "overseas_trades": (get_overseas_trade_history, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+    task_map: dict[str, tuple[object, tuple[object, ...]]] = {
         "pnl_rows": (_fetch_trade_profit_rows, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
-    })
+    }
+    if normalized_market in {"all", "domestic"}:
+        task_map["domestic_trades"] = (
+            get_domestic_trade_history,
+            (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date, normalized_side),
+        )
+    if normalized_market in {"all", "overseas"}:
+        task_map["overseas_trades"] = (
+            get_overseas_trade_history,
+            (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date, normalized_side),
+        )
+
+    results = _run_parallel_tasks(task_map)
     domestic_trade_result = results.get("domestic_trades")
     overseas_trade_result = results.get("overseas_trades")
     pnl_result = results.get("pnl_rows")
@@ -2012,7 +2091,7 @@ def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date
     overseas_rows: list[dict] = overseas_trade_result if isinstance(overseas_trade_result, list) else []
     pnl_rows: dict[str, list[dict]] = pnl_result if isinstance(pnl_result, dict) else {"domestic": [], "overseas": []}
     japan_ccnl_rows: list[dict] = []
-    if not _has_japan_trade_rows(overseas_rows):
+    if normalized_market in {"all", "overseas"} and not _has_japan_trade_rows(overseas_rows):
         japan_ccnl_result = get_japan_trade_history_ccnl(
             token,
             app_key,
@@ -2029,12 +2108,22 @@ def get_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date
     overseas_pnl_rows = pnl_rows["overseas"] if isinstance(pnl_rows.get("overseas"), list) else []
     all_rows = _dedupe_trade_rows(domestic_rows + overseas_rows)
     all_rows = _attach_realized_profit_to_sell_trades(all_rows, domestic_pnl_rows, overseas_pnl_rows)
+    if normalized_side == "buy":
+        all_rows = [row for row in all_rows if str(row.get("side", "")).strip() == "매수"]
+    elif normalized_side == "sell":
+        all_rows = [row for row in all_rows if str(row.get("side", "")).strip() == "매도"]
     all_rows.sort(key=lambda row: f"{row.get('date', '')}{row.get('time', '')}", reverse=True)
+    page_rows, pagination = _paginate_trade_rows(all_rows, safe_page, safe_page_size)
     summary_payload = _build_realized_profit_summary_payload(pnl_rows)
     result = {
-        "items": all_rows,
+        "items": page_rows,
         "summary": summary_payload.get("summary", {}),
         "daily": summary_payload.get("daily", []),
+        "pagination": pagination,
+        "filters": {
+            "side": normalized_side,
+            "market": normalized_market,
+        },
     }
     _set_cached_payload(cache_key, result)
     return result
