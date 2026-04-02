@@ -36,8 +36,8 @@ android {
         applicationId = "com.koreainv.dashboard"
         minSdk = 26
         targetSdk = 34
-        versionCode = 14
-        versionName = "1.6.12"
+        versionCode = 15
+        versionName = "1.6.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
