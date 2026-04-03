@@ -1,0 +1,15 @@
+[Unit]
+Description=KoreaInv Dashboard Central Order Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/code/koreainv-dashboard
+EnvironmentFile=/home/ubuntu/code/koreainv-dashboard/.env
+ExecStart=/usr/bin/python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

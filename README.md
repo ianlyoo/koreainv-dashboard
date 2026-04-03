@@ -4,6 +4,25 @@ Current release: `v1.6.13`
 
 한국투자증권 API 기반 개인 계좌 대시보드입니다.
 
+## Central scheduled-order server
+
+For a small 1-2 user setup, this repo now includes a central scheduled-order server slice.
+
+- Server mode is enabled with `CENTRAL_ORDER_SERVER_MODE=true`
+- Remote clients authenticate with `CENTRAL_ORDER_SERVER_TOKEN`
+- Stored execution credentials are encrypted at rest with `CENTRAL_ORDER_MASTER_KEY`
+- Due orders are polled by the in-process worker every `CENTRAL_ORDER_POLL_INTERVAL_SECONDS`
+- Actual KIS execution is gated by `CENTRAL_ORDER_EXECUTION_ENABLED=true`
+
+### Oracle Ubuntu setup notes
+
+1. Generate a Fernet key for `CENTRAL_ORDER_MASTER_KEY`
+2. Set `COOKIE_SECURE=true`
+3. Run behind HTTPS reverse proxy (Nginx/Caddy) and keep `CENTRAL_ORDER_SERVER_TOKEN` private
+4. Use `CENTRAL_ORDER_REMOTE_URL` / `CENTRAL_ORDER_REMOTE_TOKEN` on desktop clients that should forward orders to the central server
+5. Scheduled orders are stored under the writable user-data directory in `scheduled_orders.json`
+6. A starter systemd unit is included at `scripts/koreainv-dashboard-central.service.example`
+
 이 저장소에는 아래 세 가지가 함께 포함되어 있습니다.
 
 - 웹/데스크톱 대시보드 (`app/`)
