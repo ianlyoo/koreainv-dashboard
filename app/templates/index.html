@@ -40,14 +40,15 @@
             <div class="controls">
                 <!-- 종목 검색 -->
                 <div class="layout-mode-switch" id="layoutModeToggle">
-                    <button class="layout-mode-btn" id="layoutModeBtn1" onclick="applyLayoutMode('mode1')">확장</button>
-                    <button class="layout-mode-btn" id="layoutModeBtn2" onclick="applyLayoutMode('mode2')">기본</button>
+                    <button class="layout-mode-btn" id="layoutModeBtn1" type="button" onclick="applyLayoutMode('mode1')">확장</button>
+                    <button class="layout-mode-btn" id="layoutModeBtn2" type="button" onclick="applyLayoutMode('mode2')">기본</button>
                 </div>
                 <div style="position:relative;">
                     <div style="display:flex; align-items:center; height:40px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:0 12px; gap:6px; transition:border-color 0.2s;"
                         id="searchWrapper">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted); flex-shrink:0;">
+                        <title>종목 검색</title>
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
@@ -64,15 +65,29 @@
             </div>
             <button class="btn-history" type="button" onclick="openRealizedProfitModal()">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <title>거래내역</title>
                     <path d="M3 3v18h18"></path>
                     <path d="M7 14l4-4 3 3 5-6"></path>
                 </svg>
                 거래내역
             </button>
+            <button class="btn-history" type="button" onclick="openScheduledOrderModal()">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <title>조건주문</title>
+                    <path d="M8 2v4"></path>
+                    <path d="M16 2v4"></path>
+                    <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+                    <path d="M3 10h18"></path>
+                    <path d="M12 14v4"></path>
+                    <path d="M10 16h4"></path>
+                </svg>
+                조건주문
+            </button>
 
-            <button class="btn-sync" onclick="syncData(true)" id="syncBtn">
+            <button class="btn-sync" type="button" onclick="syncData(true)" id="syncBtn">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round" id="syncIcon">
+                    <title>새로고침</title>
                     <path d="M20 11a8 8 0 0 0-14.85-4"></path>
                     <path d="M4 13a8 8 0 0 0 14.85 4"></path>
                     <polyline points="5 3 5 7 9 7"></polyline>
@@ -80,17 +95,19 @@
                 </svg>
                 <span id="syncText">새로고침</span>
             </button>
-            <button class="btn-reset" onclick="lockScreen()" id="lockBtn" title="화면 잠금">
+            <button class="btn-reset" type="button" onclick="lockScreen()" id="lockBtn" title="화면 잠금">
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
                     stroke-linecap="round" stroke-linejoin="round">
+                    <title>화면 잠금</title>
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                     <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
                 화면 잠금
             </button>
-            <button class="btn-logout" onclick="logoutAndReset()" id="logoutBtn" title="로그아웃 (설정 초기화)">
+            <button class="btn-logout" type="button" onclick="logoutAndReset()" id="logoutBtn" title="로그아웃 (설정 초기화)">
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
                     stroke-linecap="round" stroke-linejoin="round">
+                    <title>로그아웃</title>
                     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                     <polyline points="16 17 21 12 16 7"></polyline>
                     <line x1="21" y1="12" x2="9" y2="12"></line>
@@ -114,6 +131,7 @@
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <title>총 평가금액</title>
                                     <rect x="2" y="6" width="20" height="12" rx="2"></rect>
                                     <path d="M12 12h.01"></path>
                                     <path d="M17 12h.01"></path>
@@ -130,6 +148,7 @@
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <title>통화 기준 평가금액</title>
                                     <rect x="2" y="6" width="20" height="12" rx="2"></rect>
                                     <path d="M12 12h.01"></path>
                                     <path d="M17 12h.01"></path>
@@ -161,6 +180,7 @@
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <title>총 평가손익</title>
                                     <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
                                 </svg>
                                 총 평가손익
@@ -172,6 +192,7 @@
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <title>실현 손익</title>
                                     <path d="M12 20V10"></path>
                                     <path d="M18 20V4"></path>
                                     <path d="M6 20v-6"></path>
@@ -199,6 +220,7 @@
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <title>보유 현금</title>
                                     <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
                                     <line x1="12" y1="12" x2="12" y2="12.01"></line>
                                     <path d="M6 12h.01"></path>
@@ -215,6 +237,7 @@
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <title>통화별 보유 현금</title>
                                     <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
                                     <line x1="12" y1="12" x2="12" y2="12.01"></line>
                                     <path d="M6 12h.01"></path>
@@ -303,36 +326,41 @@
                             <!-- TradingView Widget BEGIN -->
                             <div class="tradingview-widget-container" style="height: 100%; width: 100%;">
                                 <div class="tradingview-widget-container__widget" style="height: 100%; width: 100%;"></div>
-                                <script type="text/javascript"
-                                    src="https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js"
-                                    async>
-                                        {
-                                            "colorTheme": "dark",
-                                                "dateRange": "1M",
-                                                    "showChart": true,
-                                                        "locale": "kr",
-                                                            "largeChartUrl": "",
-                                                                "isTransparent": true,
-                                                                    "showSymbolLogo": true,
-                                                                        "showFloatingTooltip": true,
-                                                                            "width": "100%",
-                                                                                "height": "100%",
-                                                                                    "tabs": [
-                                                                                        {
-                                                                                            "title": "Indices",
-                                                                                            "symbols": [
-                                                                                                { "s": "FOREXCOM:SPXUSD", "d": "S&P 500" },
-                                                                                                { "s": "FOREXCOM:NSXUSD", "d": "NASDAQ" },
-                                                                                                { "s": "INDEX:DXY", "d": "Dollar Index" },
-                                                                                                { "s": "FOREXCOM:XAUUSD", "d": "Gold" },
-                                                                                                { "s": "BITSTAMP:BTCUSD", "d": "Bitcoin" },
-                                                                                                { "s": "CAPITALCOM:VIX", "d": "VIX" },
-                                                                                                { "s": "FRED:DGS10", "d": "US 10Y Yield" }
-                                                                                            ]
-                                                                                        }
-                                                                                    ]
-                                        }
-                                    </script>
+                                <script type="text/javascript">
+                                    (() => {
+                                        const script = document.createElement('script');
+                                        script.type = 'text/javascript';
+                                        script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js';
+                                        script.async = true;
+                                        script.text = JSON.stringify({
+                                            colorTheme: 'dark',
+                                            dateRange: '1M',
+                                            showChart: true,
+                                            locale: 'kr',
+                                            largeChartUrl: '',
+                                            isTransparent: true,
+                                            showSymbolLogo: true,
+                                            showFloatingTooltip: true,
+                                            width: '100%',
+                                            height: '100%',
+                                            tabs: [
+                                                {
+                                                    title: 'Indices',
+                                                    symbols: [
+                                                        { s: 'FOREXCOM:SPXUSD', d: 'S&P 500' },
+                                                        { s: 'FOREXCOM:NSXUSD', d: 'NASDAQ' },
+                                                        { s: 'INDEX:DXY', d: 'Dollar Index' },
+                                                        { s: 'FOREXCOM:XAUUSD', d: 'Gold' },
+                                                        { s: 'BITSTAMP:BTCUSD', d: 'Bitcoin' },
+                                                        { s: 'CAPITALCOM:VIX', d: 'VIX' },
+                                                        { s: 'FRED:DGS10', d: 'US 10Y Yield' }
+                                                    ]
+                                                }
+                                            ]
+                                        });
+                                        document.currentScript.parentElement.appendChild(script);
+                                    })();
+                                </script>
                             </div>
                             <!-- TradingView Widget END -->
                         </div>
@@ -351,23 +379,27 @@
             <div class="col-panel col-right right-insight-panel is-hidden" id="rightInsightPanel">
                 <!-- Insight Section -->
                 <div class="insight-section animate-enter" style="animation-delay: 0.45s;">
-                    <div class="insight-header">
-                        <h2>
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                style="color: var(--accent-gold);">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <line x1="12" y1="16" x2="12" y2="12"></line>
-                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                            </svg>
-                            종목정보
-                        </h2>
-                        <button class="btn-insight-close" id="insightCloseBtn" onclick="closeInsightPane()">닫기</button>
-                    </div>
-                    <div class="insight-content" id="insight_content">
-                        <div style="color:var(--text-muted); text-align:center; padding:20px;">
-                            종목을 선택하면 상세 정보가 표시됩니다.
-                        </div>
+                     <div class="insight-header">
+                         <h2>
+                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                 style="color: var(--accent-gold);">
+                                 <title>종목정보</title>
+                                 <circle cx="12" cy="12" r="10"></circle>
+                                 <line x1="12" y1="16" x2="12" y2="12"></line>
+                                 <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                             </svg>
+                             종목정보
+                         </h2>
+                         <div class="insight-header-actions">
+                             <button class="btn-insight-trade" id="insightTradeModeBtn" type="button" onclick="toggleInsightTradeMode()" disabled>조건주문</button>
+                             <button class="btn-insight-close" id="insightCloseBtn" type="button" onclick="closeInsightPane()">닫기</button>
+                         </div>
+                     </div>
+                     <div class="insight-content" id="insight_content">
+                         <div style="color:var(--text-muted); text-align:center; padding:20px;">
+                             종목을 선택하면 상세 정보가 표시됩니다.
+                         </div>
                     </div>
                 </div>
             </div>
@@ -383,8 +415,8 @@
             <div class="modal-title" id="modalTitle">알림</div>
             <div class="modal-desc" id="modalDesc">내용이 여기에 표시됩니다.</div>
             <div class="modal-actions">
-                <button class="btn-modal btn-cancel" onclick="closeModal()">취소</button>
-                <button class="btn-modal" id="modalConfirmBtn" onclick="executeModalConfirm()">확인</button>
+                <button class="btn-modal btn-cancel" type="button" onclick="closeModal()">취소</button>
+                <button class="btn-modal" type="button" id="modalConfirmBtn" onclick="executeModalConfirm()">확인</button>
             </div>
         </div>
     </div>
@@ -403,7 +435,7 @@
                         <div class="profit-tax-popover-value" id="realizedProfitTaxPopupValue">-</div>
                         <div class="profit-tax-popover-note" id="realizedProfitTaxPopupNote">총 실현 손익 기준으로 계산합니다.</div>
                     </div>
-                    <button class="profit-detail-close" onclick="closeRealizedProfitModal()" aria-label="실현 손익 상세 닫기">&times;</button>
+                    <button class="profit-detail-close" type="button" onclick="closeRealizedProfitModal()" aria-label="실현 손익 상세 닫기">&times;</button>
                 </div>
             </div>
             <div class="profit-detail-body">
@@ -500,6 +532,76 @@
                         <button type="button" id="sellHistoryNextPage" onclick="changeTradeHistoryPage('sell', 1)">다음</button>
                     </div>
                     <div class="profit-detail-empty" id="sellHistoryEmpty">선택한 기간에 매도 거래내역이 없습니다.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="profit-detail-overlay scheduled-order-overlay" id="scheduledOrderModal" onclick="handleScheduledOrderOverlayClick(event)">
+        <div class="profit-detail-modal scheduled-order-modal" onclick="handleScheduledOrderModalClick(event)">
+            <div class="profit-detail-header">
+                <div class="profit-detail-title-wrap">
+                    <h2>조건주문</h2>
+                    <p id="scheduledOrderModalCaption">등록된 국내 조건주문을 확인하고 관리할 수 있습니다. 활성 주문은 취소되거나 체결될 때까지 유지될 수 있습니다.</p>
+                </div>
+                <div class="profit-detail-header-actions">
+                    <button class="profit-detail-close" type="button" onclick="closeScheduledOrderModal()" aria-label="조건주문 상세 닫기">&times;</button>
+                </div>
+            </div>
+            <div class="profit-detail-body scheduled-order-body">
+                <div class="profit-detail-tabs scheduled-order-tabs">
+                    <button class="profit-detail-tab active" type="button" data-scheduled-order-tab="history" onclick="setScheduledOrderModalTab('history')">주문 목록</button>
+                    <button class="profit-detail-tab" type="button" data-scheduled-order-tab="edit" id="scheduledOrderEditTabBtn" onclick="setScheduledOrderModalTab('edit')" disabled>주문 수정</button>
+                </div>
+
+                <div class="profit-detail-loading" id="scheduledOrderLoading">조건주문 목록을 불러오는 중입니다...</div>
+                <div class="scheduled-order-notice" id="scheduledOrderModalNotice" aria-live="polite"></div>
+
+                <div class="profit-detail-panel scheduled-order-panel active" id="scheduledOrderHistoryPanel">
+                    <div class="scheduled-order-list" id="scheduledOrderList"></div>
+                    <div class="profit-detail-empty" id="scheduledOrderEmpty">등록된 조건주문이 없습니다.</div>
+                </div>
+
+                <div class="profit-detail-panel scheduled-order-panel" id="scheduledOrderEditPanel">
+                    <div class="scheduled-order-edit-summary" id="scheduledOrderEditSummary">수정할 조건주문을 목록에서 선택해 주세요.</div>
+                    <form class="scheduled-order-form" id="scheduledOrderEditForm" onsubmit="submitScheduledOrderEdit(event)">
+                        <div class="scheduled-order-symbol-context">
+                            <span>종목</span>
+                            <strong id="scheduledOrderEditSymbolValue">-</strong>
+                            <p>선택한 조건주문의 종목으로 고정됩니다.</p>
+                        </div>
+                        <div class="scheduled-order-form-grid scheduled-order-form-grid--compact">
+                            <label class="scheduled-order-field">
+                                <span>종료 시각</span>
+                                <input type="datetime-local" id="scheduledOrderEditEndAt" name="end_at" required>
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>매매 구분</span>
+                                <select id="scheduledOrderEditSide" name="side" required>
+                                    <option value="buy">매수</option>
+                                    <option value="sell">매도</option>
+                                </select>
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>수량</span>
+                                <input type="number" id="scheduledOrderEditQty" name="ord_qty" min="1" step="1" required>
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>주문 단가</span>
+                                <input type="text" id="scheduledOrderEditPrice" name="ord_unpr" inputmode="decimal" required>
+                            </label>
+                        </div>
+                        <input type="hidden" id="scheduledOrderEditPdno" name="pdno" value="">
+                        <input type="hidden" id="scheduledOrderEditOrdDvsn" name="ord_dvsn" value="00">
+                        <input type="hidden" id="scheduledOrderEditExcg" name="excg_id_dvsn_cd" value="SOR">
+                        <input type="hidden" id="scheduledOrderEditSellType" name="sll_type" value="">
+                        <input type="hidden" id="scheduledOrderEditConditionPrice" name="cndt_pric" value="">
+                        <input type="hidden" id="scheduledOrderEditNote" name="note" value="">
+                        <div class="scheduled-order-form-actions">
+                            <button type="button" class="btn-modal btn-cancel" onclick="closeScheduledOrderEdit()">목록으로</button>
+                            <button type="submit" class="btn-modal btn-confirm" id="scheduledOrderEditSubmitBtn">수정 저장</button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>

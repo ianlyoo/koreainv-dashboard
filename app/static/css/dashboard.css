@@ -1051,6 +1051,12 @@
             margin-bottom: 20px;
         }
 
+        .insight-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         .insight-top-bar {
             display: flex;
             justify-content: space-between;
@@ -1177,6 +1183,35 @@
             font-weight: 700;
             cursor: pointer;
             transition: all 0.2s ease;
+        }
+
+        .btn-insight-trade {
+            border: 1px solid rgba(251, 191, 36, 0.2);
+            background: rgba(251, 191, 36, 0.08);
+            color: var(--accent-gold);
+            border-radius: 10px;
+            height: 34px;
+            padding: 0 12px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-insight-trade:hover:not(:disabled) {
+            background: rgba(251, 191, 36, 0.14);
+            transform: translateY(-1px);
+        }
+
+        .btn-insight-trade.active {
+            background: rgba(251, 191, 36, 0.18);
+            border-color: rgba(251, 191, 36, 0.3);
+            color: #fff;
+        }
+
+        .btn-insight-trade:disabled {
+            opacity: 0.45;
+            cursor: default;
         }
 
         .btn-insight-close:hover {
@@ -1383,7 +1418,7 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            z-index: 2000;
+            z-index: 12000;
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.3s ease;
@@ -1528,6 +1563,308 @@
 
         .profit-detail-overlay.active .profit-detail-modal {
             transform: translateY(0) scale(1);
+        }
+
+        .scheduled-order-modal {
+            width: min(920px, 100%);
+        }
+
+        .scheduled-order-body {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .scheduled-order-tabs {
+            margin-bottom: 0;
+        }
+
+        .scheduled-order-list {
+            display: grid;
+            gap: 14px;
+        }
+
+        .scheduled-order-card {
+            border-radius: 18px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.04);
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .scheduled-order-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .scheduled-order-card-title {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .scheduled-order-card-title strong {
+            font-size: 16px;
+            color: #fff;
+            letter-spacing: -0.2px;
+        }
+
+        .scheduled-order-card-title span {
+            font-size: 13px;
+            color: var(--text-sub);
+            line-height: 1.5;
+        }
+
+        .scheduled-order-status {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .scheduled-order-status--scheduled {
+            background: rgba(251, 191, 36, 0.14);
+            color: var(--accent-gold);
+        }
+
+        .scheduled-order-status--submitted {
+            background: rgba(16, 185, 129, 0.16);
+            color: #6ee7b7;
+        }
+
+        .scheduled-order-status--filled {
+            background: rgba(16, 185, 129, 0.16);
+            color: #6ee7b7;
+        }
+
+        .scheduled-order-status--expired {
+            background: rgba(156, 163, 175, 0.16);
+            color: #d1d5db;
+        }
+
+        .scheduled-order-status--cancelled,
+        .scheduled-order-status--failed {
+            background: rgba(239, 68, 68, 0.16);
+            color: #fca5a5;
+        }
+
+        .scheduled-order-meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+        }
+
+        .scheduled-order-trade-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .scheduled-order-meta-item {
+            border-radius: 14px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .scheduled-order-meta-item span {
+            display: block;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .scheduled-order-meta-item strong {
+            font-size: 14px;
+            color: #fff;
+            font-weight: 700;
+        }
+
+        .scheduled-order-notice,
+        .scheduled-order-edit-summary,
+        .scheduled-order-disabled {
+            border-radius: 14px;
+            padding: 14px 16px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .scheduled-order-notice {
+            display: none;
+        }
+
+        .scheduled-order-notice.active {
+            display: block;
+        }
+
+        .scheduled-order-card-note,
+        .scheduled-order-notice--info,
+        .scheduled-order-edit-summary {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            color: var(--text-sub);
+        }
+
+        .scheduled-order-notice--success {
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.22);
+            color: #a7f3d0;
+        }
+
+        .scheduled-order-card-error,
+        .scheduled-order-notice--error,
+        .scheduled-order-disabled {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.16);
+            color: #fecaca;
+        }
+
+        .scheduled-order-card-actions,
+        .scheduled-order-form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .scheduled-order-card-actions button {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            color: #fff;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .scheduled-order-card-actions button:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.09);
+            transform: translateY(-1px);
+        }
+
+        .scheduled-order-card-actions button.scheduled-order-action-primary {
+            background: rgba(251, 191, 36, 0.16);
+            border-color: rgba(251, 191, 36, 0.24);
+            color: var(--accent-gold);
+        }
+
+        .scheduled-order-card-actions button.scheduled-order-action-danger {
+            color: #fca5a5;
+            border-color: rgba(239, 68, 68, 0.2);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .scheduled-order-card-actions button:disabled,
+        .scheduled-order-form-actions button:disabled {
+            opacity: 0.45;
+            cursor: default;
+            transform: none;
+        }
+
+        .scheduled-order-form {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .scheduled-order-form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .scheduled-order-form-grid--compact {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .scheduled-order-symbol-context {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 14px 16px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .scheduled-order-symbol-context span {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-sub);
+        }
+
+        .scheduled-order-symbol-context strong {
+            font-size: 16px;
+            color: #fff;
+            letter-spacing: -0.2px;
+        }
+
+        .scheduled-order-symbol-context p {
+            margin: 0;
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .scheduled-order-field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .scheduled-order-field span {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-sub);
+        }
+
+        .scheduled-order-field input,
+        .scheduled-order-field select,
+        .scheduled-order-field textarea {
+            width: 100%;
+            box-sizing: border-box;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            color: #fff;
+            padding: 12px 14px;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s ease, background 0.2s ease;
+        }
+
+        .scheduled-order-field input:focus,
+        .scheduled-order-field select:focus,
+        .scheduled-order-field textarea:focus {
+            border-color: rgba(251, 191, 36, 0.38);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .scheduled-order-field textarea {
+            resize: vertical;
+            min-height: 84px;
+        }
+
+        .scheduled-order-field--full {
+            width: 100%;
+        }
+
+        .scheduled-order-panel {
+            display: none;
+        }
+
+        .scheduled-order-panel.active {
+            display: block;
         }
 
         .profit-detail-header {
@@ -1859,6 +2196,11 @@
             .profit-detail-summary-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
+
+            .scheduled-order-meta-grid,
+            .scheduled-order-form-grid--compact {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
         }
 
         @media (max-width: 720px) {
@@ -1888,4 +2230,20 @@
                 min-width: 0;
                 flex: 1 1 100%;
             }
+
+            .scheduled-order-meta-grid,
+            .scheduled-order-form-grid,
+            .scheduled-order-form-grid--compact {
+                grid-template-columns: 1fr;
+            }
+
+            .insight-header {
+                align-items: flex-start;
+            }
+
+            .insight-header-actions {
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
+
         }

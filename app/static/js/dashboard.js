@@ -44,6 +44,24 @@
         let usQuotePollingIntervalId = null;
         let usQuotePollingTimeoutId = null;
         let usQuotePollingActive = false;
+        let currentInsightState = null;
+        let currentInsightRequestSeq = 0;
+        let insightTradeMode = false;
+        let scheduledOrders = [];
+        let scheduledOrderModalTab = 'history';
+        let scheduledOrderEditingId = '';
+        let scheduledOrderAvailability = {
+            allowed: true,
+            blocked: false,
+            reason: '',
+            policy: null,
+            current_kst: '',
+        };
+        let scheduledOrderAvailabilityLoadedAt = 0;
+        const scheduledOrderNoticeState = {
+            modal: null,
+            insight: null,
+        };
         const US_QUOTE_POLL_INTERVAL_MS = 3000;
         const US_QUOTE_POLL_WINDOW_MS = 1 * 60 * 1000;
         const LIVE_CHART_UPDATE_MIN_INTERVAL_MS = 15000;
@@ -137,6 +155,209 @@
             const parts = isoDate.split('-');
             if (parts.length !== 3) return isoDate;
             return `${parts[0]}.${parts[1]}.${parts[2]}`;
+        }
+
+        function formatDisplayDateTime(value) {
+            if (!value) return '-';
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) {
+                return String(value).replace('T', ' ').slice(0, 16);
+            }
+            const year = parsed.getFullYear();
+            const month = String(parsed.getMonth() + 1).padStart(2, '0');
+            const day = String(parsed.getDate()).padStart(2, '0');
+            const hour = String(parsed.getHours()).padStart(2, '0');
+            const minute = String(parsed.getMinutes()).padStart(2, '0');
+            return `${year}.${month}.${day} ${hour}:${minute}`;
+        }
+
+        function formatDateTimeLocalValue(value) {
+            if (!value) return '';
+            const parsed = value instanceof Date ? value : new Date(value);
+            if (Number.isNaN(parsed.getTime())) {
+                return String(value).slice(0, 16);
+            }
+            const year = parsed.getFullYear();
+            const month = String(parsed.getMonth() + 1).padStart(2, '0');
+            const day = String(parsed.getDate()).padStart(2, '0');
+            const hour = String(parsed.getHours()).padStart(2, '0');
+            const minute = String(parsed.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hour}:${minute}`;
+        }
+
+        function getDefaultScheduledExecuteAtValue() {
+            const date = new Date();
+            date.setSeconds(0, 0);
+            if (date.getDay() === 0) {
+                date.setDate(date.getDate() + 1);
+            } else if (date.getDay() === 6) {
+                date.setDate(date.getDate() + 2);
+            }
+            if (date.getHours() >= 20) {
+                date.setDate(date.getDate() + 1);
+            }
+            while (date.getDay() === 0 || date.getDay() === 6) {
+                date.setDate(date.getDate() + 1);
+            }
+            date.setHours(20, 0, 0, 0);
+            return formatDateTimeLocalValue(date);
+        }
+
+        function getScheduledOrderBlockReason() {
+            return scheduledOrderAvailability?.reason || '';
+        }
+
+        function isScheduledOrderWriteAllowed() {
+            return scheduledOrderAvailability?.allowed !== false;
+        }
+
+        async function loadScheduledOrderAvailability(force = false) {
+            const now = Date.now();
+            if (!force && scheduledOrderAvailabilityLoadedAt && (now - scheduledOrderAvailabilityLoadedAt) < 60000) {
+                return scheduledOrderAvailability;
+            }
+            try {
+                const response = await fetch('/api/scheduled-orders/availability', { cache: force ? 'no-store' : 'default' });
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    return scheduledOrderAvailability;
+                }
+                if (!response.ok) {
+                    throw new Error(await readApiErrorMessage(response, '조건주문 가능 여부를 확인하지 못했습니다.'));
+                }
+                const data = await response.json();
+                scheduledOrderAvailability = data?.availability || scheduledOrderAvailability;
+                scheduledOrderAvailabilityLoadedAt = now;
+                updateInsightTradeModeButton();
+                return scheduledOrderAvailability;
+            } catch (err) {
+                console.error('loadScheduledOrderAvailability error', err);
+                scheduledOrderAvailabilityLoadedAt = now;
+                return scheduledOrderAvailability;
+            }
+        }
+
+        function formatInsightPrice(fin, marketType) {
+            const price = Number(fin?.currentPrice);
+            if (!Number.isFinite(price)) {
+                const fallback = String(fin?.currentPrice || '-').trim();
+                return fin?.currency ? `${fin.currency} ${fallback}` : fallback;
+            }
+            if (marketType === 'KOR' || fin?.currency === 'KRW') {
+                return formatPlainKrw(price);
+            }
+            if (marketType === 'JPN' || fin?.currency === 'JPY') {
+                return formatJpy(price);
+            }
+            return `${fin?.currency || ''} ${formatNumber(price.toFixed(2))}`.trim();
+        }
+
+        function getScheduledOrderStatusLabel(status) {
+            switch (String(status || '').toLowerCase()) {
+                case 'scheduled':
+                    return '활성';
+                case 'submitted':
+                    return '제출됨';
+                case 'open':
+                    return '미체결';
+                case 'filled':
+                    return '체결 완료';
+                case 'broker_cancelled':
+                    return '브로커 취소';
+                case 'cancel_requested':
+                    return '취소 요청';
+                case 'cancelled':
+                    return '취소됨';
+                case 'expired':
+                    return '만료됨';
+                case 'failed':
+                    return '실패';
+                case 'executing':
+                    return '실행 중';
+                default:
+                    return '확인 필요';
+            }
+        }
+
+        function getScheduledOrderStatusClass(status) {
+            const normalized = String(status || '').toLowerCase();
+            if (normalized === 'submitted' || normalized === 'open' || normalized === 'cancel_requested' || normalized === 'executing') return 'scheduled-order-status--submitted';
+            if (normalized === 'filled') return 'scheduled-order-status--filled';
+            if (normalized === 'expired') return 'scheduled-order-status--expired';
+            if (normalized === 'cancelled' || normalized === 'broker_cancelled' || normalized === 'failed') return 'scheduled-order-status--cancelled';
+            return 'scheduled-order-status--scheduled';
+        }
+
+        function getScheduledOrderDisplayEndAt(item) {
+            return String(item?.end_at || item?.execute_at || '');
+        }
+
+        function getScheduledOrderNoticeElementId(surface) {
+            return surface === 'insight' ? 'scheduledOrderInsightNotice' : 'scheduledOrderModalNotice';
+        }
+
+        function buildScheduledOrderNoticeHtml(surface) {
+            const notice = scheduledOrderNoticeState[surface];
+            const classNames = ['scheduled-order-notice'];
+            if (notice?.type) {
+                classNames.push('active', `scheduled-order-notice--${notice.type}`);
+            }
+            return `<div class="${classNames.join(' ')}" id="${getScheduledOrderNoticeElementId(surface)}" aria-live="polite">${escapeHtml(notice?.message || '')}</div>`;
+        }
+
+        function renderScheduledOrderNotice(surface) {
+            const element = document.getElementById(getScheduledOrderNoticeElementId(surface));
+            if (!element) return;
+            const notice = scheduledOrderNoticeState[surface];
+            const classNames = ['scheduled-order-notice'];
+            if (notice?.type) {
+                classNames.push('active', `scheduled-order-notice--${notice.type}`);
+            }
+            element.className = classNames.join(' ');
+            element.innerText = notice?.message || '';
+        }
+
+        function setScheduledOrderNotice(surface, message, type = 'info') {
+            scheduledOrderNoticeState[surface] = message ? { message, type } : null;
+            renderScheduledOrderNotice(surface);
+        }
+
+        function clearScheduledOrderNotice(surface) {
+            scheduledOrderNoticeState[surface] = null;
+            renderScheduledOrderNotice(surface);
+        }
+
+        function canBrokerCancelScheduledOrder(item) {
+            const status = String(item?.status || '').toLowerCase();
+            return status === 'submitted' || status === 'open' || status === 'cancel_requested';
+        }
+
+        function canEditScheduledOrder(item) {
+            const status = String(item?.status || '').toLowerCase();
+            return status === 'scheduled' || canBrokerCancelScheduledOrder(item);
+        }
+
+        function isLiveEditableScheduledOrder(item) {
+            return canBrokerCancelScheduledOrder(item);
+        }
+
+        function getScheduledOrderSideLabel(side) {
+            return String(side || '').toLowerCase() === 'sell' ? '매도' : '매수';
+        }
+
+        function getInsightMarketLabel(marketType) {
+            if (marketType === 'KOR') return '국내';
+            if (marketType === 'JPN') return '일본';
+            return '해외';
+        }
+
+        async function readApiErrorMessage(response, fallbackMessage) {
+            try {
+                const payload = await response.json();
+                return payload?.detail || payload?.message || fallbackMessage;
+            } catch (_err) {
+                return fallbackMessage;
+            }
         }
 
         function getFreshRealizedCacheEntry(cache, key) {
@@ -543,6 +764,7 @@
         }
 
         function closeInsightPane() {
+            clearScheduledOrderNotice('insight');
             if (currentLayoutMode === 'mode2') {
                 setRightPaneState('widgets');
             }
@@ -1544,42 +1766,1022 @@
             }
         }
 
-        // Asset Insight Fetcher
-        async function fetchAssetInsight(ticker, marketType) {
-            marketType = marketType || 'USA';
-            const insightContainer = document.getElementById('insight_content');
-            openInsightPane();
-            insightContainer.innerHTML = `
-                                <div style = "display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:12px; color:var(--text-muted);" >
+        function updateInsightTradeModeButton() {
+            const button = document.getElementById('insightTradeModeBtn');
+            if (!button) return;
+            const enabled = !!currentInsightState;
+            button.disabled = !enabled;
+            button.classList.toggle('active', enabled && insightTradeMode);
+            button.title = !enabled
+                ? '종목을 선택해 주세요.'
+                : isScheduledOrderWriteAllowed()
+                    ? '국내 조건주문 입력'
+                    : getScheduledOrderBlockReason();
+        }
+
+        function getInsightDisplayName(state) {
+            if (state?.status === 'success') {
+                return state.data?.financials?.shortName || state.ticker;
+            }
+            return state?.ticker || '-';
+        }
+
+        function getInsightDisplayPrice(state) {
+            if (!state) return '-';
+            if (state.status === 'success') {
+                return formatInsightPrice(state.data?.financials, state.marketType);
+            }
+            if (state.status === 'loading') {
+                return '조회 중...';
+            }
+            return `${getInsightMarketLabel(state.marketType)} 종목`;
+        }
+
+        function buildInsightIdentityHtml(state) {
+            const ticker = escapeHtml(state?.ticker || '-');
+            const title = escapeHtml(getInsightDisplayName(state));
+            const price = escapeHtml(getInsightDisplayPrice(state));
+            const logoHtml = state?.imgHtml || `<div style="width:40px; height:40px; border-radius:50%; background:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; color:var(--text-sub); font-size:13px; font-weight:700;">${escapeHtml(String(state?.ticker || '?').slice(0, 2))}</div>`;
+            return `
+                <div class="insight-top-bar animate-enter">
+                    <div style="display:flex; align-items:center; gap:12px; min-width:0;">
+                        ${logoHtml}
+                        <div style="display:flex; flex-direction:column; min-width:0;">
+                            <span class="insight-title">${title}</span>
+                            <span class="insight-ticker">${ticker}</span>
+                        </div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <div class="insight-price">${price}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function buildInsightLoadingHtml(state) {
+            return `
+                ${buildInsightIdentityHtml(state)}
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:280px; gap:12px; color:var(--text-muted);">
                     <div class="spinner" style="width:32px; height:32px; margin-bottom:0;"></div>
                     <span>데이터를 분석 중입니다...</span>
                 </div>
-                                `;
+            `;
+        }
+
+        function buildInsightErrorHtml(state) {
+            return `
+                ${buildInsightIdentityHtml(state)}
+                <div class="scheduled-order-card-error animate-enter" style="animation-delay:0.05s;">
+                    ${escapeHtml(state?.message || '정보를 불러오는 데 실패했습니다.')}
+                </div>
+            `;
+        }
+
+        function buildInsightChartHtml(extraClasses = '', inlineStyle = '') {
+            const className = ['tv-wrapper', extraClasses].filter(Boolean).join(' ');
+            const styleAttr = inlineStyle ? ` style="${inlineStyle}"` : '';
+            return `<div class="${className}" id="tv_chart_container"${styleAttr}></div>`;
+        }
+
+        function getScheduledOrderLifecycleCopy(item) {
+            const status = String(item?.status || '').toLowerCase();
+            switch (status) {
+                case 'scheduled':
+                    return '종료 시각 전까지 조건을 유지하며, 미체결이면 다음 가능 시간에 다시 제출될 수 있습니다.';
+                case 'submitted':
+                case 'executing':
+                    return '브로커에 제출된 주문입니다. 종료 시각 전까지 최신 진행 상황을 계속 추적합니다.';
+                case 'open':
+                    return '브로커에 제출된 뒤 미체결 상태입니다. 종료 시각 또는 체결 전까지 계속 추적합니다.';
+                case 'cancel_requested':
+                    return '취소 요청을 보냈습니다. 브로커 응답을 기다리는 중입니다.';
+                case 'filled':
+                    return '조건주문이 체결되어 종료되었습니다.';
+                case 'expired':
+                    return '종료 시각이 지나 조건주문이 자동 종료되었습니다.';
+                case 'cancelled':
+                case 'broker_cancelled':
+                    return '조건주문이 취소되어 종료되었습니다.';
+                case 'failed':
+                    return '주문 처리 중 오류가 있어 재확인이 필요합니다.';
+                default:
+                    return '조건주문 상태를 확인해 주세요.';
+            }
+        }
+
+        function isActiveScheduledOrderStatus(status) {
+            const normalized = String(status || '').toLowerCase();
+            return normalized === 'scheduled' || normalized === 'submitted' || normalized === 'open' || normalized === 'cancel_requested' || normalized === 'executing';
+        }
+
+        function buildInsightTradeHtml(state) {
+            const isDomestic = state?.marketType === 'KOR';
+            const pdno = normalizeTicker(state?.ticker || '');
+            const fin = state?.data?.financials || {};
+            const defaultPrice = Number.isFinite(Number(fin.currentPrice)) ? String(Math.round(Number(fin.currentPrice))) : '';
+
+            if (!isDomestic) {
+                return `
+                    ${buildInsightIdentityHtml(state)}
+                    <div class="scheduled-order-disabled animate-enter" style="animation-delay:0.05s;">
+                        현재 웹 조건주문은 국내 종목만 지원합니다. ${escapeHtml(getInsightMarketLabel(state?.marketType))} 종목은 정보 보기만 제공됩니다.
+                    </div>
+                `;
+            }
+
+            if (state?.status === 'loading') {
+                return buildInsightLoadingHtml(state);
+            }
+
+            return `
+                ${buildInsightIdentityHtml(state)}
+                <div class="scheduled-order-trade-stack">
+                    ${buildScheduledOrderNoticeHtml('insight')}
+                    ${buildInsightChartHtml('animate-enter', 'animation-delay:0.1s;')}
+                    <form class="scheduled-order-form animate-enter" style="animation-delay:0.15s;" id="insightScheduledOrderForm" onsubmit="submitInsightScheduledOrder(event)">
+                        <div class="scheduled-order-form-grid">
+                            <label class="scheduled-order-field">
+                                <span>종료 시각</span>
+                                <input type="datetime-local" name="end_at" value="${escapeHtml(getDefaultScheduledExecuteAtValue())}" required>
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>매매 구분</span>
+                                <select name="side" required>
+                                    <option value="buy">매수</option>
+                                    <option value="sell">매도</option>
+                                </select>
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>수량</span>
+                                <input type="number" name="ord_qty" min="1" step="1" value="1" required>
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>주문 단가</span>
+                                <input type="text" name="ord_unpr" inputmode="decimal" value="${escapeHtml(defaultPrice)}" placeholder="예: 70000" required>
+                            </label>
+                        </div>
+                        <input type="hidden" name="pdno" value="${escapeHtml(pdno)}">
+                        <input type="hidden" name="ord_dvsn" value="00">
+                        <input type="hidden" name="excg_id_dvsn_cd" value="SOR">
+                        <input type="hidden" name="sll_type" value="">
+                        <input type="hidden" name="cndt_pric" value="">
+                        <input type="hidden" name="note" value="">
+                        <div class="scheduled-order-form-actions">
+                            <button type="submit" class="btn-modal btn-confirm" id="insightScheduledOrderSubmitBtn">조건주문 등록</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+        }
+
+        function buildInsightInfoHtml(state) {
+            const data = state.data || {};
+            const fin = data.financials || {};
+            const opt = data.options;
+            const news = data.news;
+            const rc = Number(fin.currentPrice || 0);
+            let html = `${buildInsightIdentityHtml(state)}
+                <div class="fin-grid animate-enter" style="animation-delay: 0.1s;">
+                    <div class="fin-card">
+                        <span>Forward P/E <span style="text-transform:none; opacity:0.6;">선행 PER</span></span>
+                        <span>${fin.forwardPE !== 'N/A' ? parseFloat(fin.forwardPE).toFixed(2) : 'N/A'}</span>
+                    </div>
+                    <div class="fin-card">
+                        <span>ROE <span style="text-transform:none; opacity:0.6;">자기자본이익률</span></span>
+                        <span>${fin.returnOnEquity !== 'N/A' ? (parseFloat(fin.returnOnEquity) * 100).toFixed(2) + '%' : 'N/A'}</span>
+                    </div>
+                    <div class="fin-card">
+                        <span>D/E <span style="text-transform:none; opacity:0.6;">부채비율</span></span>
+                        <span>${fin.debtToEquity !== 'N/A' ? parseFloat(fin.debtToEquity).toFixed(2) : 'N/A'}</span>
+                    </div>
+                    <div class="fin-card">
+                        <span>Beta <span style="text-transform:none; opacity:0.6;">변동성</span></span>
+                        <span>${fin.beta !== 'N/A' ? parseFloat(fin.beta).toFixed(2) : 'N/A'}</span>
+                    </div>
+                    <div class="fin-card">
+                        <span>Mkt Cap <span style="text-transform:none; opacity:0.6;">시가총액</span></span>
+                        <span>${fin.marketCap !== 'N/A' ? (fin.marketCap >= 1e12 ? (fin.marketCap / 1e12).toFixed(2) + 'T' : fin.marketCap >= 1e9 ? (fin.marketCap / 1e9).toFixed(2) + 'B' : (fin.marketCap / 1e6).toFixed(0) + 'M') : 'N/A'}</span>
+                    </div>
+                    <div class="fin-card">
+                        <span>Short <span style="text-transform:none; opacity:0.6;">공매도비중</span></span>
+                        <span style="color: ${fin.shortPercentOfFloat !== 'N/A' && parseFloat(fin.shortPercentOfFloat) > 0.1 ? 'var(--loss)' : '#fff'}">${fin.shortPercentOfFloat !== 'N/A' ? (parseFloat(fin.shortPercentOfFloat) * 100).toFixed(2) + '%' : 'N/A'}</span>
+                    </div>
+                    <div class="fin-card">
+                        <span>Target <span style="text-transform:none; opacity:0.6;">목표가</span></span>
+                        <span style="color: ${fin.targetMeanPrice !== 'N/A' && parseFloat(fin.targetMeanPrice) > rc ? 'var(--profit)' : (fin.targetMeanPrice !== 'N/A' ? 'var(--loss)' : '#fff')}">${fin.targetMeanPrice !== 'N/A' ? fin.currency + ' ' + parseFloat(fin.targetMeanPrice).toFixed(2) : 'N/A'}</span>
+                    </div>
+                    <div class="fin-card">
+                        <span style="text-transform: none;">Analyst <span style="opacity:0.6;">분석가 평가</span></span>
+                        <span style="text-transform: capitalize; color: ${fin.recommendation === 'buy' || fin.recommendation === 'strong_buy' ? 'var(--profit)' : (fin.recommendation === 'sell' || fin.recommendation === 'strong_sell' ? 'var(--loss)' : '#fff')}">${(fin.recommendation || 'N/A').replace('_', ' ')}</span>
+                    </div>
+                </div>`;
+
+            if (fin.fiftyTwoWeekLow !== 'N/A' && fin.fiftyTwoWeekHigh !== 'N/A') {
+                const low52 = parseFloat(fin.fiftyTwoWeekLow);
+                const high52 = parseFloat(fin.fiftyTwoWeekHigh);
+                const range52 = high52 - low52;
+                const pos52 = range52 > 0 ? Math.min(100, Math.max(0, ((rc - low52) / range52) * 100)) : 50;
+                html += `
+                    <div class="animate-enter" style="animation-delay: 0.15s; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 10px 14px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                            <span style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">52주 범위</span>
+                            <span style="font-size:11px; color:var(--text-sub);">${fin.currency} ${low52.toFixed(2)} — ${high52.toFixed(2)}</span>
+                        </div>
+                        <div style="position:relative; width:100%; height:6px; background: linear-gradient(90deg, var(--loss), var(--accent-gold), var(--profit)); border-radius:3px;">
+                            <div style="position:absolute; top:-3px; left:${pos52}%; transform:translateX(-50%); width:12px; height:12px; background:#fff; border-radius:50%; box-shadow: 0 0 6px rgba(255,255,255,0.5);"></div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += buildInsightChartHtml('animate-enter', 'animation-delay: 0.2s;');
+
+            let newsHtml = '';
+            if (news && news.length > 0) {
+                news.forEach((n) => {
+                    newsHtml += `
+                        <a href="${n.link}" target="_blank" rel="noopener noreferrer" class="news-item">
+                            <span class="news-title">${n.title}</span>
+                            <span class="news-meta">${n.publisher}</span>
+                        </a>
+                    `;
+                });
+            } else {
+                newsHtml = `<div style="color:var(--text-muted); font-size:13px; padding:12px;">최신 뉴스가 없습니다.</div>`;
+            }
+
+            let optHtml = '';
+            if (opt) {
+                const callVol = opt.calls_volume;
+                const putVol = opt.puts_volume;
+                const total = callVol + putVol;
+                const callPct = total > 0 ? Math.round((callVol / total) * 100) : 50;
+                const putPct = total > 0 ? 100 - callPct : 50;
+                const pcrRaw = opt.pcr;
+                const pcr = Number.isFinite(pcrRaw) ? Number(pcrRaw).toFixed(2) : (pcrRaw === 'High' ? 'High' : 'N/A');
+                const pcrBasis = opt.pcr_basis || 'Volume';
+                const callsOiNum = Number(opt.calls_oi || 0);
+                const putsOiNum = Number(opt.puts_oi || 0);
+                const oiAvailable = opt.oi_available === true || (callsOiNum + putsOiNum) > 0;
+                const inferredStrikeBasis = (callsOiNum > 0 && putsOiNum > 0) ? 'OI' : 'Volume';
+                const strikeBasis = opt.strike_basis || inferredStrikeBasis;
+                const ivText = opt.atm_iv ? opt.atm_iv + '%' : 'N/A';
+                const strikePrefix = fin.currency ? `${fin.currency} ` : '';
+                const maxCallLabel = strikeBasis === 'OI' ? 'Max OI Call' : 'Max Vol Call';
+                const maxPutLabel = strikeBasis === 'OI' ? 'Max OI Put' : 'Max Vol Put';
+                const oiConfidence = opt.oi_confidence || { level: oiAvailable ? 'low' : 'none', label: oiAvailable ? '낮음' : '미산출', reason: oiAvailable ? '근월물 OI 규모가 작습니다.' : '근월물 OI 데이터가 없습니다.' };
+                const maxPainConfidence = opt.max_pain_confidence || { level: opt.max_pain_available ? 'low' : 'none', label: opt.max_pain_available ? '낮음' : '미산출', reason: opt.max_pain_available ? '근월물 OI를 참고 계산했습니다.' : '근월물 OI가 부족해 맥스페인을 계산할 수 없습니다.' };
+                const confidenceColors = {
+                    high: 'rgba(16,185,129,0.18)',
+                    medium: 'rgba(245,158,11,0.18)',
+                    low: 'rgba(239,68,68,0.18)',
+                    none: 'rgba(148,163,184,0.16)',
+                };
+                const confidenceTextColors = {
+                    high: '#6ee7b7',
+                    medium: '#fbbf24',
+                    low: '#fca5a5',
+                    none: '#cbd5e1',
+                };
+                const renderConfidenceBadge = (meta) => {
+                    const level = meta && meta.level ? meta.level : 'none';
+                    const label = meta && meta.label ? meta.label : '미산출';
+                    const background = confidenceColors[level] || confidenceColors.none;
+                    const color = confidenceTextColors[level] || confidenceTextColors.none;
+                    return `<span style="display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; background:${background}; color:${color}; font-size:10px; font-weight:700; letter-spacing:0.02em;">${label}</span>`;
+                };
+                const maxPainAvailable = opt.max_pain_available === true || (Number.isFinite(Number(opt.max_pain)) && Number(opt.max_pain) > 0);
+                const maxPainText = maxPainAvailable ? strikePrefix + formatNumber(opt.max_pain) : '미산출';
+                const oiCallText = oiAvailable ? `${formatNumber(opt.calls_oi)}계약` : '데이터 미제공';
+                const oiPutText = oiAvailable ? `${formatNumber(opt.puts_oi)}계약` : '데이터 미제공';
+                const oiHint = `<div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-top:8px;"><div style="font-size:10px; color:var(--text-muted); line-height:1.45;">${oiConfidence.reason || '근월물 OI 품질을 기준으로 해석합니다.'}</div>${renderConfidenceBadge(oiConfidence)}</div>`;
+                const maxPainHint = `<div style="font-size:10px; color:var(--text-muted); line-height:1.45; text-align:right;">${maxPainConfidence.reason || '근월물 OI 기반으로 계산합니다.'}</div>`;
+
+                optHtml = `
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 18px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 2px;">만기일</div>
+                                <div style="font-size: 15px; font-weight: 700; color: #fff;">${opt.date}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 2px;">ATM IV</div>
+                                <div style="font-size: 15px; font-weight: 700; color: ${opt.atm_iv && opt.atm_iv > 50 ? '#eab308' : '#fff'};">${ivText}</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:12px; font-weight: 500; margin-bottom:6px;">
+                                <span style="color:var(--profit);">콜 ${callPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(callVol)}계약)</span></span>
+                                <span style="font-size:11px; color:var(--text-muted);">PCR(${pcrBasis}) ${pcr}</span>
+                                <span style="color:var(--loss);">풋 ${putPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(putVol)}계약)</span></span>
+                            </div>
+                            <div style="width:100%; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; display:flex; overflow:hidden;">
+                                <div style="width:${callPct}%; background:var(--profit);"></div>
+                                <div style="width:${putPct}%; background:var(--loss);"></div>
+                            </div>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                            <div>
+                                <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Call)</div>
+                                <div style="font-size:14px; font-weight:700; color:#fff;">${oiCallText}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Put)</div>
+                                <div style="font-size:14px; font-weight:700; color:#fff;">${oiPutText}</div>
+                            </div>
+                        </div>
+                        ${oiHint}
+                        <div style="display:flex; flex-direction: column; gap:6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                                    <div style="font-size:11px; color:var(--text-muted);">Max Pain</div>
+                                    ${renderConfidenceBadge(maxPainConfidence)}
+                                </div>
+                                <div style="font-size:13px; font-weight:700; color:${maxPainAvailable ? '#eab308' : '#cbd5e1'};">${maxPainText}</div>
+                            </div>
+                            ${maxPainHint}
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div style="font-size:11px; color:var(--text-muted);">${maxCallLabel}</div>
+                                <div style="font-size:13px; font-weight:700; color:var(--profit);">${opt.max_call_oi_strike ? strikePrefix + formatNumber(opt.max_call_oi_strike) : 'N/A'}</div>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div style="font-size:11px; color:var(--text-muted);">${maxPutLabel}</div>
+                                <div style="font-size:13px; font-weight:700; color:var(--loss);">${opt.max_put_oi_strike ? strikePrefix + formatNumber(opt.max_put_oi_strike) : 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                optHtml = `<div style="color:var(--text-muted); font-size:13px; padding:12px;">옵션 데이터가 없습니다.</div>`;
+            }
+
+            html += `
+                <div class="animate-enter" style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:stretch; animation-delay:0.25s;">
+                    <div style="display:flex; flex-direction:column;">
+                        <div class="news-header">관련 뉴스</div>
+                        <div class="news-list" style="flex:1;">
+                            ${newsHtml}
+                        </div>
+                    </div>
+                    <div style="display:flex; flex-direction:column;">
+                        <div class="news-header">단기 옵션 현황</div>
+                        ${optHtml}
+                    </div>
+                </div>
+            `;
+            return html;
+        }
+
+        function initializeInsightChart(state) {
+            if (!state || state.status !== 'success') return;
+            const { marketType, tvTicker, data } = state;
+            if (marketType === 'USA') {
+                try {
+                    new TradingView.widget({
+                        autosize: true,
+                        symbol: tvTicker,
+                        interval: 'D',
+                        timezone: 'Asia/Seoul',
+                        theme: 'dark',
+                        style: '1',
+                        locale: 'kr',
+                        enable_publishing: false,
+                        backgroundColor: 'rgba(0,0,0,0)',
+                        gridColor: 'rgba(255,255,255,0.05)',
+                        hide_top_toolbar: false,
+                        hide_legend: false,
+                        save_image: false,
+                        allow_symbol_change: true,
+                        container_id: 'tv_chart_container',
+                    });
+                } catch (tvErr) {
+                    console.warn('TradingView widget failed:', tvErr);
+                }
+                return;
+            }
+
+            const historyData = data.history || [];
+            const tvContainer = document.getElementById('tv_chart_container');
+            if (historyData.length > 0 && tvContainer && typeof LightweightCharts !== 'undefined') {
+                tvContainer.innerHTML = '';
+                const chart = LightweightCharts.createChart(tvContainer, {
+                    width: tvContainer.clientWidth,
+                    height: tvContainer.clientHeight,
+                    layout: {
+                        background: { type: 'solid', color: 'transparent' },
+                        textColor: 'rgba(255,255,255,0.6)',
+                        fontSize: 11,
+                    },
+                    grid: {
+                        vertLines: { color: 'rgba(255,255,255,0.04)' },
+                        horzLines: { color: 'rgba(255,255,255,0.04)' },
+                    },
+                    crosshair: { mode: 0 },
+                    rightPriceScale: {
+                        borderColor: 'rgba(255,255,255,0.1)',
+                    },
+                    timeScale: {
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        timeVisible: false,
+                    },
+                });
+                const candleSeries = chart.addCandlestickSeries({
+                    upColor: '#26a69a',
+                    downColor: '#ef5350',
+                    borderDownColor: '#ef5350',
+                    borderUpColor: '#26a69a',
+                    wickDownColor: '#ef5350',
+                    wickUpColor: '#26a69a',
+                });
+                candleSeries.setData(historyData);
+
+                const volumeSeries = chart.addHistogramSeries({
+                    color: 'rgba(255,255,255,0.15)',
+                    priceFormat: { type: 'volume' },
+                    priceScaleId: '',
+                });
+                volumeSeries.priceScale().applyOptions({
+                    scaleMargins: { top: 0.85, bottom: 0 },
+                });
+                volumeSeries.setData(historyData.map((d) => ({
+                    time: d.time,
+                    value: d.volume,
+                    color: d.close >= d.open ? 'rgba(38,166,154,0.3)' : 'rgba(239,83,80,0.3)',
+                })));
+                chart.timeScale().fitContent();
+                const resizeObserver = new ResizeObserver(() => {
+                    chart.applyOptions({ width: tvContainer.clientWidth });
+                });
+                resizeObserver.observe(tvContainer);
+                return;
+            }
+
+            if (tvContainer) {
+                tvContainer.innerHTML = `
+                    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:8px; color:var(--text-muted); font-size:13px;">
+                        <span>차트 데이터를 불러올 수 없습니다.</span>
+                    </div>
+                `;
+            }
+        }
+
+        function renderCurrentInsightContent() {
+            const insightContainer = document.getElementById('insight_content');
+            if (!insightContainer) return;
+
+            updateInsightTradeModeButton();
+
+            if (!currentInsightState) {
+                insightContainer.innerHTML = `
+                    <div style="color:var(--text-muted); text-align:center; padding:20px;">
+                        종목을 선택하면 상세 정보가 표시됩니다.
+                    </div>
+                `;
+                return;
+            }
+
+            if (insightTradeMode) {
+                insightContainer.innerHTML = buildInsightTradeHtml(currentInsightState);
+                if (currentInsightState.status === 'success' && currentInsightState.marketType === 'KOR') {
+                    initializeInsightChart(currentInsightState);
+                }
+                return;
+            }
+
+            if (currentInsightState.status === 'loading') {
+                insightContainer.innerHTML = buildInsightLoadingHtml(currentInsightState);
+                return;
+            }
+
+            if (currentInsightState.status === 'error') {
+                insightContainer.innerHTML = buildInsightErrorHtml(currentInsightState);
+                return;
+            }
+
+            insightContainer.innerHTML = buildInsightInfoHtml(currentInsightState);
+            initializeInsightChart(currentInsightState);
+        }
+
+        function toggleInsightTradeMode() {
+            if (!currentInsightState) {
+                return;
+            }
+            insightTradeMode = !insightTradeMode;
+            updateInsightTradeModeButton();
+            renderCurrentInsightContent();
+        }
+
+        function collectScheduledOrderFormPayload(formElement, fallbackPdno = '') {
+            const formData = new FormData(formElement);
+            const endAt = String(formData.get('end_at') || formData.get('execute_at') || '').trim();
+            const side = String(formData.get('side') || 'buy').trim().toLowerCase() || 'buy';
+            const pdno = normalizeTicker(String(formData.get('pdno') || fallbackPdno || '').trim());
+            const ordQty = Number(formData.get('ord_qty') || 0);
+            const ordUnpr = String(formData.get('ord_unpr') || '').trim();
+
+            if (!endAt) {
+                throw new Error('종료 시각을 입력해 주세요.');
+            }
+            if (!pdno) {
+                throw new Error('종목 정보를 확인해 주세요.');
+            }
+            if (!Number.isFinite(ordQty) || ordQty < 1) {
+                throw new Error('수량은 1주 이상이어야 합니다.');
+            }
+            if (!ordUnpr) {
+                throw new Error('주문 단가를 입력해 주세요.');
+            }
+
+            return {
+                end_at: endAt,
+                execute_at: endAt,
+                side: side === 'sell' ? 'sell' : 'buy',
+                pdno,
+                ord_qty: Math.floor(ordQty),
+                ord_unpr: ordUnpr,
+                ord_dvsn: String(formData.get('ord_dvsn') || '00').trim() || '00',
+                excg_id_dvsn_cd: String(formData.get('excg_id_dvsn_cd') || 'SOR').trim() || 'SOR',
+                sll_type: String(formData.get('sll_type') || '').trim(),
+                cndt_pric: String(formData.get('cndt_pric') || '').trim(),
+                note: String(formData.get('note') || '').trim(),
+            };
+        }
+
+        async function submitInsightScheduledOrder(event) {
+            event.preventDefault();
+            if (!currentInsightState || currentInsightState.marketType !== 'KOR') {
+                setScheduledOrderNotice('insight', '현재 웹 조건주문은 국내 종목만 지원합니다.', 'error');
+                return;
+            }
+
+            const form = event.target;
+            const submitButton = document.getElementById('insightScheduledOrderSubmitBtn');
+            const originalText = submitButton ? submitButton.innerText : '';
+            clearScheduledOrderNotice('insight');
+            if (submitButton) {
+                submitButton.disabled = true;
+                submitButton.innerText = '등록 중...';
+            }
 
             try {
-                // Determine clean ticker for TradingView
-                let tvTicker = ticker;
-                if (marketType === 'KOR') {
-                    tvTicker = 'KRX:' + ticker;
-                } else if (marketType === 'JPN') {
-                    tvTicker = 'TSE:' + ticker;
-                } else if (ticker.endsWith('.KS') || ticker.endsWith('.KQ')) {
-                    tvTicker = 'KRX:' + ticker.split('.')[0];
+                const payload = collectScheduledOrderFormPayload(form, normalizeTicker(currentInsightState.ticker));
+                payload.pdno = normalizeTicker(currentInsightState.ticker);
+                const response = await fetch('/api/scheduled-orders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    return;
                 }
+                if (!response.ok) {
+                    throw new Error(await readApiErrorMessage(response, '조건주문 등록에 실패했습니다.'));
+                }
+                const data = await response.json();
+                if (data?.status !== 'success') {
+                    throw new Error(data?.message || '조건주문 등록에 실패했습니다.');
+                }
+                await loadScheduledOrders(true);
+                setScheduledOrderNotice('insight', '조건주문을 등록했습니다. 종료 시각 전까지 앱 안에서 상태를 계속 확인할 수 있습니다.', 'success');
+                renderCurrentInsightContent();
+            } catch (err) {
+                console.error('submitInsightScheduledOrder error', err);
+                setScheduledOrderNotice('insight', err?.message || '조건주문 등록 중 오류가 발생했습니다.', 'error');
+            } finally {
+                if (submitButton) {
+                    submitButton.disabled = false;
+                    submitButton.innerText = originalText || '조건주문 등록';
+                }
+            }
+        }
 
+        function resetScheduledOrderEditForm() {
+            const form = document.getElementById('scheduledOrderEditForm');
+            if (!form) return;
+            form.reset();
+            const pdno = document.getElementById('scheduledOrderEditPdno');
+            const ordDvsn = document.getElementById('scheduledOrderEditOrdDvsn');
+            const excg = document.getElementById('scheduledOrderEditExcg');
+            const symbolValue = document.getElementById('scheduledOrderEditSymbolValue');
+            if (pdno) pdno.value = '';
+            if (ordDvsn) ordDvsn.value = '00';
+            if (excg) excg.value = 'SOR';
+            if (symbolValue) symbolValue.innerText = '-';
+            const summary = document.getElementById('scheduledOrderEditSummary');
+            if (summary) {
+                summary.innerText = '수정할 조건주문을 목록에서 선택해 주세요.';
+            }
+        }
+
+        function getScheduledOrderById(orderId) {
+            return scheduledOrders.find((item) => item.id === orderId) || null;
+        }
+
+        function updateScheduledOrderEditTabButton() {
+            const button = document.getElementById('scheduledOrderEditTabBtn');
+            if (!button) return;
+            button.disabled = !scheduledOrderEditingId;
+        }
+
+        function updateScheduledOrderModalCaption(message = '') {
+            const caption = document.getElementById('scheduledOrderModalCaption');
+            if (!caption) return;
+            if (message) {
+                caption.innerText = message;
+                return;
+            }
+            if (!scheduledOrders.length) {
+                caption.innerText = '등록된 국내 조건주문을 확인하고 관리할 수 있습니다. 활성 주문은 종료 시각 전까지 유지되며, 취소되거나 체결될 때까지 추적됩니다.';
+                return;
+            }
+            const activeCount = scheduledOrders.filter((item) => isActiveScheduledOrderStatus(item.status)).length;
+            caption.innerText = `전체 ${scheduledOrders.length}건 · 활성 주문 ${activeCount}건`;
+        }
+
+        function setScheduledOrderModalTab(tab) {
+            scheduledOrderModalTab = tab === 'edit' && scheduledOrderEditingId ? 'edit' : 'history';
+            document.querySelectorAll('[data-scheduled-order-tab]').forEach((button) => {
+                button.classList.toggle('active', button.dataset.scheduledOrderTab === scheduledOrderModalTab);
+            });
+            document.getElementById('scheduledOrderHistoryPanel').classList.toggle('active', scheduledOrderModalTab === 'history');
+            document.getElementById('scheduledOrderEditPanel').classList.toggle('active', scheduledOrderModalTab === 'edit');
+            updateScheduledOrderEditTabButton();
+            if (scheduledOrderModalTab === 'edit') {
+                const selected = getScheduledOrderById(scheduledOrderEditingId);
+                if (selected) {
+                    updateScheduledOrderModalCaption(`${selected.order?.pdno || selected.id} 조건주문을 수정 중입니다.`);
+                    return;
+                }
+            }
+            updateScheduledOrderModalCaption();
+        }
+
+        function renderScheduledOrderList(emptyMessage = '등록된 조건주문이 없습니다.') {
+            const listEl = document.getElementById('scheduledOrderList');
+            const emptyEl = document.getElementById('scheduledOrderEmpty');
+            if (!listEl || !emptyEl) return;
+
+            if (!scheduledOrders.length) {
+                listEl.innerHTML = '';
+                emptyEl.innerText = emptyMessage;
+                emptyEl.classList.add('active');
+                updateScheduledOrderModalCaption();
+                return;
+            }
+
+            emptyEl.classList.remove('active');
+            listEl.innerHTML = scheduledOrders.map((item) => {
+                const order = item.order || {};
+                const isScheduled = String(item.status || '') === 'scheduled';
+                const canEdit = canEditScheduledOrder(item);
+                const canCancel = isScheduled || canBrokerCancelScheduledOrder(item);
+                const broker = item.broker_order || {};
+                const safeId = escapeAttributeValue(item.id || '');
+                const errorHtml = item.last_error ? `<div class="scheduled-order-card-error">최근 오류 · ${escapeHtml(item.last_error)}</div>` : '';
+                const brokerHtml = (broker.odno || broker.filled_qty || broker.remaining_qty || broker.last_broker_message)
+                    ? `<div class="scheduled-order-card-note">브로커 상태 · 주문번호 ${escapeHtml(String(broker.odno || '-'))} · 체결 ${escapeHtml(String(broker.filled_qty ?? 0))}주 · 잔량 ${escapeHtml(String(broker.remaining_qty ?? order.ord_qty ?? 0))}주${broker.last_broker_message ? ` · ${escapeHtml(String(broker.last_broker_message))}` : ''}</div>`
+                    : '';
+                return `
+                    <div class="scheduled-order-card">
+                        <div class="scheduled-order-card-header">
+                            <div class="scheduled-order-card-title">
+                                <strong>${escapeHtml(order.pdno || '-')} · ${escapeHtml(getScheduledOrderSideLabel(order.side))}</strong>
+                                <span>${escapeHtml(getScheduledOrderLifecycleCopy(item))}</span>
+                            </div>
+                            <span class="scheduled-order-status ${getScheduledOrderStatusClass(item.status)}">${escapeHtml(getScheduledOrderStatusLabel(item.status))}</span>
+                        </div>
+                        <div class="scheduled-order-meta-grid">
+                            <div class="scheduled-order-meta-item">
+                                <span>종료 시각</span>
+                                <strong>${escapeHtml(formatDisplayDateTime(getScheduledOrderDisplayEndAt(item)))}</strong>
+                            </div>
+                            <div class="scheduled-order-meta-item">
+                                <span>수량</span>
+                                <strong>${escapeHtml(formatNumber(Number(order.ord_qty || 0)))}주</strong>
+                            </div>
+                            <div class="scheduled-order-meta-item">
+                                <span>주문 단가</span>
+                                <strong>${escapeHtml(formatPlainKrw(order.ord_unpr || 0))}</strong>
+                            </div>
+                        </div>
+                        ${brokerHtml}
+                        ${errorHtml}
+                        <div class="scheduled-order-card-actions">
+                            <button type="button" class="scheduled-order-action-primary" data-order-id="${safeId}" onclick="startScheduledOrderEdit(this.dataset.orderId)" ${canEdit ? '' : 'disabled'}>수정</button>
+                            <button type="button" class="scheduled-order-action-primary" data-order-id="${safeId}" onclick="syncSingleScheduledOrder(this.dataset.orderId)" ${canBrokerCancelScheduledOrder(item) ? '' : 'disabled'}>상태 동기화</button>
+                            <button type="button" class="scheduled-order-action-danger" data-order-id="${safeId}" onclick="confirmCancelScheduledOrder(this.dataset.orderId)" ${canCancel ? '' : 'disabled'}>취소</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            const selected = getScheduledOrderById(scheduledOrderEditingId);
+            if (scheduledOrderEditingId && (!selected || !canEditScheduledOrder(selected))) {
+                closeScheduledOrderEdit();
+                return;
+            }
+            if (selected && scheduledOrderModalTab === 'edit') {
+                updateScheduledOrderModalCaption(`${selected.order?.pdno || selected.id} 조건주문을 수정 중입니다.`);
+            } else {
+                updateScheduledOrderModalCaption();
+            }
+        }
+
+        async function loadScheduledOrders(force = false) {
+            const loadingEl = document.getElementById('scheduledOrderLoading');
+            if (loadingEl) {
+                loadingEl.classList.add('active');
+            }
+            try {
+                const response = await fetch('/api/scheduled-orders', { cache: force ? 'no-store' : 'default' });
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    return null;
+                }
+                if (!response.ok) {
+                    throw new Error(await readApiErrorMessage(response, '조건주문 목록을 불러오지 못했습니다.'));
+                }
+                const data = await response.json();
+                scheduledOrders = Array.isArray(data?.orders) ? data.orders : [];
+                renderScheduledOrderList();
+                return data;
+            } catch (err) {
+                console.error('loadScheduledOrders error', err);
+                scheduledOrders = [];
+                setScheduledOrderNotice('modal', err?.message || '조건주문 목록을 불러오지 못했습니다.', 'error');
+                renderScheduledOrderList(err?.message || '조건주문 목록을 불러오지 못했습니다.');
+                return null;
+            } finally {
+                if (loadingEl) {
+                    loadingEl.classList.remove('active');
+                }
+            }
+        }
+
+        async function syncScheduledOrders(forceRender = true, showSuccessNotice = false) {
+            const response = await fetch('/api/scheduled-orders/sync', { method: 'POST' });
+            if (response.status === 401) {
+                window.location.href = '/login';
+                return null;
+            }
+            if (!response.ok) {
+                throw new Error(await readApiErrorMessage(response, '조건주문 상태 동기화에 실패했습니다.'));
+            }
+            const data = await response.json();
+            scheduledOrders = Array.isArray(data?.orders) ? data.orders : [];
+            if (forceRender) {
+                renderScheduledOrderList();
+            }
+            if (showSuccessNotice) {
+                setScheduledOrderNotice('modal', '조건주문 상태를 동기화했습니다.', 'success');
+            }
+            return data;
+        }
+
+        function fillScheduledOrderEditForm(item) {
+            const order = item?.order || {};
+            const summary = document.getElementById('scheduledOrderEditSummary');
+            const symbolValue = document.getElementById('scheduledOrderEditSymbolValue');
+            const liveEditable = isLiveEditableScheduledOrder(item);
+            if (summary) {
+                summary.innerText = liveEditable
+                    ? `${order.pdno || '-'} · ${getScheduledOrderSideLabel(order.side)} · 제출된 조건주문입니다. 종료 시각만 수정할 수 있으며 수량과 가격은 브로커 제출 이후 변경할 수 없습니다.`
+                    : `${order.pdno || '-'} · ${getScheduledOrderSideLabel(order.side)} · ${formatDisplayDateTime(getScheduledOrderDisplayEndAt(item))} 종료 조건주문을 수정합니다.`;
+            }
+            if (symbolValue) {
+                symbolValue.innerText = normalizeTicker(order.pdno || '-') || '-';
+            }
+            const endAtField = document.getElementById('scheduledOrderEditEndAt');
+            const sideField = document.getElementById('scheduledOrderEditSide');
+            const qtyField = document.getElementById('scheduledOrderEditQty');
+            const priceField = document.getElementById('scheduledOrderEditPrice');
+            endAtField.value = formatDateTimeLocalValue(getScheduledOrderDisplayEndAt(item));
+            sideField.value = String(order.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
+            document.getElementById('scheduledOrderEditPdno').value = normalizeTicker(order.pdno || '');
+            qtyField.value = String(Number(order.ord_qty || 1));
+            priceField.value = String(order.ord_unpr || '');
+            document.getElementById('scheduledOrderEditOrdDvsn').value = String(order.ord_dvsn || '00');
+            document.getElementById('scheduledOrderEditExcg').value = String(order.excg_id_dvsn_cd || 'SOR');
+            document.getElementById('scheduledOrderEditSellType').value = String(order.sll_type || '');
+            document.getElementById('scheduledOrderEditConditionPrice').value = String(order.cndt_pric || '');
+            document.getElementById('scheduledOrderEditNote').value = String(item.note || '');
+            sideField.disabled = liveEditable;
+            qtyField.disabled = liveEditable;
+            priceField.disabled = liveEditable;
+        }
+
+        function startScheduledOrderEdit(orderId) {
+            const selected = getScheduledOrderById(orderId);
+            if (!selected) {
+                setScheduledOrderNotice('modal', '수정할 조건주문을 찾을 수 없습니다.', 'error');
+                return;
+            }
+            if (!canEditScheduledOrder(selected)) {
+                setScheduledOrderNotice('modal', '현재 상태에서는 조건주문을 수정할 수 없습니다.', 'error');
+                return;
+            }
+            clearScheduledOrderNotice('modal');
+            scheduledOrderEditingId = orderId;
+            updateScheduledOrderEditTabButton();
+            fillScheduledOrderEditForm(selected);
+            setScheduledOrderModalTab('edit');
+        }
+
+        async function syncSingleScheduledOrder(_orderId) {
+            try {
+                await syncScheduledOrders(true, true);
+            } catch (err) {
+                console.error('syncSingleScheduledOrder error', err);
+                setScheduledOrderNotice('modal', err?.message || '조건주문 상태 동기화 중 오류가 발생했습니다.', 'error');
+            }
+        }
+
+        function closeScheduledOrderEdit() {
+            scheduledOrderEditingId = '';
+            updateScheduledOrderEditTabButton();
+            resetScheduledOrderEditForm();
+            const sideField = document.getElementById('scheduledOrderEditSide');
+            const qtyField = document.getElementById('scheduledOrderEditQty');
+            const priceField = document.getElementById('scheduledOrderEditPrice');
+            if (sideField) sideField.disabled = false;
+            if (qtyField) qtyField.disabled = false;
+            if (priceField) priceField.disabled = false;
+            setScheduledOrderModalTab('history');
+        }
+
+        async function submitScheduledOrderEdit(event) {
+            event.preventDefault();
+            const selected = getScheduledOrderById(scheduledOrderEditingId);
+            if (!selected) {
+                setScheduledOrderNotice('modal', '수정할 조건주문을 다시 선택해 주세요.', 'error');
+                closeScheduledOrderEdit();
+                return;
+            }
+
+            const submitButton = document.getElementById('scheduledOrderEditSubmitBtn');
+            const originalText = submitButton ? submitButton.innerText : '';
+            clearScheduledOrderNotice('modal');
+            if (submitButton) {
+                submitButton.disabled = true;
+                submitButton.innerText = '저장 중...';
+            }
+
+            try {
+                let payload;
+                if (isLiveEditableScheduledOrder(selected)) {
+                    const formData = new FormData(event.target);
+                    const endAt = String(formData.get('end_at') || '').trim();
+                    if (!endAt) {
+                        throw new Error('종료 시각을 입력해 주세요.');
+                    }
+                    payload = {
+                        end_at: endAt,
+                        execute_at: endAt,
+                        side: String(selected.order?.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy',
+                        pdno: normalizeTicker(String(selected.order?.pdno || '')),
+                        ord_qty: Math.max(1, Math.floor(Number(selected.order?.ord_qty || 1))),
+                        ord_unpr: String(selected.order?.ord_unpr || '').trim(),
+                        ord_dvsn: String(selected.order?.ord_dvsn || '00').trim() || '00',
+                        excg_id_dvsn_cd: String(selected.order?.excg_id_dvsn_cd || 'SOR').trim() || 'SOR',
+                        sll_type: String(selected.order?.sll_type || '').trim(),
+                        cndt_pric: String(selected.order?.cndt_pric || '').trim(),
+                        note: String(selected.note || '').trim(),
+                    };
+                } else {
+                    payload = collectScheduledOrderFormPayload(event.target);
+                }
+                const response = await fetch(`/api/scheduled-orders/${encodeURIComponent(selected.id)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(await readApiErrorMessage(response, '조건주문 수정에 실패했습니다.'));
+                }
+                const data = await response.json();
+                if (data?.status !== 'success') {
+                    throw new Error(data?.message || '조건주문 수정에 실패했습니다.');
+                }
+                const loaded = await loadScheduledOrders(true);
+                closeScheduledOrderEdit();
+                setScheduledOrderNotice('modal', loaded ? '조건주문을 수정했습니다.' : '조건주문은 수정했지만 목록을 새로고침하지 못했습니다.', loaded ? 'success' : 'error');
+            } catch (err) {
+                console.error('submitScheduledOrderEdit error', err);
+                setScheduledOrderNotice('modal', err?.message || '조건주문 수정 중 오류가 발생했습니다.', 'error');
+            } finally {
+                if (submitButton) {
+                    submitButton.disabled = false;
+                    submitButton.innerText = originalText || '수정 저장';
+                }
+            }
+        }
+
+        function confirmCancelScheduledOrder(orderId) {
+            const selected = getScheduledOrderById(orderId);
+            if (!selected) {
+                setScheduledOrderNotice('modal', '취소할 조건주문을 찾을 수 없습니다.', 'error');
+                return;
+            }
+            if (!(String(selected.status || '') === 'scheduled' || canBrokerCancelScheduledOrder(selected))) {
+                setScheduledOrderNotice('modal', '현재 상태에서는 취소할 수 없습니다.', 'error');
+                return;
+            }
+
+            showModal({
+                title: '조건주문 취소',
+                desc: `${selected.order?.pdno || selected.id} ${getScheduledOrderSideLabel(selected.order?.side)} 조건주문을 취소하시겠습니까?${canBrokerCancelScheduledOrder(selected) ? ' 이미 제출된 주문이면 브로커 취소를 시도합니다.' : ''}`,
+                confirmText: '취소 실행',
+                isDanger: true,
+                iconHtml: `<svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path><circle cx="12" cy="12" r="9"></circle></svg>`,
+                onConfirm: async () => {
+                    try {
+                        const response = await fetch(`/api/scheduled-orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
+                        if (response.status === 401) {
+                            window.location.href = '/login';
+                            return;
+                        }
+                        if (!response.ok) {
+                            throw new Error(await readApiErrorMessage(response, '조건주문 취소에 실패했습니다.'));
+                        }
+                        if (scheduledOrderEditingId === orderId) {
+                            closeScheduledOrderEdit();
+                        }
+                        const loaded = await loadScheduledOrders(true);
+                        setScheduledOrderNotice('modal', loaded ? '조건주문을 취소했습니다.' : '조건주문은 취소했지만 목록을 새로고침하지 못했습니다.', loaded ? 'success' : 'error');
+                    } catch (err) {
+                        console.error('confirmCancelScheduledOrder error', err);
+                        setScheduledOrderNotice('modal', err?.message || '조건주문 취소 중 오류가 발생했습니다.', 'error');
+                    }
+                },
+            });
+        }
+
+        function openScheduledOrderModal(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            clearScheduledOrderNotice('modal');
+            document.getElementById('scheduledOrderModal').classList.add('active');
+            setScheduledOrderModalTab('history');
+            loadScheduledOrders(true).then(() => syncScheduledOrders(true, false)).catch(() => null);
+        }
+
+        function closeScheduledOrderModal() {
+            document.getElementById('scheduledOrderModal').classList.remove('active');
+            clearScheduledOrderNotice('modal');
+            closeScheduledOrderEdit();
+        }
+
+        function handleScheduledOrderOverlayClick(event) {
+            if (event.target.id === 'scheduledOrderModal') {
+                closeScheduledOrderModal();
+            }
+        }
+
+        function handleScheduledOrderModalClick(_event) {
+        }
+
+        // Asset Insight Fetcher
+        async function fetchAssetInsight(ticker, marketType) {
+            marketType = marketType || 'USA';
+            openInsightPane();
+            currentInsightRequestSeq += 1;
+            const requestSeq = currentInsightRequestSeq;
+
+            let tvTicker = ticker;
+            if (marketType === 'KOR') {
+                tvTicker = 'KRX:' + normalizeTicker(ticker);
+            } else if (marketType === 'JPN') {
+                tvTicker = 'TSE:' + normalizeTicker(ticker);
+            } else if (ticker.endsWith('.KS') || ticker.endsWith('.KQ')) {
+                tvTicker = 'KRX:' + ticker.split('.')[0];
+            }
+
+            clearScheduledOrderNotice('insight');
+            currentInsightState = {
+                status: 'loading',
+                ticker,
+                marketType,
+                tvTicker,
+            };
+            renderCurrentInsightContent();
+
+            try {
                 const res = await fetch(`/api/asset-insight?ticker=${ticker}&market_type=${marketType}`);
                 const result = await res.json();
+                if (requestSeq !== currentInsightRequestSeq) {
+                    return;
+                }
 
                 if (result.status === 'success') {
                     const data = result.data;
-                    const fin = data.financials;
-                    const opt = data.options;
-                    const news = data.news;
-
-                    // Pricing color
-                    const rc = fin.currentPrice; // can be float
-
-                    // TradingView Logo resolution logic
+                    const fin = data.financials || {};
                     let tvLogoUrl = '';
                     let cleanTicker = ticker;
                     if (ticker.endsWith('.KS') || ticker.endsWith('.KQ')) {
@@ -1589,344 +2791,49 @@
                         tvLogoUrl = `https://s3-symbol-logo.tradingview.com/${cleanTicker.toLowerCase()}--big.svg`;
                     }
 
-                    let fallbackAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(fin.shortName || ticker)}&background=random&color=fff&size=64`;
-
+                    const fallbackAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(fin.shortName || ticker)}&background=random&color=fff&size=64`;
                     let imgHtml = '';
                     if (tvLogoUrl) {
-                        imgHtml = `<img src="${tvLogoUrl}" alt="logo" 
-                            onerror="this.onerror=function(){this.onerror=null; this.src='${fallbackAvatar}';}; this.src='${fin.logo_url ? fin.logo_url : fallbackAvatar}';" 
-                            style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
+                        imgHtml = `<img src="${tvLogoUrl}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=function(){this.onerror=null; this.src='${fallbackAvatar}';}; this.src='${fin.logo_url ? fin.logo_url : fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
                     } else if (fin.logo_url) {
-                        imgHtml = `<img src="${fin.logo_url}" alt="logo" 
-                            onerror="this.onerror=null; this.src='${fallbackAvatar}';" 
-                            style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
+                        imgHtml = `<img src="${fin.logo_url}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=null; this.src='${fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
                     } else {
-                        imgHtml = `<img src="${fallbackAvatar}" alt="logo" 
-                            style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
+                        imgHtml = `<img src="${fallbackAvatar}" alt="${escapeHtml(fin.shortName || ticker)} 로고" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
                     }
 
-                    let html = `
-                        <div class="insight-top-bar animate-enter">
-                            <div style="display:flex; align-items:center; gap: 12px;">
-                                ${imgHtml}
-                                <div style="display:flex; flex-direction:column;">
-                                    <span class="insight-title">${fin.shortName}</span>
-                                    <span class="insight-ticker">${ticker}</span>
-                                </div>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:10px;">
-                                <div class="insight-price">${fin.currency} ${rc}</div>
-                            </div>
-                        </div>
-
-                        <div class="fin-grid animate-enter" style="animation-delay: 0.1s;">
-                            <div class="fin-card">
-                                <span>Forward P/E <span style="text-transform:none; opacity:0.6;">선행 PER</span></span>
-                                <span>${fin.forwardPE !== "N/A" ? parseFloat(fin.forwardPE).toFixed(2) : "N/A"}</span>
-                            </div>
-                            <div class="fin-card">
-                                <span>ROE <span style="text-transform:none; opacity:0.6;">자기자본이익률</span></span>
-                                <span>${fin.returnOnEquity !== "N/A" ? (parseFloat(fin.returnOnEquity) * 100).toFixed(2) + '%' : "N/A"}</span>
-                            </div>
-                            <div class="fin-card">
-                                <span>D/E <span style="text-transform:none; opacity:0.6;">부채비율</span></span>
-                                <span>${fin.debtToEquity !== "N/A" ? parseFloat(fin.debtToEquity).toFixed(2) : "N/A"}</span>
-                            </div>
-                            <div class="fin-card">
-                                <span>Beta <span style="text-transform:none; opacity:0.6;">변동성</span></span>
-                                <span>${fin.beta !== "N/A" ? parseFloat(fin.beta).toFixed(2) : "N/A"}</span>
-                            </div>
-                            <div class="fin-card">
-                                <span>Mkt Cap <span style="text-transform:none; opacity:0.6;">시가총액</span></span>
-                                <span>${fin.marketCap !== "N/A" ? (fin.marketCap >= 1e12 ? (fin.marketCap / 1e12).toFixed(2) + 'T' : fin.marketCap >= 1e9 ? (fin.marketCap / 1e9).toFixed(2) + 'B' : (fin.marketCap / 1e6).toFixed(0) + 'M') : "N/A"}</span>
-                            </div>
-                            <div class="fin-card">
-                                <span>Short <span style="text-transform:none; opacity:0.6;">공매도비중</span></span>
-                                <span style="color: ${fin.shortPercentOfFloat !== 'N/A' && parseFloat(fin.shortPercentOfFloat) > 0.1 ? 'var(--loss)' : '#fff'}">${fin.shortPercentOfFloat !== "N/A" ? (parseFloat(fin.shortPercentOfFloat) * 100).toFixed(2) + '%' : "N/A"}</span>
-                            </div>
-                            <div class="fin-card">
-                                <span>Target <span style="text-transform:none; opacity:0.6;">목표가</span></span>
-                                <span style="color: ${fin.targetMeanPrice !== 'N/A' && parseFloat(fin.targetMeanPrice) > rc ? 'var(--profit)' : (fin.targetMeanPrice !== 'N/A' ? 'var(--loss)' : '#fff')}">${fin.targetMeanPrice !== "N/A" ? fin.currency + ' ' + parseFloat(fin.targetMeanPrice).toFixed(2) : "N/A"}</span>
-                            </div>
-                            <div class="fin-card">
-                                <span style="text-transform: none;">Analyst <span style="opacity:0.6;">분석가 평가</span></span>
-                                <span style="text-transform: capitalize; color: ${fin.recommendation === 'buy' || fin.recommendation === 'strong_buy' ? 'var(--profit)' : (fin.recommendation === 'sell' || fin.recommendation === 'strong_sell' ? 'var(--loss)' : '#fff')}">${(fin.recommendation || 'N/A').replace('_', ' ')}</span>
-                            </div>
-                        </div>
-                    `;
-
-                    // 52-week range bar
-                    if (fin.fiftyTwoWeekLow !== 'N/A' && fin.fiftyTwoWeekHigh !== 'N/A') {
-                        const low52 = parseFloat(fin.fiftyTwoWeekLow);
-                        const high52 = parseFloat(fin.fiftyTwoWeekHigh);
-                        const range52 = high52 - low52;
-                        const pos52 = range52 > 0 ? Math.min(100, Math.max(0, ((rc - low52) / range52) * 100)) : 50;
-                        html += `
-                            <div class="animate-enter" style="animation-delay: 0.15s; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 10px 14px;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
-                                    <span style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">52주 범위</span>
-                                    <span style="font-size:11px; color:var(--text-sub);">${fin.currency} ${low52.toFixed(2)} — ${high52.toFixed(2)}</span>
-                                </div>
-                                <div style="position:relative; width:100%; height:6px; background: linear-gradient(90deg, var(--loss), var(--accent-gold), var(--profit)); border-radius:3px;">
-                                    <div style="position:absolute; top:-3px; left:${pos52}%; transform:translateX(-50%); width:12px; height:12px; background:#fff; border-radius:50%; box-shadow: 0 0 6px rgba(255,255,255,0.5);"></div>
-                                </div>
-                            </div>
-                        `;
-                    }
-
-                    // TradingView Chart
-                    html += `
-                        <div class="tv-wrapper animate-enter" style="animation-delay: 0.2s;" id="tv_chart_container"></div>
-                    `;
-
-                    // Split bottom area for News and Options
-
-                    let newsHtml = ``;
-                    if (news && news.length > 0) {
-                        news.forEach(n => {
-                            newsHtml += `
-                                <a href="${n.link}" target="_blank" class="news-item">
-                                    <span class="news-title">${n.title}</span>
-                                    <span class="news-meta">${n.publisher}</span>
-                                </a>
-                            `;
-                        });
-                    } else {
-                        newsHtml = `<div style="color:var(--text-muted); font-size:13px; padding:12px;">최신 뉴스가 없습니다.</div>`;
-                    }
-
-                    let optHtml = ``;
-                    if (opt) {
-                        const callVol = opt.calls_volume;
-                        const putVol = opt.puts_volume;
-                        const total = callVol + putVol;
-                        const callPct = total > 0 ? Math.round((callVol / total) * 100) : 50;
-                        const putPct = total > 0 ? 100 - callPct : 50;
-                        const pcrRaw = opt.pcr;
-                        const pcr = Number.isFinite(pcrRaw) ? Number(pcrRaw).toFixed(2) : (pcrRaw === 'High' ? 'High' : 'N/A');
-                        const pcrBasis = opt.pcr_basis || 'Volume';
-                        const callsOiNum = Number(opt.calls_oi || 0);
-                        const putsOiNum = Number(opt.puts_oi || 0);
-                        const oiAvailable = opt.oi_available === true || (callsOiNum + putsOiNum) > 0;
-                        const inferredStrikeBasis = (callsOiNum > 0 && putsOiNum > 0) ? 'OI' : 'Volume';
-                        const strikeBasis = opt.strike_basis || inferredStrikeBasis;
-                        const ivText = opt.atm_iv ? opt.atm_iv + '%' : 'N/A';
-                        const strikePrefix = fin.currency ? `${fin.currency} ` : '';
-                        const maxCallLabel = strikeBasis === 'OI' ? 'Max OI Call' : 'Max Vol Call';
-                        const maxPutLabel = strikeBasis === 'OI' ? 'Max OI Put' : 'Max Vol Put';
-                        const oiConfidence = opt.oi_confidence || { level: oiAvailable ? 'low' : 'none', label: oiAvailable ? '낮음' : '미산출', reason: oiAvailable ? '근월물 OI 규모가 작습니다.' : '근월물 OI 데이터가 없습니다.' };
-                        const maxPainConfidence = opt.max_pain_confidence || { level: opt.max_pain_available ? 'low' : 'none', label: opt.max_pain_available ? '낮음' : '미산출', reason: opt.max_pain_available ? '근월물 OI를 참고 계산했습니다.' : '근월물 OI가 부족해 맥스페인을 계산할 수 없습니다.' };
-                        const confidenceColors = {
-                            high: 'rgba(16,185,129,0.18)',
-                            medium: 'rgba(245,158,11,0.18)',
-                            low: 'rgba(239,68,68,0.18)',
-                            none: 'rgba(148,163,184,0.16)',
-                        };
-                        const confidenceTextColors = {
-                            high: '#6ee7b7',
-                            medium: '#fbbf24',
-                            low: '#fca5a5',
-                            none: '#cbd5e1',
-                        };
-                        const renderConfidenceBadge = (meta) => {
-                            const level = meta && meta.level ? meta.level : 'none';
-                            const label = meta && meta.label ? meta.label : '미산출';
-                            const background = confidenceColors[level] || confidenceColors.none;
-                            const color = confidenceTextColors[level] || confidenceTextColors.none;
-                            return `<span style="display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; background:${background}; color:${color}; font-size:10px; font-weight:700; letter-spacing:0.02em;">${label}</span>`;
-                        };
-                        const maxPainAvailable = opt.max_pain_available === true || (Number.isFinite(Number(opt.max_pain)) && Number(opt.max_pain) > 0);
-                        const maxPainText = maxPainAvailable ? strikePrefix + formatNumber(opt.max_pain) : '미산출';
-                        const oiCallText = oiAvailable ? `${formatNumber(opt.calls_oi)}계약` : '데이터 미제공';
-                        const oiPutText = oiAvailable ? `${formatNumber(opt.puts_oi)}계약` : '데이터 미제공';
-                        const oiHint = `<div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-top:8px;"><div style="font-size:10px; color:var(--text-muted); line-height:1.45;">${oiConfidence.reason || '근월물 OI 품질을 기준으로 해석합니다.'}</div>${renderConfidenceBadge(oiConfidence)}</div>`;
-                        const maxPainHint = `<div style="font-size:10px; color:var(--text-muted); line-height:1.45; text-align:right;">${maxPainConfidence.reason || '근월물 OI 기반으로 계산합니다.'}</div>`;
-
-                        optHtml = `
-                            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 18px;">
-                                <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <div>
-                                        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 2px;">만기일</div>
-                                        <div style="font-size: 15px; font-weight: 700; color: #fff;">${opt.date}</div>
-                                    </div>
-                                    <div style="text-align:right;">
-                                        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 2px;">ATM IV</div>
-                                        <div style="font-size: 15px; font-weight: 700; color: ${opt.atm_iv && opt.atm_iv > 50 ? '#eab308' : '#fff'};">${ivText}</div>
-                                    </div>
-                                </div>
-                                
-                                <div>
-                                    <div style="display:flex; justify-content:space-between; font-size:12px; font-weight: 500; margin-bottom:6px;">
-                                        <span style="color:var(--profit);">콜 ${callPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(callVol)}계약)</span></span>
-                                        <span style="font-size:11px; color:var(--text-muted);">PCR(${pcrBasis}) ${pcr}</span>
-                                        <span style="color:var(--loss);">풋 ${putPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(putVol)}계약)</span></span>
-                                    </div>
-                                    <div style="width:100%; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; display:flex; overflow:hidden;">
-                                        <div style="width:${callPct}%; background:var(--profit);"></div>
-                                        <div style="width:${putPct}%; background:var(--loss);"></div>
-                                    </div>
-                                </div>
-                                
-                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
-                                    <div>
-                                        <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Call)</div>
-                                        <div style="font-size:14px; font-weight:700; color:#fff;">${oiCallText}</div>
-                                    </div>
-                                    <div style="text-align:right;">
-                                        <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Put)</div>
-                                        <div style="font-size:14px; font-weight:700; color:#fff;">${oiPutText}</div>
-                                    </div>
-                                </div>
-                                ${oiHint}
-
-                                <div style="display:flex; flex-direction: column; gap:6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-                                            <div style="font-size:11px; color:var(--text-muted);">Max Pain</div>
-                                            ${renderConfidenceBadge(maxPainConfidence)}
-                                        </div>
-                                        <div style="font-size:13px; font-weight:700; color:${maxPainAvailable ? '#eab308' : '#cbd5e1'};">${maxPainText}</div>
-                                    </div>
-                                    ${maxPainHint}
-                                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div style="font-size:11px; color:var(--text-muted);">${maxCallLabel}</div>
-                                        <div style="font-size:13px; font-weight:700; color:var(--profit);">${opt.max_call_oi_strike ? strikePrefix + formatNumber(opt.max_call_oi_strike) : 'N/A'}</div>
-                                    </div>
-                                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div style="font-size:11px; color:var(--text-muted);">${maxPutLabel}</div>
-                                        <div style="font-size:13px; font-weight:700; color:var(--loss);">${opt.max_put_oi_strike ? strikePrefix + formatNumber(opt.max_put_oi_strike) : 'N/A'}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    } else {
-                        optHtml = `<div style="color:var(--text-muted); font-size:13px; padding:12px;">옵션 데이터가 없습니다.</div>`;
-                    }
-
-                    html += `
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch;" class="animate-enter" style="animation-delay: 0.25s;">
-                            <!-- Left: News -->
-                            <div style="display: flex; flex-direction: column;">
-                                <div class="news-header">관련 뉴스</div>
-                                <div class="news-list" style="flex: 1;">
-                                    ${newsHtml}
-                                </div>
-                            </div>
-                            <!-- Right: Options -->
-                            <div style="display: flex; flex-direction: column;">
-                                <div class="news-header">단기 옵션 현황</div>
-                                ${optHtml}
-                            </div>
-                        </div>
-                    `;
-
-                    // Inject
-                    insightContainer.innerHTML = html;
-
-                    // Init Chart
-                    if (marketType === 'USA') {
-                        // US stocks: use TradingView widget
-                        try {
-                            new TradingView.widget({
-                                "autosize": true,
-                                "symbol": tvTicker,
-                                "interval": "D",
-                                "timezone": "Asia/Seoul",
-                                "theme": "dark",
-                                "style": "1",
-                                "locale": "kr",
-                                "enable_publishing": false,
-                                "backgroundColor": "rgba(0,0,0,0)",
-                                "gridColor": "rgba(255,255,255,0.05)",
-                                "hide_top_toolbar": false,
-                                "hide_legend": false,
-                                "save_image": false,
-                                "allow_symbol_change": true,
-                                "container_id": "tv_chart_container"
-                            });
-                        } catch (tvErr) {
-                            console.warn('TradingView widget failed:', tvErr);
-                        }
-                    } else {
-                        // KOR/JPN stocks: use Lightweight Charts with yfinance data
-                        const historyData = data.history || [];
-                        const tvContainer = document.getElementById('tv_chart_container');
-                        if (historyData.length > 0 && tvContainer && typeof LightweightCharts !== 'undefined') {
-                            tvContainer.innerHTML = '';
-                            const chart = LightweightCharts.createChart(tvContainer, {
-                                width: tvContainer.clientWidth,
-                                height: tvContainer.clientHeight,
-                                layout: {
-                                    background: { type: 'solid', color: 'transparent' },
-                                    textColor: 'rgba(255,255,255,0.6)',
-                                    fontSize: 11,
-                                },
-                                grid: {
-                                    vertLines: { color: 'rgba(255,255,255,0.04)' },
-                                    horzLines: { color: 'rgba(255,255,255,0.04)' },
-                                },
-                                crosshair: { mode: 0 },
-                                rightPriceScale: {
-                                    borderColor: 'rgba(255,255,255,0.1)',
-                                },
-                                timeScale: {
-                                    borderColor: 'rgba(255,255,255,0.1)',
-                                    timeVisible: false,
-                                },
-                            });
-                            const candleSeries = chart.addCandlestickSeries({
-                                upColor: '#26a69a',
-                                downColor: '#ef5350',
-                                borderDownColor: '#ef5350',
-                                borderUpColor: '#26a69a',
-                                wickDownColor: '#ef5350',
-                                wickUpColor: '#26a69a',
-                            });
-                            candleSeries.setData(historyData);
-
-                            const volumeSeries = chart.addHistogramSeries({
-                                color: 'rgba(255,255,255,0.15)',
-                                priceFormat: { type: 'volume' },
-                                priceScaleId: '',
-                            });
-                            volumeSeries.priceScale().applyOptions({
-                                scaleMargins: { top: 0.85, bottom: 0 },
-                            });
-                            volumeSeries.setData(historyData.map(d => ({
-                                time: d.time,
-                                value: d.volume,
-                                color: d.close >= d.open ? 'rgba(38,166,154,0.3)' : 'rgba(239,83,80,0.3)',
-                            })));
-
-                            chart.timeScale().fitContent();
-                            // Resize handler
-                            const resizeObserver = new ResizeObserver(() => {
-                                chart.applyOptions({ width: tvContainer.clientWidth });
-                            });
-                            resizeObserver.observe(tvContainer);
-                        } else {
-                            tvContainer.innerHTML = `
-                                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:8px; color:var(--text-muted); font-size:13px;">
-                                    <span>차트 데이터를 불러올 수 없습니다.</span>
-                                </div>
-                            `;
-                        }
-                    }
-
-                } else {
-                    insightContainer.innerHTML = `
-                        <div style="color:var(--loss); text-align:center; padding:20px;">
-                            ${result.message || '정보를 불러오는 데 실패했습니다.'}
-                        </div>
-                    `;
+                    currentInsightState = {
+                        status: 'success',
+                        ticker,
+                        marketType,
+                        tvTicker,
+                        data,
+                        imgHtml,
+                    };
+                    renderCurrentInsightContent();
+                    return;
                 }
+
+                currentInsightState = {
+                    status: 'error',
+                    ticker,
+                    marketType,
+                    tvTicker,
+                    message: result.message || '정보를 불러오는 데 실패했습니다.',
+                };
+                renderCurrentInsightContent();
             } catch (err) {
-                console.error("fetchAssetInsight error", err);
-                insightContainer.innerHTML = `
-                    <div style="color:var(--loss); text-align:center; padding:20px;">
-                        정보를 불러오는 데 실패했습니다.
-                    </div>
-                `;
+                if (requestSeq !== currentInsightRequestSeq) {
+                    return;
+                }
+                console.error('fetchAssetInsight error', err);
+                currentInsightState = {
+                    status: 'error',
+                    ticker,
+                    marketType,
+                    tvTicker,
+                    message: '정보를 불러오는 데 실패했습니다.',
+                };
+                renderCurrentInsightContent();
             }
         }
 
