@@ -64,6 +64,7 @@ class KisRepository(
     private val quoteRefreshMutex = Mutex()
     private val tradeHistoryCacheMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
+    private val centralOrderClient by lazy { CentralOrderClient(client) }
     private var authToken: AuthToken? = null
     private var cachedBaseDashboard: Pair<Long, DashboardResponse>? = null
     private var cachedDashboard: Pair<Long, DashboardResponse>? = null
@@ -119,6 +120,12 @@ class KisRepository(
 
     fun close() {
         usQuoteService.close()
+    }
+
+    suspend fun submitScheduledDomesticOrder(
+        request: ScheduledDomesticOrderRequest,
+    ): ScheduledOrderSummary = withContext(Dispatchers.IO) {
+        centralOrderClient.submitScheduledDomesticOrder(credentials, request)
     }
 
     suspend fun fetchTradeHistory(

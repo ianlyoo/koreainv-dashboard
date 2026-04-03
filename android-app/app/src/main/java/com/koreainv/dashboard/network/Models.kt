@@ -5,6 +5,8 @@ data class AppCredentials(
     val appSecret: String,
     val cano: String,
     val acntPrdtCd: String,
+    val centralServerBaseUrl: String = "",
+    val centralServerApiToken: String = "",
 )
 
 data class SetupInput(
@@ -13,6 +15,8 @@ data class SetupInput(
     val cano: String,
     val acntPrdtCd: String,
     val pin: String,
+    val centralServerBaseUrl: String = "",
+    val centralServerApiToken: String = "",
 )
 
 sealed interface AppLockState {
@@ -121,4 +125,30 @@ data class AuthToken(
     val value: String,
     val issuedAtMillis: Long,
     val expiresAtMillis: Long,
+)
+
+data class ScheduledDomesticOrderRequest(
+    val executeAt: String,
+    val side: String,
+    val pdno: String,
+    val ordQty: Int,
+    val ordUnpr: String,
+    val ordDvsn: String = "00",
+    val excgIdDvsnCd: String = "NXT",
+    val sllType: String = "",
+    val cndtPric: String = "",
+    val note: String = "",
+)
+
+data class ScheduledOrderSummary(
+    val id: String,
+    val status: String,
+    val sourceApp: String,
+    val accountRef: String,
+    val createdAt: String,
+    val updatedAt: String,
+    val executeAt: String,
+    val attemptCount: Int,
+    val lastError: String,
+    val note: String,
 )
