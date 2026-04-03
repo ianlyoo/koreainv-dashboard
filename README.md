@@ -1,6 +1,6 @@
 # Korea Investment Dashboard
 
-Current release: `v1.6.13`
+Current release: `v1.6.14`
 
 한국투자증권 API 기반 개인 계좌 대시보드입니다.
 
