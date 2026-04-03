@@ -765,6 +765,318 @@ def _authorized_request_once(
         return res, payload, request_headers
 
 
+def _trade_env_mode() -> str:
+    return "demo" if str(config.TRADE_MODE).strip().lower() == "paper" else "real"
+
+
+def place_domestic_order_cash(
+    token,
+    app_key,
+    app_secret,
+    cano,
+    acnt_prdt_cd,
+    *,
+    side: str,
+    pdno: str,
+    ord_dvsn: str,
+    ord_qty: str,
+    ord_unpr: str,
+    excg_id_dvsn_cd: str = "SOR",
+    sll_type: str = "",
+    cndt_pric: str = "",
+):
+    normalized_side = str(side or "").strip().lower()
+    env_dv = _trade_env_mode()
+    if normalized_side == "sell":
+        tr_id = "VTTC0011U" if env_dv == "demo" else "TTTC0011U"
+    elif normalized_side == "buy":
+        tr_id = "VTTC0012U" if env_dv == "demo" else "TTTC0012U"
+    else:
+        raise ValueError("side must be 'buy' or 'sell'")
+
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": app_key,
+        "appsecret": app_secret,
+        "tr_id": tr_id,
+        "custtype": "P",
+    }
+    payload = {
+        "CANO": str(cano or "").strip(),
+        "ACNT_PRDT_CD": str(acnt_prdt_cd or "01").strip() or "01",
+        "PDNO": str(pdno or "").strip(),
+        "ORD_DVSN": str(ord_dvsn or "00").strip() or "00",
+        "ORD_QTY": str(ord_qty or "").strip(),
+        "ORD_UNPR": str(ord_unpr or "").strip(),
+        "EXCG_ID_DVSN_CD": str(excg_id_dvsn_cd or "SOR").strip() or "SOR",
+        "SLL_TYPE": str(sll_type or "").strip(),
+        "CNDT_PRIC": str(cndt_pric or "").strip(),
+    }
+    url = f"{config.URL_BASE}/uapi/domestic-stock/v1/trading/order-cash"
+    response, data, _headers = _authorized_request_once(
+        requests.post,
+        url,
+        headers,
+        data=json.dumps(payload),
+        timeout=10,
+        app_key=app_key,
+        app_secret=app_secret,
+    )
+    if response.status_code != 200 or str(data.get("rt_cd", "")).strip() not in {"0", ""}:
+        detail = str(data.get("msg1") or response.text[:300] or "domestic order failed")
+        raise RuntimeError(detail)
+    output = data.get("output") if isinstance(data.get("output"), dict) else {}
+    return {
+        "tr_id": tr_id,
+        "raw": data,
+        "output": output,
+        "broker_order": {
+            "odno": str(output.get("ODNO") or output.get("odno") or "").strip(),
+            "krx_fwdg_ord_orgno": str(output.get("KRX_FWDG_ORD_ORGNO") or output.get("krx_fwdg_ord_orgno") or "").strip(),
+            "ord_tmd": str(output.get("ORD_TMD") or output.get("ord_tmd") or "").strip(),
+        },
+    }
+
+
+def inquire_domestic_daily_ccld(
+    token,
+    app_key,
+    app_secret,
+    cano,
+    acnt_prdt_cd,
+    *,
+    order_no: str,
+    start_date: str,
+    end_date: str,
+):
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": app_key,
+        "appsecret": app_secret,
+        "tr_id": "VTTC0081R" if _trade_env_mode() == "demo" else "TTTC0081R",
+        "custtype": "P",
+    }
+    params = {
+        "CANO": str(cano or "").strip(),
+        "ACNT_PRDT_CD": str(acnt_prdt_cd or "01").strip() or "01",
+        "INQR_STRT_DT": str(start_date or "").replace("-", "").strip(),
+        "INQR_END_DT": str(end_date or "").replace("-", "").strip(),
+        "SLL_BUY_DVSN_CD": "00",
+        "INQR_DVSN": "00",
+        "PDNO": "",
+        "CCLD_DVSN": "00",
+        "ORD_GNO_BRNO": "",
+        "ODNO": str(order_no or "").strip(),
+        "INQR_DVSN_3": "00",
+        "INQR_DVSN_1": "",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+    }
+    url = f"{config.URL_BASE}/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+    response, data, _headers = _authorized_request_once(
+        requests.get,
+        url,
+        headers,
+        params=params,
+        timeout=10,
+        app_key=app_key,
+        app_secret=app_secret,
+    )
+    if response.status_code != 200 or str(data.get("rt_cd", "")).strip() not in {"0", ""}:
+        detail = str(data.get("msg1") or response.text[:300] or "daily ccld inquiry failed")
+        raise RuntimeError(detail)
+    rows = data.get("output1") if isinstance(data.get("output1"), list) else []
+    normalized: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized.append(
+            {
+                "odno": str(row.get("odno") or row.get("ODNO") or "").strip(),
+                "orgn_odno": str(row.get("orgn_odno") or row.get("ORGN_ODNO") or "").strip(),
+                "ord_qty": _to_int(row.get("ord_qty") or row.get("ORD_QTY") or 0),
+                "tot_ccld_qty": _to_int(row.get("tot_ccld_qty") or row.get("TOT_CCLD_QTY") or 0),
+                "rmn_qty": _to_int(row.get("rmn_qty") or row.get("RMN_QTY") or 0),
+                "cncl_yn": str(row.get("cncl_yn") or row.get("CNCL_YN") or "").strip().upper(),
+                "cnc_cfrm_qty": _to_int(row.get("cnc_cfrm_qty") or row.get("CNC_CFRM_QTY") or 0),
+                "rjct_qty": _to_int(row.get("rjct_qty") or row.get("RJCT_QTY") or 0),
+                "ord_unpr": _to_int(row.get("ord_unpr") or row.get("ORD_UNPR") or 0),
+                "ord_tmd": str(row.get("ord_tmd") or row.get("ORD_TMD") or "").strip(),
+                "raw": row,
+            }
+        )
+    return normalized
+
+
+def inquire_domestic_psbl_rvsecncl(
+    token,
+    app_key,
+    app_secret,
+    cano,
+    acnt_prdt_cd,
+):
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": app_key,
+        "appsecret": app_secret,
+        "tr_id": "VTTC0084R" if _trade_env_mode() == "demo" else "TTTC0084R",
+        "custtype": "P",
+    }
+    params = {
+        "CANO": str(cano or "").strip(),
+        "ACNT_PRDT_CD": str(acnt_prdt_cd or "01").strip() or "01",
+        "INQR_DVSN_1": "1",
+        "INQR_DVSN_2": "0",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+    }
+    url = f"{config.URL_BASE}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
+    response, data, _headers = _authorized_request_once(
+        requests.get,
+        url,
+        headers,
+        params=params,
+        timeout=10,
+        app_key=app_key,
+        app_secret=app_secret,
+    )
+    if response.status_code != 200 or str(data.get("rt_cd", "")).strip() not in {"0", ""}:
+        detail = str(data.get("msg1") or response.text[:300] or "psbl rvsecncl inquiry failed")
+        raise RuntimeError(detail)
+    rows = data.get("output") if isinstance(data.get("output"), list) else data.get("output1") if isinstance(data.get("output1"), list) else []
+    normalized: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized.append(
+            {
+                "odno": str(row.get("odno") or row.get("ODNO") or "").strip(),
+                "orgn_odno": str(row.get("orgn_odno") or row.get("ORGN_ODNO") or "").strip(),
+                "ord_qty": _to_int(row.get("ord_qty") or row.get("ORD_QTY") or 0),
+                "tot_ccld_qty": _to_int(row.get("tot_ccld_qty") or row.get("TOT_CCLD_QTY") or 0),
+                "psbl_qty": _to_int(row.get("psbl_qty") or row.get("PSBL_QTY") or 0),
+                "ord_dvsn_cd": str(row.get("ord_dvsn_cd") or row.get("ORD_DVSN_CD") or "").strip(),
+                "excg_id_dvsn_cd": str(row.get("excg_id_dvsn_cd") or row.get("EXCG_ID_DVSN_CD") or "").strip(),
+                "raw": row,
+            }
+        )
+    return normalized
+
+
+def inquire_domestic_psbl_sell(
+    token,
+    app_key,
+    app_secret,
+    cano,
+    acnt_prdt_cd,
+    *,
+    pdno: str,
+    ord_dvsn: str = "00",
+    excg_id_dvsn_cd: str = "KRX",
+):
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": app_key,
+        "appsecret": app_secret,
+        "tr_id": "VTTC0082R" if _trade_env_mode() == "demo" else "TTTC0082R",
+        "custtype": "P",
+    }
+    params = {
+        "CANO": str(cano or "").strip(),
+        "ACNT_PRDT_CD": str(acnt_prdt_cd or "01").strip() or "01",
+        "PDNO": str(pdno or "").strip(),
+        "ORD_DVSN": str(ord_dvsn or "00").strip() or "00",
+        "EXCG_ID_DVSN_CD": str(excg_id_dvsn_cd or "KRX").strip() or "KRX",
+    }
+    url = f"{config.URL_BASE}/uapi/domestic-stock/v1/trading/inquire-psbl-sell"
+    response, data, _headers = _authorized_request_once(
+        requests.get,
+        url,
+        headers,
+        params=params,
+        timeout=10,
+        app_key=app_key,
+        app_secret=app_secret,
+    )
+    if response.status_code != 200 or str(data.get("rt_cd", "")).strip() not in {"0", ""}:
+        detail = str(data.get("msg1") or response.text[:300] or "psbl sell inquiry failed")
+        raise RuntimeError(detail)
+
+    rows = data.get("output") if isinstance(data.get("output"), list) else data.get("output1") if isinstance(data.get("output1"), list) else []
+    normalized: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ord_psbl_qty = _to_int(row.get("ord_psbl_qty") or row.get("ORD_PSBL_QTY") or row.get("ord_psbl_qyt") or row.get("ORD_PSBL_QTY") or row.get("psbl_qty") or row.get("PSBL_QTY") or 0)
+        normalized.append(
+            {
+                "pdno": str(row.get("pdno") or row.get("PDNO") or "").strip(),
+                "ord_psbl_qty": int(ord_psbl_qty),
+                "psbl_qty": int(ord_psbl_qty),
+                "ord_dvsn_cd": str(row.get("ord_dvsn_cd") or row.get("ORD_DVSN_CD") or "").strip(),
+                "excg_id_dvsn_cd": str(row.get("excg_id_dvsn_cd") or row.get("EXCG_ID_DVSN_CD") or "").strip(),
+                "raw": row,
+            }
+        )
+    return normalized
+
+
+def cancel_domestic_order(
+    token,
+    app_key,
+    app_secret,
+    cano,
+    acnt_prdt_cd,
+    *,
+    krx_fwdg_ord_orgno: str,
+    orgn_odno: str,
+    ord_qty: str,
+    ord_unpr: str,
+    ord_dvsn: str = "00",
+    excg_id_dvsn_cd: str = "SOR",
+    qty_all_ord_yn: str = "Y",
+):
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {token}",
+        "appkey": app_key,
+        "appsecret": app_secret,
+        "tr_id": "VTTC0013U" if _trade_env_mode() == "demo" else "TTTC0013U",
+        "custtype": "P",
+    }
+    payload = {
+        "CANO": str(cano or "").strip(),
+        "ACNT_PRDT_CD": str(acnt_prdt_cd or "01").strip() or "01",
+        "KRX_FWDG_ORD_ORGNO": str(krx_fwdg_ord_orgno or "").strip(),
+        "ORGN_ODNO": str(orgn_odno or "").strip(),
+        "ORD_DVSN": str(ord_dvsn or "00").strip() or "00",
+        "RVSE_CNCL_DVSN_CD": "02",
+        "ORD_QTY": str(ord_qty or "").strip(),
+        "ORD_UNPR": str(ord_unpr or "").strip(),
+        "QTY_ALL_ORD_YN": str(qty_all_ord_yn or "Y").strip() or "Y",
+        "EXCG_ID_DVSN_CD": str(excg_id_dvsn_cd or "SOR").strip() or "SOR",
+    }
+    url = f"{config.URL_BASE}/uapi/domestic-stock/v1/trading/order-rvsecncl"
+    response, data, _headers = _authorized_request_once(
+        requests.post,
+        url,
+        headers,
+        data=json.dumps(payload),
+        timeout=10,
+        app_key=app_key,
+        app_secret=app_secret,
+    )
+    if response.status_code != 200 or str(data.get("rt_cd", "")).strip() not in {"0", ""}:
+        detail = str(data.get("msg1") or response.text[:300] or "domestic order cancel failed")
+        raise RuntimeError(detail)
+    output = data.get("output") if isinstance(data.get("output"), dict) else {}
+    return {"raw": data, "output": output}
+
+
 def _bearer_token_from_headers(headers: Mapping[str, str], fallback_token: str) -> str:
     authorization = str(headers.get("authorization") or "").strip()
     if authorization.lower().startswith("bearer "):

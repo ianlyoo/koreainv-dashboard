@@ -20,6 +20,10 @@ def get_user_data_dir() -> str:
     """Return writable per-user application data directory."""
     if sys.platform == "darwin":
         base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    elif sys.platform.startswith("linux"):
+        base = os.getenv("XDG_DATA_HOME") or os.path.join(
+            os.path.expanduser("~"), ".local", "share"
+        )
     else:
         appdata = os.getenv("APPDATA")
         if appdata:
@@ -37,3 +41,7 @@ def get_logs_dir() -> str:
     logs_dir = os.path.join(get_user_data_dir(), "logs")
     os.makedirs(logs_dir, exist_ok=True)
     return logs_dir
+
+
+def get_scheduled_orders_path() -> str:
+    return os.path.join(get_user_data_dir(), "scheduled_orders.json")
