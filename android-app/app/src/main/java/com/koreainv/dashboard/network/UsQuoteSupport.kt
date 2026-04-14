@@ -13,6 +13,8 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.max
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -128,8 +130,16 @@ internal class KisUsQuoteService(
     private val credentials: AppCredentials,
     private val client: OkHttpClient,
 ) : Closeable {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Any()
+    private val exceptionHandler = CoroutineExceptionHandler { _, error ->
+        Log.w("KisUsQuoteService", "KIS U.S. quote background task failed; keeping app alive", error)
+        synchronized(lock) {
+            opening = false
+            webSocket = null
+            subscribedKeys = emptySet()
+        }
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
 
     private var approvalKey: String? = null
     private var webSocket: WebSocketClient? = null
@@ -359,21 +369,29 @@ internal class KisUsQuoteService(
         val added = desired.keys - subscribed
 
         scope.launch {
-            removed.sorted().forEach { trKey ->
-                webSocket.send(buildSubscribeMessage(approval, TR_ASKING_PRICE, trKey, "2"))
-                webSocket.send(buildSubscribeMessage(approval, TR_CONTRACT, trKey, "2"))
-                delay(50L)
-            }
-            added.sorted().forEach { trKey ->
-                webSocket.send(buildSubscribeMessage(approval, TR_ASKING_PRICE, trKey, "1"))
-                delay(50L)
-                webSocket.send(buildSubscribeMessage(approval, TR_CONTRACT, trKey, "1"))
-                delay(50L)
-            }
-            synchronized(lock) {
-                if (this@KisUsQuoteService.webSocket == webSocket) {
-                    subscribedKeys = desired.keys
+            try {
+                removed.sorted().forEach { trKey ->
+                    webSocket.send(buildSubscribeMessage(approval, TR_ASKING_PRICE, trKey, "2"))
+                    webSocket.send(buildSubscribeMessage(approval, TR_CONTRACT, trKey, "2"))
+                    delay(50L)
                 }
+                added.sorted().forEach { trKey ->
+                    webSocket.send(buildSubscribeMessage(approval, TR_ASKING_PRICE, trKey, "1"))
+                    delay(50L)
+                    webSocket.send(buildSubscribeMessage(approval, TR_CONTRACT, trKey, "1"))
+                    delay(50L)
+                }
+                synchronized(lock) {
+                    if (this@KisUsQuoteService.webSocket == webSocket) {
+                        subscribedKeys = desired.keys
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.w("KisUsQuoteService", "KIS U.S. quote subscription update failed; reconnecting", error)
+                handleSocketClosed()
+                scheduleReconnect(backoffDelayMillis())
             }
         }
     }
@@ -551,8 +569,25 @@ internal class KisUsQuoteService(
         }
         if (!shouldSchedule) return
         reconnectJob = scope.launch {
-            delay(delayMillis)
-            ensureConnected()
+            var reconnectError: Throwable? = null
+            try {
+                delay(delayMillis)
+                ensureConnected()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                reconnectError = error
+            } finally {
+                synchronized(lock) {
+                    reconnectJob = null
+                    opening = false
+                }
+            }
+
+            if (reconnectError != null) {
+                Log.w("KisUsQuoteService", "KIS U.S. quote reconnect failed; will retry", reconnectError)
+                scheduleReconnect(backoffDelayMillis())
+            }
         }
     }
 

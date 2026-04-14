@@ -6,7 +6,8 @@
         let cachedJpyCash = 0;
         let cachedExrt = 1350;
         let cachedJpExrt = 905;
-        let currentTradingViewWidget = null;
+        let marketOverviewMountTimer = null;
+        let marketOverviewVerifyTimer = null;
         let currentLayoutMode = 'mode2';
         let rightPaneState = 'widgets';
         let assetCardShowingForeign = false;
@@ -67,6 +68,32 @@
         const LIVE_CHART_UPDATE_MIN_INTERVAL_MS = 15000;
 
         const LAYOUT_STORAGE_KEY = 'dashboard_layout_mode';
+        const MARKET_OVERVIEW_WIDGET_CONFIG = {
+            colorTheme: 'dark',
+            dateRange: '1M',
+            showChart: true,
+            locale: 'kr',
+            largeChartUrl: '',
+            isTransparent: true,
+            showSymbolLogo: true,
+            showFloatingTooltip: true,
+            width: '100%',
+            height: '100%',
+            tabs: [
+                {
+                    title: 'Indices',
+                    symbols: [
+                        { s: 'FOREXCOM:SPXUSD', d: 'S&P 500' },
+                        { s: 'FOREXCOM:NSXUSD', d: 'NASDAQ' },
+                        { s: 'INDEX:DXY', d: 'Dollar Index' },
+                        { s: 'FOREXCOM:XAUUSD', d: 'Gold' },
+                        { s: 'BITSTAMP:BTCUSD', d: 'Bitcoin' },
+                        { s: 'CAPITALCOM:VIX', d: 'VIX' },
+                        { s: 'FRED:DGS10', d: 'US 10Y Yield' },
+                    ],
+                },
+            ],
+        };
 
         // 프리미엄 색상 팔레트
         const chartColors = [
@@ -703,6 +730,83 @@
             pollUsQuotesOnce();
         }
 
+        function setMarketOverviewStatus(message, isError = false) {
+            const statusEl = document.getElementById('marketOverviewStatus');
+            if (!statusEl) return;
+            statusEl.textContent = message;
+            statusEl.classList.toggle('is-error', isError);
+            statusEl.classList.remove('is-hidden');
+        }
+
+        function hideMarketOverviewStatus() {
+            const statusEl = document.getElementById('marketOverviewStatus');
+            if (!statusEl) return;
+            statusEl.classList.add('is-hidden');
+            statusEl.classList.remove('is-error');
+        }
+
+        function mountMarketOverviewWidget(force = false) {
+            const container = document.getElementById('marketOverviewWidgetContainer');
+            const widget = document.getElementById('marketOverviewWidget');
+            if (!container || !widget) return;
+
+            const hasFrame = !!widget.querySelector('iframe');
+            if (!force && hasFrame) {
+                hideMarketOverviewStatus();
+                return;
+            }
+
+            if (container.offsetWidth <= 0 || container.offsetHeight <= 0) {
+                scheduleMarketOverviewMount(force, 250);
+                return;
+            }
+
+            if (marketOverviewVerifyTimer) {
+                clearTimeout(marketOverviewVerifyTimer);
+                marketOverviewVerifyTimer = null;
+            }
+
+            widget.innerHTML = '';
+            setMarketOverviewStatus('주요 지표 위젯을 불러오는 중입니다...');
+
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js';
+            script.async = true;
+            script.textContent = JSON.stringify(MARKET_OVERVIEW_WIDGET_CONFIG);
+            script.onload = () => {
+                setTimeout(() => {
+                    if (widget.querySelector('iframe')) {
+                        hideMarketOverviewStatus();
+                    }
+                }, 150);
+            };
+            script.onerror = () => {
+                setMarketOverviewStatus('주요 지표 위젯을 불러오지 못했습니다. 네트워크 또는 광고 차단 설정을 확인한 뒤 새로고침해 주세요.', true);
+            };
+            widget.appendChild(script);
+
+            marketOverviewVerifyTimer = setTimeout(() => {
+                marketOverviewVerifyTimer = null;
+                if (widget.querySelector('iframe')) {
+                    hideMarketOverviewStatus();
+                    return;
+                }
+                setMarketOverviewStatus('주요 지표 위젯 응답이 지연되고 있습니다. 잠시 후 자동으로 다시 시도합니다.', true);
+                scheduleMarketOverviewMount(true, 2500);
+            }, 7000);
+        }
+
+        function scheduleMarketOverviewMount(force = false, delayMs = 80) {
+            if (marketOverviewMountTimer) {
+                clearTimeout(marketOverviewMountTimer);
+            }
+            marketOverviewMountTimer = setTimeout(() => {
+                marketOverviewMountTimer = null;
+                mountMarketOverviewWidget(force);
+            }, delayMs);
+        }
+
         function updateLayoutModeUI() {
             const btnMode1 = document.getElementById('layoutModeBtn1');
             const btnMode2 = document.getElementById('layoutModeBtn2');
@@ -730,6 +834,7 @@
             } else {
                 widgetsPane.classList.remove('is-hidden');
                 insightPane.classList.add('is-hidden');
+                scheduleMarketOverviewMount(false);
             }
         }
 
@@ -740,6 +845,7 @@
 
             setRightPaneState(rightPaneState);
             updateLayoutModeUI();
+            scheduleMarketOverviewMount(true);
 
             if (persist) {
                 localStorage.setItem(LAYOUT_STORAGE_KEY, currentLayoutMode);

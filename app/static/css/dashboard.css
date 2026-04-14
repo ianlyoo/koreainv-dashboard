@@ -792,6 +792,30 @@
             border-radius: 12px;
             overflow: hidden;
             border: 1px solid var(--panel-border);
+            position: relative;
+        }
+
+        .indices-widget-status {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 18px;
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.5;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.18);
+            pointer-events: none;
+        }
+
+        .indices-widget-status.is-error {
+            color: var(--loss);
+        }
+
+        .indices-widget-status.is-hidden {
+            display: none;
         }
 
         /* Calendar Widget (Right half of bottom) */
