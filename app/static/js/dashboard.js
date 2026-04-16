@@ -1405,13 +1405,34 @@
             next.disabled = page >= totalPages;
         }
 
-        function changeTradeHistoryPage(kind, delta) {
-            if (kind === 'sell') {
-                realizedProfitSellPage = Math.max(1, realizedProfitSellPage + delta);
+        async function changeTradeHistoryPage(kind, delta) {
+            if (realizedProfitDetailLoading) return;
+
+            const start = document.getElementById('realizedProfitStart')?.value;
+            const end = document.getElementById('realizedProfitEnd')?.value;
+            if (!start || !end) return;
+
+            const isSell = kind === 'sell';
+            const currentPage = Math.max(1, Number(isSell ? realizedProfitSellPage : realizedProfitBuyPage) || 1);
+            const pagination = currentRealizedProfitDetail?.pagination || {};
+            const totalPages = Math.max(1, Number(pagination.total_pages || 1) || 1);
+            const nextPage = Math.min(Math.max(1, currentPage + delta), totalPages);
+            if (nextPage === currentPage) return;
+
+            if (isSell) {
+                realizedProfitSellPage = nextPage;
             } else {
-                realizedProfitBuyPage = Math.max(1, realizedProfitBuyPage + delta);
+                realizedProfitBuyPage = nextPage;
             }
-            renderRealizedProfitDetail(currentRealizedProfitDetail);
+
+            const payload = await loadRealizedProfitDetail(start, end);
+            if (!payload || payload.status !== 'success') {
+                if (isSell) {
+                    realizedProfitSellPage = currentPage;
+                } else {
+                    realizedProfitBuyPage = currentPage;
+                }
+            }
         }
 
         function getActiveTradeHistoryPage() {
