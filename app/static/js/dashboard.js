@@ -33,7 +33,7 @@
         })();
         const CAPITAL_GAINS_TAX_THRESHOLD_KRW = 2500000;
         const CAPITAL_GAINS_TAX_RATE = 0.22;
-        const REALIZED_PROFIT_CACHE_TTL_MS = 5 * 60 * 1000;
+        const REALIZED_PROFIT_CACHE_TTL_MS = 10 * 1000;
         const REALIZED_PROFIT_PAGE_SIZE = 10;
         let cachedTotalEvalKrw = 0;
         let cachedDomesticEvalKrw = 0;
@@ -1200,7 +1200,9 @@
 
             const request = (async () => {
                 try {
-                    const res = await fetch(`/api/realized-profit/summary?month=${month}`);
+                    const params = new URLSearchParams({ month });
+                    if (force) params.set('force_refresh', '1');
+                    const res = await fetch(`/api/realized-profit/summary?${params.toString()}`);
                     if (res.status === 401) {
                         window.location.href = '/login';
                         return null;
@@ -1474,6 +1476,7 @@
                         page_size: String(pageSize),
                         include_trades: includeTrades ? '1' : '0',
                     });
+                    if (force) params.set('force_refresh', '1');
                     const res = await fetch(`/api/realized-profit/detail?${params.toString()}`);
                     if (res.status === 401) {
                         window.location.href = '/login';
@@ -1637,8 +1640,8 @@
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
-                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : formatSignedKrw(trade.realized_profit_krw)}</td>
-                        <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '-' : formatSignedPercent(trade.realized_return_rate)}</td>
+                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '산정중' : formatSignedKrw(trade.realized_profit_krw)}</td>
+                        <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '산정중' : formatSignedPercent(trade.realized_return_rate)}</td>
                     </tr>
                 `).join('');
                 }

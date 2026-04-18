@@ -308,7 +308,7 @@ async def get_us_quotes(request: Request):
 
 
 @router.get("/api/realized-profit/summary")
-async def get_realized_profit_summary(request: Request, month: Optional[str] = None):
+async def get_realized_profit_summary(request: Request, month: Optional[str] = None, force_refresh: bool = False):
     session = require_session(request)
     start_day, end_day = _parse_month_value(month)
     try:
@@ -329,6 +329,7 @@ async def get_realized_profit_summary(request: Request, month: Optional[str] = N
             session.acnt_prdt_cd,
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
+            force_refresh=force_refresh,
         )
         return _serialize_realized_profit_payload(
             start_day,
@@ -352,6 +353,7 @@ async def get_realized_profit_detail(
     page: int = 1,
     page_size: int = 10,
     include_trades: bool = True,
+    force_refresh: bool = False,
 ):
     session = require_session(request)
     start_day = _parse_date_value(start, "start")
@@ -390,6 +392,7 @@ async def get_realized_profit_detail(
                 market_filter=normalized_market,
                 page=safe_page,
                 page_size=safe_page_size,
+                force_refresh=force_refresh,
             )
         else:
             summary_payload = await asyncio.to_thread(
@@ -401,6 +404,7 @@ async def get_realized_profit_detail(
                 session.acnt_prdt_cd,
                 start_day.strftime("%Y%m%d"),
                 end_day.strftime("%Y%m%d"),
+                force_refresh=force_refresh,
             )
             trade_payload = _with_realized_profit_trades(summary_payload, [])
 

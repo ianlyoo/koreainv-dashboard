@@ -40,7 +40,7 @@ class KisRepository(
         private const val BASE_URL = "https://openapi.koreainvestment.com:9443"
         private const val TOKEN_BUFFER_SECONDS = 60L
         private const val DASHBOARD_CACHE_TTL_MILLIS = 15_000L
-        private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 30_000L
+        private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 10_000L
         private const val EXCHANGE_QUERY_CONCURRENCY = 4
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val JSON_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd")
@@ -151,11 +151,7 @@ class KisRepository(
                 val overseasProfitDeferred = async { getOverseasRealizedTradeProfit(startDate, endDate) }
                 val domesticTradesDeferred = async { getDomesticTradeHistory(startDate, endDate) }
                 val overseasTradesDeferred = async {
-                    var overseas = getOverseasTradeHistory(startDate, endDate)
-                    if (!hasJapanTradeRows(overseas)) {
-                        overseas = dedupeTradeRows(overseas + getJapanTradeHistoryCcnl(startDate, endDate))
-                    }
-                    overseas
+                    dedupeTradeRows(getOverseasTradeHistory(startDate, endDate) + getOverseasTradeHistoryCcnl(startDate, endDate))
                 }
                 val domesticProfit = domesticProfitDeferred.await()
                 val overseasProfit = overseasProfitDeferred.await()
@@ -495,6 +491,7 @@ class KisRepository(
                     amountNative = amount,
                     amountKrw = amount,
                     time = string(row, "ord_tmd"),
+                    orderNo = string(row, "odno").ifBlank { string(row, "ODNO") },
                 )
             }
         }.filter { it.date.isNotBlank() && it.symbol.isNotBlank() && it.quantity > 0.0 }
@@ -527,34 +524,42 @@ class KisRepository(
         }
     }
 
-    private suspend fun getJapanTradeHistoryCcnl(startDate: String, endDate: String): List<TradeRow> {
-        val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:japan-ccnl]")
-        val exchanges = listOf("TKSE", "TSE")
+    private suspend fun getOverseasTradeHistoryCcnl(startDate: String, endDate: String): List<TradeRow> {
+        val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:overseas-ccnl]")
+        val exchanges = listOf("NASD", "NYSE", "AMEX", "TKSE", "TSE", "HKS", "SHS", "SZS", "HSX", "HNX")
         return fetchExchangeRows(exchanges) { exchange ->
-            val pages = paginatedJson(
-                path = "/uapi/overseas-stock/v1/trading/inquire-ccnl",
-                trId = "TTTS3035R",
-                query = linkedMapOf(
-                    "CANO" to credentials.cano,
-                    "ACNT_PRDT_CD" to credentials.acntPrdtCd,
-                    "PDNO" to "%",
-                    "ORD_STRT_DT" to startDate,
-                    "ORD_END_DT" to endDate,
-                    "SLL_BUY_DVSN" to "00",
-                    "CCLD_NCCS_DVSN" to "01",
-                    "OVRS_EXCG_CD" to exchange,
-                    "SORT_SQN" to "DS",
-                    "ORD_DT" to "",
-                    "ORD_GNO_BRNO" to "",
-                    "ODNO" to "",
-                    "CTX_AREA_FK200" to "",
-                    "CTX_AREA_NK200" to "",
-                ),
-                token = token,
-                fkField = "ctx_area_fk200",
-                nkField = "ctx_area_nk200",
-            )
-            pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) }
+            runCatching {
+                val pages = paginatedJson(
+                    path = "/uapi/overseas-stock/v1/trading/inquire-ccnl",
+                    trId = "TTTS3035R",
+                    query = linkedMapOf(
+                        "CANO" to credentials.cano,
+                        "ACNT_PRDT_CD" to credentials.acntPrdtCd,
+                        "PDNO" to "%",
+                        "ORD_STRT_DT" to startDate,
+                        "ORD_END_DT" to endDate,
+                        "SLL_BUY_DVSN" to "00",
+                        "CCLD_NCCS_DVSN" to "01",
+                        "OVRS_EXCG_CD" to exchange,
+                        "SORT_SQN" to "DS",
+                        "ORD_DT" to "",
+                        "ORD_GNO_BRNO" to "",
+                        "ODNO" to "",
+                        "CTX_AREA_FK200" to "",
+                        "CTX_AREA_NK200" to "",
+                    ),
+                    token = token,
+                    fkField = "ctx_area_fk200",
+                    nkField = "ctx_area_nk200",
+                )
+                pages.flatMap { page ->
+                    val rows = normalizeRows(page.get("output")).ifEmpty { normalizeRows(page.get("output1")) }
+                    normalizeOverseasTradeRows(rows, exchange)
+                }
+            }.getOrElse { error ->
+                Log.w("KisRepository", "overseas ccnl inquiry failed for $exchange", error)
+                emptyList()
+            }
         }
     }
 
@@ -932,8 +937,11 @@ class KisRepository(
         rows.mapNotNull { element ->
             val row = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
             val date = string(row, "trad_dt")
-            val symbol = string(row, "pdno")
-            val quantity = firstPositiveNumber(row, listOf("ccld_qty", "tot_ccld_qty", "ord_qty"))
+                .ifBlank { string(row, "ord_dt") }
+                .ifBlank { string(row, "ccld_dt") }
+                .ifBlank { string(row, "trad_day") }
+            val symbol = string(row, "pdno").ifBlank { string(row, "ovrs_pdno") }
+            val quantity = firstPositiveNumber(row, listOf("ccld_qty", "tot_ccld_qty", "ft_ccld_qty", "ccld_qty_smtl1", "ord_qty"))
             val rawAmount = firstPositiveNumber(
                 row,
                 listOf(
@@ -943,9 +951,11 @@ class KisRepository(
                     "frcr_sll_amt_smtl1",
                     "stck_sll_amt_smtl",
                     "frcr_buy_amt_smtl",
+                    "ft_ccld_amt3",
+                    "ovrs_ccld_amt",
                 ),
             )
-            val fallbackUnitPrice = firstPositiveNumber(row, listOf("ovrs_stck_ccld_unpr", "ft_ccld_unpr2"))
+            val fallbackUnitPrice = firstPositiveNumber(row, listOf("ovrs_stck_ccld_unpr", "ft_ccld_unpr2", "ft_ccld_unpr3", "ccld_unpr", "ord_unpr", "ovrs_ord_unpr"))
             val unitPrice = if (quantity > 0.0 && rawAmount > 0.0) rawAmount / quantity else fallbackUnitPrice
             val amount = resolvedTradeAmount(rawAmount, quantity, unitPrice)
             if (date.isBlank() || symbol.isBlank() || quantity <= 0.0 || amount <= 0.0) {
@@ -974,13 +984,17 @@ class KisRepository(
                 market = string(row, "ovrs_excg_cd").ifBlank { fallbackMarket },
                 symbol = symbol,
                 name = string(row, "ovrs_item_name").ifBlank { symbol },
-                side = normalizeSide(string(row, "sll_buy_dvsn_cd"), string(row, "sll_buy_dvsn_name")),
+                side = normalizeSide(
+                    string(row, "sll_buy_dvsn_cd").ifBlank { string(row, "sll_buy_dvsn") },
+                    string(row, "sll_buy_dvsn_name").ifBlank { string(row, "sll_buy_dvsn_cd_name") },
+                ),
                 currency = currency,
                 quantity = quantity,
                 unitPrice = unitPrice,
                 amountNative = amount,
                 amountKrw = amountKrw,
-                time = "",
+                time = string(row, "ord_tmd").ifBlank { string(row, "ccld_tmd") }.ifBlank { string(row, "trad_tmd") },
+                orderNo = string(row, "odno").ifBlank { string(row, "ord_no") }.ifBlank { string(row, "ODNO") },
             )
         }
 
@@ -999,7 +1013,7 @@ class KisRepository(
     private fun dedupeTradeRows(rows: List<TradeRow>): List<TradeRow> {
         val seen = mutableSetOf<String>()
         return rows.filter { row ->
-            val key = listOf(row.date, row.symbol, row.side, row.quantity, row.unitPrice, row.amountKrw).joinToString("|")
+            val key = listOf(row.date, row.symbol, row.side, row.quantity, row.unitPrice, row.amountKrw, row.time, row.orderNo).joinToString("|")
             seen.add(key)
         }
     }
@@ -1019,20 +1033,61 @@ class KisRepository(
     ) {
         val domesticMatchers = buildProfitMatchers(domestic)
         val overseasMatchers = buildProfitMatchers(overseas)
-        trades.forEach { trade ->
-            if (trade.side != "매도") return@forEach
+        val attached = mutableSetOf<Int>()
+
+        listOf(
+            domesticMatchers to { row: TradeRow -> row.market == "KOR" },
+            overseasMatchers to { row: TradeRow -> row.market != "KOR" },
+        ).forEach marketLoop@{ (matchers, marketPredicate) ->
+            val grouped = trades.withIndex()
+                .filter { (_, trade) -> trade.side == "매도" && marketPredicate(trade) }
+                .groupBy { (_, trade) -> trade.date to trade.symbol }
+
+            grouped.forEach groupLoop@{ (key, indexedTrades) ->
+                if (indexedTrades.size < 2) return@groupLoop
+                val candidates = matchers[key] ?: return@groupLoop
+                if (candidates.isEmpty()) return@groupLoop
+                val totalQty = indexedTrades.sumOf { it.value.quantity }
+                val totalAmountKrw = indexedTrades.sumOf { it.value.amountKrw }
+                val totalAmountNative = indexedTrades.sumOf { it.value.amountNative }
+                val chosen = candidates.indexOfFirst { candidate ->
+                    abs(candidate.quantity - totalQty) < 0.0001 ||
+                        amountsClose(candidate.amount, totalAmountKrw) ||
+                        amountsClose(candidate.amount, totalAmountNative)
+                }.takeIf { it >= 0 } ?: return@groupLoop
+                val matched = candidates.removeAt(chosen)
+                val denominator = totalAmountKrw.takeIf { it > 0.0 } ?: totalAmountNative.takeIf { it > 0.0 } ?: totalQty
+                indexedTrades.forEach { (tradeIndex, trade) ->
+                    val numerator = if (totalAmountKrw > 0.0) trade.amountKrw else if (totalAmountNative > 0.0) trade.amountNative else trade.quantity
+                    val ratio = if (denominator > 0.0) numerator / denominator else null
+                    applyRealizedProfit(trade, matched, ratio)
+                    attached += tradeIndex
+                }
+            }
+        }
+
+        trades.forEachIndexed { index, trade ->
+            if (index in attached || trade.side != "매도") return@forEachIndexed
             val key = trade.date to trade.symbol
             val candidates = if (trade.market == "KOR") domesticMatchers[key] else overseasMatchers[key]
-            if (candidates.isNullOrEmpty()) return@forEach
+            if (candidates.isNullOrEmpty()) return@forEachIndexed
             val chosen = candidates.indexOfFirst { candidate ->
                 val qtyDiff = abs(candidate.quantity - trade.quantity)
-                val amountDiff = abs(candidate.amount - trade.amountKrw)
-                qtyDiff < 0.0001 && amountDiff < max(1.0, abs(trade.amountKrw) * 0.01)
+                qtyDiff < 0.0001 && (amountsClose(candidate.amount, trade.amountKrw) || amountsClose(candidate.amount, trade.amountNative))
             }.takeIf { it >= 0 } ?: 0
             val matched = candidates.removeAt(chosen)
-            trade.realizedProfitKrw = matched.realizedProfitKrw
-            trade.realizedReturnRate = matched.realizedReturnRate ?: if (matched.buyAmountKrw > 0.0) matched.realizedProfitKrw / matched.buyAmountKrw * 100.0 else null
+            applyRealizedProfit(trade, matched, null)
         }
+    }
+
+    private fun amountsClose(left: Double, right: Double): Boolean = abs(left - right) < max(1.0, abs(right) * 0.01)
+
+    private fun applyRealizedProfit(trade: TradeRow, matched: RealizedTradeProfitRow, ratio: Double?) {
+        val realizedProfit = if (ratio != null) matched.realizedProfitKrw * ratio else matched.realizedProfitKrw
+        val buyAmount = if (ratio != null) matched.buyAmountKrw * ratio else matched.buyAmountKrw
+        trade.realizedProfitKrw = realizedProfit
+        trade.realizedReturnRate = matched.realizedReturnRate?.takeIf { ratio == null }
+            ?: if (buyAmount > 0.0) realizedProfit / buyAmount * 100.0 else null
     }
 
     private fun buildProfitMatchers(rows: List<RealizedTradeProfitRow>): MutableMap<Pair<String, String>, MutableList<RealizedTradeProfitRow>> {
@@ -1268,6 +1323,7 @@ private data class RealizedTradeProfitRow(
         val amountNative: Double,
         val amountKrw: Double,
         val time: String,
+        val orderNo: String = "",
         var realizedProfitKrw: Double? = null,
     var realizedReturnRate: Double? = null,
 )

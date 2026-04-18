@@ -419,7 +419,7 @@ fun TradeHistoryScreen(
     }
 }
 
-private const val TRADE_HISTORY_SCREEN_STALE_MILLIS = 30_000L
+private const val TRADE_HISTORY_SCREEN_STALE_MILLIS = 10_000L
 
 internal fun isTradeHistorySnapshotStale(
     data: TradeHistoryResponse?,

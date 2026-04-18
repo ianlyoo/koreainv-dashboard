@@ -475,7 +475,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertTrue(api_client._has_japan_trade_rows([{"market": "JPX"}]))
         self.assertFalse(api_client._has_japan_trade_rows([{"market": "NASD"}]))
 
-    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
@@ -484,7 +484,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         mock_domestic_trade_history,
         mock_overseas_trade_history,
         mock_fetch_trade_profit_rows,
-        mock_get_japan_trade_history_ccnl,
+        mock_get_overseas_trade_history_ccnl,
     ):
         mock_domestic_trade_history.return_value = [
             {
@@ -514,7 +514,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             ],
             "overseas": [],
         }
-        mock_get_japan_trade_history_ccnl.return_value = []
+        mock_get_overseas_trade_history_ccnl.return_value = []
 
         payload = api_client.get_trade_history(
             "token",
@@ -540,16 +540,16 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(daily[0]["date"], "20260311")
         self.assertEqual(items[0]["realized_profit_krw"], 10000.0)
 
-    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
-    def test_get_trade_history_skips_japan_fallback_when_overseas_rows_include_japan(
+    def test_get_trade_history_merges_overseas_ccnl_when_rows_include_japan(
         self,
         mock_domestic_trade_history,
         mock_overseas_trade_history,
         mock_fetch_trade_profit_rows,
-        mock_get_japan_trade_history_ccnl,
+        mock_get_overseas_trade_history_ccnl,
     ):
         mock_domestic_trade_history.return_value = []
         mock_overseas_trade_history.return_value = [
@@ -576,18 +576,18 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload.get("items") or []), 1)
-        mock_get_japan_trade_history_ccnl.assert_not_called()
+        mock_get_overseas_trade_history_ccnl.assert_called_once()
 
-    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
-    def test_get_trade_history_skips_japan_fallback_for_jpx_alias_market(
+    def test_get_trade_history_merges_overseas_ccnl_for_jpx_alias_market(
         self,
         mock_domestic_trade_history,
         mock_overseas_trade_history,
         mock_fetch_trade_profit_rows,
-        mock_get_japan_trade_history_ccnl,
+        mock_get_overseas_trade_history_ccnl,
     ):
         mock_domestic_trade_history.return_value = []
         mock_overseas_trade_history.return_value = [
@@ -614,18 +614,18 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload.get("items") or []), 1)
-        mock_get_japan_trade_history_ccnl.assert_not_called()
+        mock_get_overseas_trade_history_ccnl.assert_called_once()
 
-    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
-    def test_get_trade_history_calls_japan_fallback_when_overseas_rows_have_no_japan(
+    def test_get_trade_history_calls_overseas_ccnl_when_overseas_requested(
         self,
         mock_domestic_trade_history,
         mock_overseas_trade_history,
         mock_fetch_trade_profit_rows,
-        mock_get_japan_trade_history_ccnl,
+        mock_get_overseas_trade_history_ccnl,
     ):
         mock_domestic_trade_history.return_value = []
         mock_overseas_trade_history.return_value = [
@@ -640,7 +640,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             }
         ]
         mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
-        mock_get_japan_trade_history_ccnl.return_value = []
+        mock_get_overseas_trade_history_ccnl.return_value = []
 
         payload = api_client.get_trade_history(
             "token",
@@ -653,9 +653,9 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload.get("items") or []), 1)
-        mock_get_japan_trade_history_ccnl.assert_called_once()
+        mock_get_overseas_trade_history_ccnl.assert_called_once()
 
-    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
@@ -664,7 +664,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         mock_domestic_trade_history,
         mock_overseas_trade_history,
         mock_fetch_trade_profit_rows,
-        mock_get_japan_trade_history_ccnl,
+        mock_get_overseas_trade_history_ccnl,
     ):
         mock_domestic_trade_history.return_value = [
             {
@@ -700,7 +700,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         ]
         mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
         mock_overseas_trade_history.return_value = []
-        mock_get_japan_trade_history_ccnl.return_value = []
+        mock_get_overseas_trade_history_ccnl.return_value = []
 
         payload = api_client.get_trade_history(
             "token",
@@ -733,9 +733,9 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "buy",
         )
         mock_overseas_trade_history.assert_not_called()
-        mock_get_japan_trade_history_ccnl.assert_not_called()
+        mock_get_overseas_trade_history_ccnl.assert_not_called()
 
-    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
@@ -744,7 +744,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         mock_domestic_trade_history,
         mock_overseas_trade_history,
         mock_fetch_trade_profit_rows,
-        mock_get_japan_trade_history_ccnl,
+        mock_get_overseas_trade_history_ccnl,
     ):
         mock_domestic_trade_history.return_value = [
             {
@@ -770,7 +770,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         ]
         mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
         mock_overseas_trade_history.return_value = []
-        mock_get_japan_trade_history_ccnl.return_value = []
+        mock_get_overseas_trade_history_ccnl.return_value = []
 
         first_page = api_client.get_trade_history(
             "token",
@@ -803,6 +803,53 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual([item["ticker"] for item in second_page.get("items") or []], ["000660"])
         mock_domestic_trade_history.assert_called_once()
         mock_fetch_trade_profit_rows.assert_called_once()
+        mock_get_overseas_trade_history_ccnl.assert_not_called()
+
+    def test_dedupe_trade_rows_keeps_same_trade_terms_with_different_times(self):
+        rows = [
+            {"date": "20260311", "symbol": "005930", "side": "매도", "quantity": 1, "unit_price": 70000, "amount": 70000, "time": "090001"},
+            {"date": "20260311", "symbol": "005930", "side": "매도", "quantity": 1, "unit_price": 70000, "amount": 70000, "time": "090002"},
+        ]
+
+        deduped = api_client._dedupe_trade_rows(rows)
+
+        self.assertEqual(len(deduped), 2)
+
+    def test_attach_realized_profit_allocates_aggregate_profit_across_split_sells(self):
+        trades = [
+            {"date": "20260311", "market": "KOR", "symbol": "005930", "side": "매도", "quantity": 1.0, "amount": 70000.0},
+            {"date": "20260311", "market": "KOR", "symbol": "005930", "side": "매도", "quantity": 1.0, "amount": 70000.0},
+        ]
+        domestic_pnl_rows = [
+            {
+                "date": "20260311",
+                "symbol": "005930",
+                "quantity": 2.0,
+                "amount": 140000.0,
+                "realized_profit_krw": 10000.0,
+                "buy_amount_krw": 130000.0,
+                "realized_return_rate": None,
+            }
+        ]
+
+        enriched = api_client._attach_realized_profit_to_sell_trades(trades, domestic_pnl_rows, [])
+
+        self.assertEqual([row["realized_profit_krw"] for row in enriched], [5000.0, 5000.0])
+        self.assertTrue(all(row["realized_return_rate"] is not None for row in enriched))
+
+    @patch("app.api_client._run_parallel_tasks")
+    def test_fetch_trade_profit_rows_force_refresh_bypasses_cached_rows(self, mock_run_parallel_tasks):
+        mock_run_parallel_tasks.side_effect = [
+            {"domestic": [{"date": "20260310"}], "overseas": []},
+            {"domestic": [{"date": "20260311"}], "overseas": []},
+        ]
+
+        first = api_client._fetch_trade_profit_rows("token", "key", "secret", "12345678", "01", "20260301", "20260331")
+        second = api_client._fetch_trade_profit_rows("token", "key", "secret", "12345678", "01", "20260301", "20260331", force_refresh=True)
+
+        self.assertEqual(first["domestic"][0]["date"], "20260310")
+        self.assertEqual(second["domestic"][0]["date"], "20260311")
+        self.assertEqual(mock_run_parallel_tasks.call_count, 2)
 
 if __name__ == "__main__":
     unittest.main()

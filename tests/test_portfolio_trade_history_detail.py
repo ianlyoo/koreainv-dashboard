@@ -122,6 +122,7 @@ class PortfolioTradeHistoryDetailTests(unittest.TestCase):
             market_filter="domestic",
             page=2,
             page_size=5,
+            force_refresh=False,
         )
 
     @patch("app.routes.portfolio.api_client.get_realized_profit_summary")

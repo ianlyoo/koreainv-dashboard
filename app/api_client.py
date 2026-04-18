@@ -24,7 +24,7 @@ _persisted_token_cache: dict[str, dict[str, object]] | None = None
 _realized_cache = {}
 _inflight_trade_profit_rows = {}
 _MAX_PARALLEL_WORKERS = 4
-_REALIZED_CACHE_TTL_SECONDS = 120
+_REALIZED_CACHE_TTL_SECONDS = 10
 _token_lock = threading.RLock()
 _cache_lock = threading.RLock()
 logger = logging.getLogger(__name__)
@@ -1604,12 +1604,20 @@ def _set_cached_payload(cache_key: tuple, data):
         _realized_cache[cache_key] = {"ts": time.time(), "data": data}
 
 
-def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
+def _drop_cached_payload(cache_key: tuple) -> None:
+    with _cache_lock:
+        _realized_cache.pop(cache_key, None)
+
+
+def _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str, force_refresh: bool = False):
     cache_key = ("trade_profit_rows", cano, acnt_prdt_cd, start_date, end_date)
     inflight_event = None
 
+    if force_refresh:
+        _drop_cached_payload(cache_key)
+
     while True:
-        cached = _get_cached_payload(cache_key)
+        cached = None if force_refresh else _get_cached_payload(cache_key)
         if cached is not None:
             return cached
 
@@ -1959,13 +1967,15 @@ def get_overseas_realized_profit(token, app_key, app_secret, cano, acnt_prdt_cd,
     return _dedupe_realized_profit_rows(rows)
 
 
-def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
+def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str, force_refresh: bool = False):
     cache_key = ("realized_summary", cano, acnt_prdt_cd, start_date, end_date)
-    cached = _get_cached_payload(cache_key)
+    if force_refresh:
+        _drop_cached_payload(cache_key)
+    cached = None if force_refresh else _get_cached_payload(cache_key)
     if cached is not None:
         return cached
 
-    trade_profit_rows = _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)
+    trade_profit_rows = _fetch_trade_profit_rows(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date, force_refresh=force_refresh)
     result = _build_realized_profit_summary_payload(trade_profit_rows)
     _set_cached_payload(cache_key, result)
     return result
@@ -2072,7 +2082,7 @@ def _normalize_domestic_trade_rows(rows: list[dict]) -> list[dict]:
         fallback_unit_price = _first_positive_float(row, ["avg_prvs", "ord_unpr"])
         unit_price = (raw_amount / qty) if qty > 0 and raw_amount > 0 else fallback_unit_price
         amount = _amount_or_quantity_price(raw_amount, qty, unit_price)
-        symbol = str(row.get("pdno", "")).strip()
+        symbol = str(row.get("pdno") or row.get("ovrs_pdno") or "").strip()
         normalized.append({
             "date": trade_date,
             "market": "KOR",
@@ -2085,6 +2095,7 @@ def _normalize_domestic_trade_rows(rows: list[dict]) -> list[dict]:
             "amount": amount,
             "currency": "KRW",
             "time": str(row.get("ord_tmd", "")).strip(),
+            "order_no": str(row.get("odno") or row.get("ord_no") or row.get("ODNO") or "").strip(),
             "realized_profit_krw": None,
         })
     return normalized
@@ -2095,11 +2106,17 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        trade_date = str(row.get("trad_dt", "")).strip()
+        trade_date = str(
+            row.get("trad_dt")
+            or row.get("ord_dt")
+            or row.get("ccld_dt")
+            or row.get("trad_day")
+            or ""
+        ).strip()
         if not trade_date:
             continue
         currency = str(row.get("crcy_cd", "")).strip() or "USD"
-        quantity = _first_positive_float(row, ["ccld_qty", "tot_ccld_qty", "ord_qty"])
+        quantity = _first_positive_float(row, ["ccld_qty", "tot_ccld_qty", "ft_ccld_qty", "ccld_qty_smtl1", "ord_qty"])
         raw_amount = _first_positive_float(
             row,
             [
@@ -2109,6 +2126,8 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
                 "frcr_sll_amt_smtl1",
                 "stck_sll_amt_smtl",
                 "frcr_buy_amt_smtl",
+                "ft_ccld_amt3",
+                "ovrs_ccld_amt",
             ],
         )
         exchange_rate = _first_positive_float(row, ["erlm_exrt", "frst_bltn_exrt", "bass_exrt"])
@@ -2129,22 +2148,35 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
         # amount fields as the string "0" and a non-zero fallback sell/buy
         # subtotal, so candidates must be checked by numeric positivity rather
         # than Python truthiness.
-        fallback_unit_price = _first_positive_float(row, ["ovrs_stck_ccld_unpr", "ft_ccld_unpr2"])
+        fallback_unit_price = _first_positive_float(row, ["ovrs_stck_ccld_unpr", "ft_ccld_unpr2", "ft_ccld_unpr3", "ccld_unpr", "ord_unpr", "ovrs_ord_unpr"])
         unit_price = (raw_amount / quantity) if quantity > 0 and raw_amount > 0 else fallback_unit_price
         amount = _amount_or_quantity_price(raw_amount, quantity, unit_price)
-        symbol = str(row.get("pdno", "")).strip()
+        if settlement_amount_krw > 0:
+            amount_krw = settlement_amount_krw
+        elif currency == "JPY":
+            amount_krw = amount * (exchange_rate / 100.0) if exchange_rate > 0 else 0.0
+        elif currency == "KRW":
+            amount_krw = amount
+        else:
+            amount_krw = amount * exchange_rate if exchange_rate > 0 else 0.0
+        symbol = str(row.get("pdno") or row.get("ovrs_pdno") or "").strip()
         normalized.append({
             "date": trade_date,
             "market": str(row.get("ovrs_excg_cd", "")).strip() or fallback_market,
             "symbol": symbol,
             "ticker": symbol,
             "name": str(row.get("ovrs_item_name", "")).strip() or symbol,
-            "side": _normalize_side(str(row.get("sll_buy_dvsn_cd") or ""), str(row.get("sll_buy_dvsn_name") or "")),
+            "side": _normalize_side(
+                str(row.get("sll_buy_dvsn_cd") or row.get("sll_buy_dvsn") or ""),
+                str(row.get("sll_buy_dvsn_name") or row.get("sll_buy_dvsn_cd_name") or ""),
+            ),
             "quantity": quantity,
             "unit_price": unit_price,
             "amount": amount,
+            "amount_krw": amount_krw,
             "currency": currency,
-            "time": "",
+            "time": str(row.get("ord_tmd") or row.get("ccld_tmd") or row.get("trad_tmd") or "").strip(),
+            "order_no": str(row.get("odno") or row.get("ord_no") or row.get("ODNO") or "").strip(),
             "realized_profit_krw": None,
             "exchange_rate": exchange_rate,
             "buy_amount_native": buy_amount_native,
@@ -2158,7 +2190,7 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
     return normalized
 
 
-def get_japan_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
+def get_overseas_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str, exchanges: list[str] | None = None):
     headers = {
         "content-type": "application/json; charset=utf-8",
         "authorization": f"Bearer {token}",
@@ -2169,7 +2201,8 @@ def get_japan_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd,
     url = f"{config.URL_BASE}/uapi/overseas-stock/v1/trading/inquire-ccnl"
     rows = []
 
-    for exchange_code in ("TKSE", "TSE"):
+    exchange_codes = exchanges or ["NASD", "NYSE", "AMEX", "TKSE", "TSE", "HKS", "SHS", "SZS", "HSX", "HNX"]
+    for exchange_code in exchange_codes:
         params = {
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
@@ -2186,15 +2219,19 @@ def get_japan_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd,
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
         }
-        pages = _request_with_pagination(
-            url,
-            headers,
-            params,
-            "ctx_area_fk200",
-            "ctx_area_nk200",
-            app_key=app_key,
-            app_secret=app_secret,
-        )
+        try:
+            pages = _request_with_pagination(
+                url,
+                headers,
+                params,
+                "ctx_area_fk200",
+                "ctx_area_nk200",
+                app_key=app_key,
+                app_secret=app_secret,
+            )
+        except Exception:
+            logger.warning("overseas ccnl inquiry failed for %s", exchange_code, exc_info=True)
+            continue
         exchange_rows = []
         for _, data in pages:
             page_rows = data.get("output") or data.get("output1") or []
@@ -2204,6 +2241,10 @@ def get_japan_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd,
         rows.extend(exchange_rows)
 
     return rows
+
+
+def get_japan_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str):
+    return get_overseas_trade_history_ccnl(token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date, ["TKSE", "TSE"])
 
 
 def _dedupe_trade_rows(rows: list[dict]) -> list[dict]:
@@ -2217,6 +2258,8 @@ def _dedupe_trade_rows(rows: list[dict]) -> list[dict]:
             round(float(row.get("quantity") or 0), 8),
             round(float(row.get("unit_price") or 0), 8),
             round(float(row.get("amount") or 0), 8),
+            str(row.get("time", "")),
+            str(row.get("order_no", "")),
         )
         if key in seen:
             continue
@@ -2282,12 +2325,83 @@ def _build_realized_profit_matchers(rows: list[dict]) -> dict:
     return matchers
 
 
+def _amounts_close(left: object, right: object, tolerance_base: object) -> bool:
+    left_float = float(left or 0)
+    right_float = float(right or 0)
+    tolerance = max(1.0, abs(float(tolerance_base or 0)) * 0.01)
+    return abs(left_float - right_float) < tolerance
+
+
+def _apply_realized_profit_to_trade(trade: dict, matched: dict, ratio: float | None = None) -> None:
+    realized_profit = float(matched.get("realized_profit_krw") or 0)
+    buy_amount = float(matched.get("buy_amount_krw") or 0)
+    if ratio is not None:
+        realized_profit *= ratio
+        buy_amount *= ratio
+    trade["realized_profit_krw"] = realized_profit
+    matched_rate = matched.get("realized_return_rate")
+    if matched_rate is not None and ratio is None:
+        trade["realized_return_rate"] = float(matched_rate)
+    else:
+        trade["realized_return_rate"] = (realized_profit / buy_amount * 100) if buy_amount > 0 else None
+
+
 def _attach_realized_profit_to_sell_trades(trades: list[dict], domestic_pnl_rows: list[dict], overseas_pnl_rows: list[dict]) -> list[dict]:
     domestic_matchers = _build_realized_profit_matchers(domestic_pnl_rows)
     overseas_matchers = _build_realized_profit_matchers(overseas_pnl_rows)
+    attached_indices: set[int] = set()
 
-    for trade in trades:
-        if trade.get("side") != "매도":
+    for matcher_source, market_predicate in (
+        (domestic_matchers, lambda row: row.get("market") == "KOR"),
+        (overseas_matchers, lambda row: row.get("market") != "KOR"),
+    ):
+        grouped_trade_indices: dict[tuple[str, str], list[int]] = {}
+        for index, trade in enumerate(trades):
+            if trade.get("side") != "매도" or not market_predicate(trade):
+                continue
+            key = (trade.get("date", ""), trade.get("symbol", ""))
+            if key[0] and key[1]:
+                grouped_trade_indices.setdefault(key, []).append(index)
+
+        for key, indices in grouped_trade_indices.items():
+            if len(indices) < 2:
+                continue
+            candidates = matcher_source.get(key, [])
+            if not candidates:
+                continue
+            total_qty = sum(float(trades[index].get("quantity") or 0) for index in indices)
+            total_amount = sum(float(trades[index].get("amount") or 0) for index in indices)
+            total_amount_krw = sum(
+                float(trades[index].get("amount_krw") or trades[index].get("settlement_amount_krw") or trades[index].get("amount") or 0)
+                for index in indices
+            )
+            chosen_index = None
+            for candidate_index, candidate in enumerate(candidates):
+                qty_matches = abs(float(candidate.get("quantity") or 0) - total_qty) < 0.0001
+                amount_matches = (
+                    _amounts_close(candidate.get("amount"), total_amount, total_amount)
+                    or _amounts_close(candidate.get("amount"), total_amount_krw, total_amount_krw)
+                )
+                if qty_matches or amount_matches:
+                    chosen_index = candidate_index
+                    break
+            if chosen_index is None:
+                continue
+            matched = candidates.pop(chosen_index)
+            denominator = total_amount_krw if total_amount_krw > 0 else (total_amount if total_amount > 0 else total_qty)
+            for trade_index in indices:
+                trade = trades[trade_index]
+                numerator = (
+                    float(trade.get("amount_krw") or trade.get("settlement_amount_krw") or trade.get("amount") or 0)
+                    if total_amount_krw > 0
+                    else (float(trade.get("amount") or 0) if total_amount > 0 else float(trade.get("quantity") or 0))
+                )
+                ratio = (numerator / denominator) if denominator > 0 else None
+                _apply_realized_profit_to_trade(trade, matched, ratio)
+                attached_indices.add(trade_index)
+
+    for trade_index, trade in enumerate(trades):
+        if trade_index in attached_indices or trade.get("side") != "매도":
             continue
         key = (trade.get("date", ""), trade.get("symbol", ""))
         matcher_source = domestic_matchers if trade.get("market") == "KOR" else overseas_matchers
@@ -2295,23 +2409,18 @@ def _attach_realized_profit_to_sell_trades(trades: list[dict], domestic_pnl_rows
         chosen_index = None
         for index, candidate in enumerate(candidates):
             qty_diff = abs(float(candidate.get("quantity") or 0) - float(trade.get("quantity") or 0))
-            amt_diff = abs(float(candidate.get("amount") or 0) - float(trade.get("amount") or 0))
-            if qty_diff < 0.0001 and amt_diff < max(1.0, abs(float(trade.get("amount") or 0)) * 0.01):
+            trade_amount = float(trade.get("amount") or 0)
+            trade_amount_krw = float(trade.get("amount_krw") or trade.get("settlement_amount_krw") or trade_amount)
+            amount_matches = _amounts_close(candidate.get("amount"), trade_amount, trade_amount) or _amounts_close(candidate.get("amount"), trade_amount_krw, trade_amount_krw)
+            if qty_diff < 0.0001 and amount_matches:
                 chosen_index = index
                 break
         if chosen_index is None and candidates:
             chosen_index = 0
         if chosen_index is not None:
             matched = candidates.pop(chosen_index)
-            trade["realized_profit_krw"] = matched.get("realized_profit_krw")
-            matched_rate = matched.get("realized_return_rate")
-            if matched_rate is not None:
-                trade["realized_return_rate"] = float(matched_rate)
-            else:
-                buy_amount = float(matched.get("buy_amount_krw") or 0)
-                trade["realized_return_rate"] = ((float(trade["realized_profit_krw"]) / buy_amount) * 100) if buy_amount > 0 else None
+            _apply_realized_profit_to_trade(trade, matched)
     return trades
-
 
 def get_domestic_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, start_date: str, end_date: str, side_filter: str | None = None):
     headers = {
@@ -2400,6 +2509,7 @@ def _get_trade_history_base_payload(
     end_date: str,
     normalized_side: str,
     normalized_market: str,
+    force_refresh: bool = False,
 ) -> dict[str, object]:
     cache_key = (
         "trade_history_base",
@@ -2410,12 +2520,14 @@ def _get_trade_history_base_payload(
         normalized_side,
         normalized_market,
     )
-    cached = _get_cached_payload(cache_key)
+    if force_refresh:
+        _drop_cached_payload(cache_key)
+    cached = None if force_refresh else _get_cached_payload(cache_key)
     if isinstance(cached, dict):
         return cached
 
     task_map: dict[str, tuple[object, tuple[object, ...]]] = {
-        "pnl_rows": (_fetch_trade_profit_rows, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date)),
+        "pnl_rows": (_fetch_trade_profit_rows, (token, app_key, app_secret, cano, acnt_prdt_cd, start_date, end_date, force_refresh)),
     }
     if normalized_market in {"all", "domestic"}:
         task_map["domestic_trades"] = (
@@ -2435,9 +2547,9 @@ def _get_trade_history_base_payload(
     domestic_rows: list[dict] = domestic_trade_result if isinstance(domestic_trade_result, list) else []
     overseas_rows: list[dict] = overseas_trade_result if isinstance(overseas_trade_result, list) else []
     pnl_rows: dict[str, list[dict]] = pnl_result if isinstance(pnl_result, dict) else {"domestic": [], "overseas": []}
-    japan_ccnl_rows: list[dict] = []
-    if normalized_market in {"all", "overseas"} and not _has_japan_trade_rows(overseas_rows):
-        japan_ccnl_result = get_japan_trade_history_ccnl(
+    ccnl_rows: list[dict] = []
+    if normalized_market in {"all", "overseas"}:
+        ccnl_result = get_overseas_trade_history_ccnl(
             token,
             app_key,
             app_secret,
@@ -2446,9 +2558,9 @@ def _get_trade_history_base_payload(
             start_date,
             end_date,
         )
-        japan_ccnl_rows = japan_ccnl_result if isinstance(japan_ccnl_result, list) else []
-    if japan_ccnl_rows:
-        overseas_rows = _dedupe_trade_rows(overseas_rows + japan_ccnl_rows)
+        ccnl_rows = ccnl_result if isinstance(ccnl_result, list) else []
+        if ccnl_rows:
+            overseas_rows = _dedupe_trade_rows(overseas_rows + ccnl_rows)
     domestic_pnl_rows = pnl_rows["domestic"] if isinstance(pnl_rows.get("domestic"), list) else []
     overseas_pnl_rows = pnl_rows["overseas"] if isinstance(pnl_rows.get("overseas"), list) else []
     all_rows = _dedupe_trade_rows(domestic_rows + overseas_rows)
@@ -2485,6 +2597,7 @@ def get_trade_history(
     market_filter: str | None = None,
     page: int | None = None,
     page_size: int | None = None,
+    force_refresh: bool = False,
 ):
     normalized_side = _normalize_trade_side_filter(side_filter)
     normalized_market = _normalize_trade_market_filter(market_filter)
@@ -2501,6 +2614,7 @@ def get_trade_history(
         end_date,
         normalized_side,
         normalized_market,
+        force_refresh=force_refresh,
     )
     all_rows_value = base_payload.get("rows", [])
     all_rows = all_rows_value if isinstance(all_rows_value, list) else []
