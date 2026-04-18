@@ -1640,8 +1640,8 @@
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
-                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '산정중' : formatSignedKrw(trade.realized_profit_krw)}</td>
-                        <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '산정중' : formatSignedPercent(trade.realized_return_rate)}</td>
+                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : formatSignedKrw(trade.realized_profit_krw)}</td>
+                        <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '-' : formatSignedPercent(trade.realized_return_rate)}</td>
                     </tr>
                 `).join('');
                 }

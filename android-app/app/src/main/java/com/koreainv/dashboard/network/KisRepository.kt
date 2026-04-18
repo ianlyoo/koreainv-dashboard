@@ -42,6 +42,13 @@ class KisRepository(
         private const val DASHBOARD_CACHE_TTL_MILLIS = 15_000L
         private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 10_000L
         private const val EXCHANGE_QUERY_CONCURRENCY = 4
+        private val OVERSEAS_MARKET_GROUPS = listOf(
+            OverseasMarketGroup("NASD", "840", "USD"),
+            OverseasMarketGroup("TKSE", "392", "JPY"),
+            OverseasMarketGroup("SEHK", "344", "HKD"),
+            OverseasMarketGroup("SHAA", "156", "CNY"),
+            OverseasMarketGroup("HASE", "704", "VND"),
+        )
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val JSON_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd")
         private val ISO_FORMAT = DateTimeFormatter.ISO_OFFSET_DATE_TIME
@@ -146,19 +153,20 @@ class KisRepository(
             val startDate = resolved.first.format(JSON_FORMAT)
             val endDate = resolved.second.format(JSON_FORMAT)
 
-            val (domesticTradeProfit, overseasTradeProfit, domesticTrades, overseasTrades) = coroutineScope {
+            val tradeData = coroutineScope {
                 val domesticProfitDeferred = async { getDomesticRealizedTradeProfit(startDate, endDate) }
                 val overseasProfitDeferred = async { getOverseasRealizedTradeProfit(startDate, endDate) }
+                val overseasSummaryDeferred = async { getOverseasRealizedSummaryProfit(startDate, endDate) }
                 val domesticTradesDeferred = async { getDomesticTradeHistory(startDate, endDate) }
-                val overseasTradesDeferred = async {
-                    dedupeTradeRows(getOverseasTradeHistory(startDate, endDate) + getOverseasTradeHistoryCcnl(startDate, endDate))
-                }
+                val overseasTradesDeferred = async { getOverseasTradeHistoryCcnl(startDate, endDate) }
                 val domesticProfit = domesticProfitDeferred.await()
                 val overseasProfit = overseasProfitDeferred.await()
+                val overseasSummaryProfitKrw = overseasSummaryDeferred.await()
                 val summaryOnly = buildTradeHistoryResponse(
                     resolved = resolved,
                     domesticTradeProfit = domesticProfit,
                     overseasTradeProfit = overseasProfit,
+                    overseasSummaryProfitKrw = overseasSummaryProfitKrw,
                     trades = emptyList(),
                 )
                 onSummaryReady?.let { callback ->
@@ -166,23 +174,23 @@ class KisRepository(
                         callback(summaryOnly)
                     }
                 }
-
-                Quadruple(
-                    domesticProfit,
-                    overseasProfit,
-                    domesticTradesDeferred.await(),
-                    overseasTradesDeferred.await(),
+                TradeHistoryLoadData(
+                    domesticTradeProfit = domesticProfit,
+                    overseasTradeProfit = overseasProfit,
+                    overseasSummaryProfitKrw = overseasSummaryProfitKrw,
+                    domesticTrades = domesticTradesDeferred.await(),
+                    overseasTrades = overseasTradesDeferred.await(),
                 )
             }
-
-            val allTrades = dedupeTradeRows(domesticTrades + overseasTrades)
-            attachRealizedProfitToSellTrades(allTrades, domesticTradeProfit, overseasTradeProfit)
+            val allTrades = dedupeTradeRows(tradeData.domesticTrades + tradeData.overseasTrades)
+            attachRealizedProfitToSellTrades(allTrades, tradeData.domesticTradeProfit, tradeData.overseasTradeProfit)
             val sortedTrades = sortTradeRowsNewestFirst(allTrades)
 
             val built = buildTradeHistoryResponse(
                 resolved = resolved,
-                domesticTradeProfit = domesticTradeProfit,
-                overseasTradeProfit = overseasTradeProfit,
+                domesticTradeProfit = tradeData.domesticTradeProfit,
+                overseasTradeProfit = tradeData.overseasTradeProfit,
+                overseasSummaryProfitKrw = tradeData.overseasSummaryProfitKrw,
                 trades = sortedTrades,
             )
 
@@ -197,13 +205,14 @@ class KisRepository(
         resolved: Triple<LocalDate, LocalDate, String>,
         domesticTradeProfit: List<RealizedTradeProfitRow>,
         overseasTradeProfit: List<RealizedTradeProfitRow>,
+        overseasSummaryProfitKrw: Double,
         trades: List<TradeRow>,
     ): TradeHistoryResponse {
         val domesticProfit = domesticTradeProfit.sumOf { it.realizedProfitKrw }
-        val overseasProfit = overseasTradeProfit.sumOf { it.realizedProfitKrw }
+        val overseasProfit = overseasSummaryProfitKrw
         val totalBuyAmount = domesticTradeProfit.sumOf { it.buyAmountKrw } + overseasTradeProfit.sumOf { it.buyAmountKrw }
         val totalReturnRate = if (totalBuyAmount > 0.0) {
-            (domesticTradeProfit.sumOf { it.realizedProfitKrw } + overseasTradeProfit.sumOf { it.realizedProfitKrw }) / totalBuyAmount * 100.0
+            (domesticProfit + overseasProfit) / totalBuyAmount * 100.0
         } else {
             0.0
         }
@@ -498,35 +507,12 @@ class KisRepository(
     }
 
     private suspend fun getOverseasTradeHistory(startDate: String, endDate: String): List<TradeRow> {
-        val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:overseas]")
-        val exchanges = listOf("NAS", "NYS", "AMS", "TSE", "TKSE", "HKS", "SHS", "SZS", "HSX", "HNX")
-        return fetchExchangeRows(exchanges) { exchange ->
-                val pages = paginatedJson(
-                    path = "/uapi/overseas-stock/v1/trading/inquire-period-trans",
-                    trId = "CTOS4001R",
-                    query = linkedMapOf(
-                        "CANO" to credentials.cano,
-                        "ACNT_PRDT_CD" to credentials.acntPrdtCd,
-                        "ERLM_STRT_DT" to startDate,
-                        "ERLM_END_DT" to endDate,
-                        "OVRS_EXCG_CD" to exchange,
-                        "PDNO" to "",
-                        "SLL_BUY_DVSN_CD" to "00",
-                        "LOAN_DVSN_CD" to "",
-                        "CTX_AREA_FK100" to "",
-                        "CTX_AREA_NK100" to "",
-                    ),
-                    token = token,
-                    fkField = "ctx_area_fk100",
-                    nkField = "ctx_area_nk100",
-                )
-            pages.flatMap { page -> normalizeOverseasTradeRows(jsonArray(page, "output1"), exchange) }
-        }
+        return getOverseasTradeHistoryCcnl(startDate, endDate)
     }
 
     private suspend fun getOverseasTradeHistoryCcnl(startDate: String, endDate: String): List<TradeRow> {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:overseas-ccnl]")
-        val exchanges = listOf("NASD", "NYSE", "AMEX", "TKSE", "TSE", "HKS", "SHS", "SZS", "HSX", "HNX")
+        val exchanges = OVERSEAS_MARKET_GROUPS.map { it.exchangeCode }
         return fetchExchangeRows(exchanges) { exchange ->
             runCatching {
                 val pages = paginatedJson(
@@ -609,29 +595,20 @@ class KisRepository(
 
     private suspend fun getOverseasRealizedTradeProfit(startDate: String, endDate: String): List<RealizedTradeProfitRow> {
         val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[realized-profit:overseas]")
-        val exchanges = listOf(
-            "NASD" to "USD",
-            "NYSE" to "USD",
-            "AMEX" to "USD",
-            "TKSE" to "JPY",
-            "SEHK" to "HKD",
-            "SHAA" to "CNY",
-            "HASE" to "VND",
-        )
-        return dedupeRealizedRows(fetchExchangeRows(exchanges) { (exchange, currency) ->
+        return dedupeRealizedRows(fetchExchangeRows(OVERSEAS_MARKET_GROUPS) { group ->
                 val pages = paginatedJson(
                     path = "/uapi/overseas-stock/v1/trading/inquire-period-profit",
                     trId = "TTTS3039R",
                     query = linkedMapOf(
                         "CANO" to credentials.cano,
                         "ACNT_PRDT_CD" to credentials.acntPrdtCd,
-                        "OVRS_EXCG_CD" to exchange,
-                        "NATN_CD" to getOverseasNationCode(exchange),
-                        "CRCY_CD" to currency,
+                        "OVRS_EXCG_CD" to group.exchangeCode,
+                        "NATN_CD" to group.nationCode,
+                        "CRCY_CD" to group.currencyCode,
                         "PDNO" to "",
                         "INQR_STRT_DT" to startDate,
                         "INQR_END_DT" to endDate,
-                        "WCRC_FRCR_DVSN_CD" to "02",
+                        "WCRC_FRCR_DVSN_CD" to "01",
                         "CTX_AREA_FK200" to "",
                         "CTX_AREA_NK200" to "",
                     ),
@@ -649,22 +626,51 @@ class KisRepository(
                         if (tradeDate.isBlank() || symbol.isBlank() || quantity <= 0.0 || amount <= 0.0) {
                             return@mapNotNull null
                         }
-                        val realizedProfit = number(row, "ovrs_rlzt_pfls_amt")
+                        val exchangeRate = firstPositiveNumber(row, listOf("frst_bltn_exrt", "bass_exrt", "exrt"))
+                        val realizedProfitNative = number(row, "ovrs_rlzt_pfls_amt")
                         val fee = firstPositiveNumber(row, listOf("stck_sll_tlex", "smtl_fee1"))
-                        val buyAmount = number(row, "stck_buy_amt_smtl").takeIf { it > 0.0 }
-                            ?: max(amount - realizedProfit - fee, 0.0)
+                        val buyAmount = number(row, "frcr_pchs_amt1").takeIf { it > 0.0 }
+                            ?: number(row, "stck_buy_amt_smtl").takeIf { it > 0.0 }
+                            ?: max(amount - realizedProfitNative - fee, 0.0)
                         RealizedTradeProfitRow(
                             date = tradeDate,
                             symbol = symbol,
                             quantity = quantity,
                             amount = amount,
-                            realizedProfitKrw = realizedProfit,
-                            buyAmountKrw = buyAmount,
+                            realizedProfitKrw = nativeToKrw(realizedProfitNative, group.currencyCode, exchangeRate),
+                            buyAmountKrw = nativeToKrw(buyAmount, group.currencyCode, exchangeRate),
                             realizedReturnRate = string(row, "pftrt").takeIf { it.isNotBlank() }?.toDoubleOrNull(),
+                            exchangeCode = string(row, "ovrs_excg_cd").ifBlank { group.exchangeCode },
                         )
                     }
                 }
         })
+    }
+
+    private suspend fun getOverseasRealizedSummaryProfit(startDate: String, endDate: String): Double {
+        val token = requireToken() ?: throw IllegalStateException("KIS_TOKEN_FAILURE[realized-profit:summary]")
+        return OVERSEAS_MARKET_GROUPS.sumOf { group ->
+            val response = getJson(
+                path = "/uapi/overseas-stock/v1/trading/inquire-period-profit",
+                trId = "TTTS3039R",
+                query = linkedMapOf(
+                    "CANO" to credentials.cano,
+                    "ACNT_PRDT_CD" to credentials.acntPrdtCd,
+                    "OVRS_EXCG_CD" to group.exchangeCode,
+                    "NATN_CD" to group.nationCode,
+                    "CRCY_CD" to group.currencyCode,
+                    "PDNO" to "",
+                    "INQR_STRT_DT" to startDate,
+                    "INQR_END_DT" to endDate,
+                    "WCRC_FRCR_DVSN_CD" to "02",
+                    "CTX_AREA_FK200" to "",
+                    "CTX_AREA_NK200" to "",
+                ),
+                token = token,
+            ) ?: return@sumOf 0.0
+            val output2 = jsonObject(response, "output2") ?: return@sumOf 0.0
+            number(output2, "ovrs_rlzt_pfls_tot_amt")
+        }
     }
 
     private suspend fun <T, R> fetchExchangeRows(
@@ -853,6 +859,7 @@ class KisRepository(
         trId: String,
         query: Map<String, String>,
         token: String,
+        extraHeaders: Map<String, String> = emptyMap(),
         retryOnTokenError: Boolean = true,
         retryOnRateLimit: Int = 2,
     ): JsonObject? {
@@ -861,7 +868,7 @@ class KisRepository(
         query.forEach { (key, value) -> urlBuilder.addQueryParameter(key, value) }
         val startedAt = SystemClock.elapsedRealtime()
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(urlBuilder.build())
             .get()
             .header("content-type", "application/json; charset=utf-8")
@@ -869,14 +876,17 @@ class KisRepository(
             .header("appkey", credentials.appKey)
             .header("appsecret", credentials.appSecret)
             .header("tr_id", trId)
-            .build()
+        extraHeaders.forEach { (key, value) ->
+            requestBuilder.header(key, value)
+        }
+        val request = requestBuilder.build()
 
         client.newCall(request).execute().use { response ->
             val bodyString = response.body?.string().orEmpty()
             val json = parseObject(bodyString) ?: JsonObject()
             if (retryOnRateLimit > 0 && isRateLimitError(response.code, json)) {
                 delay((3 - retryOnRateLimit) * 400L + 400L)
-                return getJson(path, trId, query, token, retryOnTokenError, retryOnRateLimit - 1)
+                return getJson(path, trId, query, token, extraHeaders, retryOnTokenError, retryOnRateLimit - 1)
             }
             if (retryOnTokenError && isTokenError(response.code, json)) {
                 val currentToken = authToken?.value
@@ -887,7 +897,7 @@ class KisRepository(
                     settingsManager.clearAuthToken()
                     requireToken()
                 } ?: throw IllegalStateException("KIS_TOKEN_REFRESH_FAILED[$trId] path=$path")
-                return getJson(path, trId, query, refreshed, false, retryOnRateLimit)
+                return getJson(path, trId, query, refreshed, extraHeaders, false, retryOnRateLimit)
             }
             if (!response.isSuccessful) {
                 throw IllegalStateException(
@@ -915,8 +925,16 @@ class KisRepository(
     ): List<JsonObject> {
         val results = mutableListOf<JsonObject>()
         var currentQuery = LinkedHashMap(query)
+        val seenCursors = mutableSetOf<Pair<String, String>>()
+        var continuationHeader = ""
         repeat(maxPages) {
-            val page = getJson(path, trId, currentQuery, token) ?: return results
+            val page = getJson(
+                path = path,
+                trId = trId,
+                query = currentQuery,
+                token = token,
+                extraHeaders = if (continuationHeader.isBlank()) emptyMap() else mapOf("tr_cont" to continuationHeader),
+            ) ?: return results
             results += page
             val trCont = string(page, "__tr_cont")
             if (trCont !in setOf("F", "M")) {
@@ -927,8 +945,13 @@ class KisRepository(
             if (nextFk.isBlank() && nextNk.isBlank()) {
                 return results
             }
+            val cursor = nextFk to nextNk
+            if (!seenCursors.add(cursor)) {
+                return results
+            }
             currentQuery[fkField.uppercase()] = nextFk
             currentQuery[nkField.uppercase()] = nextNk
+            continuationHeader = "N"
         }
         return results
     }
@@ -1081,6 +1104,14 @@ class KisRepository(
     }
 
     private fun amountsClose(left: Double, right: Double): Boolean = abs(left - right) < max(1.0, abs(right) * 0.01)
+
+    private fun nativeToKrw(amount: Double, currency: String, exchangeRate: Double): Double = when {
+        amount == 0.0 -> 0.0
+        currency.equals("KRW", ignoreCase = true) -> amount
+        exchangeRate <= 0.0 -> 0.0
+        currency.equals("JPY", ignoreCase = true) -> amount * (exchangeRate / 100.0)
+        else -> amount * exchangeRate
+    }
 
     private fun applyRealizedProfit(trade: TradeRow, matched: RealizedTradeProfitRow, ratio: Double?) {
         val realizedProfit = if (ratio != null) matched.realizedProfitKrw * ratio else matched.realizedProfitKrw
@@ -1301,6 +1332,20 @@ private data class OverseasBalancePayload(
     val jpHoldings: List<OverseasHoldingRaw> = emptyList(),
 )
 
+private data class OverseasMarketGroup(
+    val exchangeCode: String,
+    val nationCode: String,
+    val currencyCode: String,
+)
+
+private data class TradeHistoryLoadData(
+    val domesticTradeProfit: List<RealizedTradeProfitRow>,
+    val overseasTradeProfit: List<RealizedTradeProfitRow>,
+    val overseasSummaryProfitKrw: Double,
+    val domesticTrades: List<TradeRow>,
+    val overseasTrades: List<TradeRow>,
+)
+
 private data class RealizedTradeProfitRow(
     val date: String,
     val symbol: String,
@@ -1309,6 +1354,7 @@ private data class RealizedTradeProfitRow(
     val realizedProfitKrw: Double,
     val buyAmountKrw: Double,
     val realizedReturnRate: Double?,
+    val exchangeCode: String = "",
 )
 
     private data class TradeRow(

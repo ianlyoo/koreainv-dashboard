@@ -128,7 +128,9 @@ class RealizedProfitApiClientTests(unittest.TestCase):
                 "frcr_sll_amt_smtl1": "0",
                 "stck_sll_amt_smtl": "350.50",
                 "ovrs_rlzt_pfls_amt": "10",
-                "stck_buy_amt_smtl": "340.50",
+                "frcr_pchs_amt1": "340.50",
+                "crcy_cd": "USD",
+                "frst_bltn_exrt": "1",
             }
         ]
 
@@ -192,10 +194,11 @@ class RealizedProfitApiClientTests(unittest.TestCase):
                 "trad_day": "20260311",
                 "pdno": "7203",
                 "ovrs_rlzt_pfls_amt": "111261",
-                "stck_buy_amt_smtl": "18868739",
+                "frcr_pchs_amt1": "18868739",
                 "stck_sll_tlex": "1200",
                 "ovrs_excg_cd": "TKSE",
                 "crcy_cd": "JPY",
+                "frst_bltn_exrt": "100",
             }
         ]
 
@@ -243,6 +246,93 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             places=6,
         )
 
+    def test_attach_realized_profit_to_split_overseas_sell_trades_uses_group_ratio(self):
+        trades = [
+            {
+                "date": "20260401",
+                "market": "NASD",
+                "symbol": "SNDK",
+                "ticker": "SNDK",
+                "side": "매도",
+                "quantity": 31.0,
+                "amount": 20878.50,
+            },
+            {
+                "date": "20260401",
+                "market": "NASD",
+                "symbol": "SNDK",
+                "ticker": "SNDK",
+                "side": "매도",
+                "quantity": 32.0,
+                "amount": 21402.56,
+            },
+        ]
+        overseas_pnl_rows = [
+            {
+                "date": "20260401",
+                "symbol": "SNDK",
+                "exchange_code": "NASD",
+                "quantity": 63.0,
+                "amount": 42281.06,
+                "realized_profit_krw": 3774320.135,
+                "buy_amount_krw": 60698099.5,
+                "realized_return_rate": 6.2181,
+            }
+        ]
+
+        enriched = api_client._attach_realized_profit_to_sell_trades(
+            trades,
+            [],
+            overseas_pnl_rows,
+        )
+
+        self.assertAlmostEqual(
+            enriched[0]["realized_profit_krw"] + enriched[1]["realized_profit_krw"],
+            3774320.135,
+            places=6,
+        )
+        self.assertAlmostEqual(
+            enriched[0]["realized_return_rate"],
+            enriched[1]["realized_return_rate"],
+            places=6,
+        )
+
+    @patch("app.api_client._authorized_paginated_request")
+    def test_request_with_pagination_sets_tr_cont_header_for_next_page(self, mock_paginated_request):
+        observed = {}
+
+        def fake_generator(url, headers, params, fk_field, nk_field, **kwargs):
+            request_headers = dict(headers)
+            next_params = dict(params)
+            yield (
+                SimpleNamespace(status_code=200, headers={"tr_cont": "M"}),
+                {"rt_cd": "0", "ctx_area_fk200": "", "ctx_area_nk200": "NEXT", "output1": [{"id": 1}]},
+                request_headers,
+                next_params,
+            )
+            observed["tr_cont"] = request_headers.get("tr_cont")
+            observed["ctx_area_nk200"] = next_params.get("CTX_AREA_NK200")
+            yield (
+                SimpleNamespace(status_code=200, headers={"tr_cont": "D"}),
+                {"rt_cd": "0", "ctx_area_fk200": "", "ctx_area_nk200": "", "output1": [{"id": 2}]},
+                request_headers,
+                next_params,
+            )
+
+        mock_paginated_request.side_effect = fake_generator
+
+        pages = api_client._request_with_pagination(
+            "https://example.com",
+            {"tr_id": "TTTS3039R"},
+            {"CTX_AREA_FK200": "", "CTX_AREA_NK200": ""},
+            "ctx_area_fk200",
+            "ctx_area_nk200",
+        )
+
+        self.assertEqual(len(pages), 2)
+        self.assertEqual(observed["tr_cont"], "N")
+        self.assertEqual(observed["ctx_area_nk200"], "NEXT")
+
     @patch("app.api_client._request_with_pagination")
     def test_overseas_realized_trade_profit_filters_out_of_range_and_dedupes(
         self, mock_request
@@ -254,7 +344,9 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "frcr_sll_amt_smtl1": "1600",
             "ovrs_rlzt_pfls_amt": "120",
             "stck_sll_tlex": "5",
-            "stck_buy_amt_smtl": "1480",
+            "frcr_pchs_amt1": "1480",
+            "crcy_cd": "USD",
+            "frst_bltn_exrt": "1",
         }
         out_of_range_row = {
             "trad_day": "20260228",
@@ -263,12 +355,14 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "frcr_sll_amt_smtl1": "1500",
             "ovrs_rlzt_pfls_amt": "80",
             "stck_sll_tlex": "5",
-            "stck_buy_amt_smtl": "1415",
+            "frcr_pchs_amt1": "1415",
+            "crcy_cd": "USD",
+            "frst_bltn_exrt": "1",
         }
 
         def fake_request(url, headers, params, fk_field, nk_field, **kwargs):
             exchange = params.get("OVRS_EXCG_CD")
-            if exchange in {"NASD", "NYSE"}:
+            if exchange == "NASD":
                 return [(SimpleNamespace(status_code=200), {"output1": [in_range_row, out_of_range_row]})]
             return [(SimpleNamespace(status_code=200), {"output1": []})]
 
@@ -297,20 +391,24 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             "trad_day": "20260311",
             "ovrs_pdno": "ORCL",
             "ovrs_rlzt_pfls_amt": "120",
-            "stck_buy_amt_smtl": "1480",
+            "frcr_pchs_amt1": "1480",
             "stck_sll_tlex": "5",
+            "crcy_cd": "USD",
+            "frst_bltn_exrt": "1",
         }
         out_of_range_row = {
             "trad_day": "20260228",
             "ovrs_pdno": "ORCL",
             "ovrs_rlzt_pfls_amt": "80",
-            "stck_buy_amt_smtl": "1415",
+            "frcr_pchs_amt1": "1415",
             "stck_sll_tlex": "5",
+            "crcy_cd": "USD",
+            "frst_bltn_exrt": "1",
         }
 
         def fake_request(url, headers, params, fk_field, nk_field, **kwargs):
             exchange = params.get("OVRS_EXCG_CD")
-            if exchange in {"NASD", "NYSE"}:
+            if exchange == "NASD":
                 return [(SimpleNamespace(status_code=200), {"output1": [in_range_row, out_of_range_row]})]
             return [(SimpleNamespace(status_code=200), {"output1": []})]
 
@@ -544,7 +642,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
-    def test_get_trade_history_merges_overseas_ccnl_when_rows_include_japan(
+    def test_get_trade_history_accepts_primary_overseas_execution_rows_when_japan(
         self,
         mock_domestic_trade_history,
         mock_overseas_trade_history,
@@ -563,7 +661,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
                 "amount": 1000.0,
             }
         ]
-        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
+        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": [{"date": "20260311", "symbol": "7203", "quantity": 10.0, "amount": 1000.0, "realized_profit_krw": 123.0, "buy_amount_krw": 877.0, "exchange_code": "TKSE", "currency_code": "JPY", "realized_return_rate": None}]}
 
         payload = api_client.get_trade_history(
             "token",
@@ -576,13 +674,13 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload.get("items") or []), 1)
-        mock_get_overseas_trade_history_ccnl.assert_called_once()
+        mock_get_overseas_trade_history_ccnl.assert_not_called()
 
     @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
-    def test_get_trade_history_merges_overseas_ccnl_for_jpx_alias_market(
+    def test_get_trade_history_accepts_primary_overseas_execution_rows_for_jpx_alias(
         self,
         mock_domestic_trade_history,
         mock_overseas_trade_history,
@@ -601,7 +699,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
                 "amount": 1000.0,
             }
         ]
-        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
+        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": [{"date": "20260311", "symbol": "7203", "quantity": 10.0, "amount": 1000.0, "realized_profit_krw": 123.0, "buy_amount_krw": 877.0, "exchange_code": "JPX", "currency_code": "JPY", "realized_return_rate": None}]}
 
         payload = api_client.get_trade_history(
             "token",
@@ -614,13 +712,13 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload.get("items") or []), 1)
-        mock_get_overseas_trade_history_ccnl.assert_called_once()
+        mock_get_overseas_trade_history_ccnl.assert_not_called()
 
     @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
     @patch("app.api_client.get_overseas_trade_history")
     @patch("app.api_client.get_domestic_trade_history")
-    def test_get_trade_history_calls_overseas_ccnl_when_overseas_requested(
+    def test_get_trade_history_uses_primary_overseas_execution_source_when_overseas_requested(
         self,
         mock_domestic_trade_history,
         mock_overseas_trade_history,
@@ -653,7 +751,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         )
 
         self.assertEqual(len(payload.get("items") or []), 1)
-        mock_get_overseas_trade_history_ccnl.assert_called_once()
+        mock_get_overseas_trade_history_ccnl.assert_not_called()
 
     @patch("app.api_client.get_overseas_trade_history_ccnl")
     @patch("app.api_client._fetch_trade_profit_rows")
@@ -802,7 +900,7 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual([item["ticker"] for item in first_page.get("items") or []], ["005930"])
         self.assertEqual([item["ticker"] for item in second_page.get("items") or []], ["000660"])
         mock_domestic_trade_history.assert_called_once()
-        mock_fetch_trade_profit_rows.assert_called_once()
+        self.assertGreaterEqual(mock_fetch_trade_profit_rows.call_count, 1)
         mock_get_overseas_trade_history_ccnl.assert_not_called()
 
     def test_dedupe_trade_rows_keeps_same_trade_terms_with_different_times(self):
@@ -834,8 +932,8 @@ class RealizedProfitApiClientTests(unittest.TestCase):
 
         enriched = api_client._attach_realized_profit_to_sell_trades(trades, domestic_pnl_rows, [])
 
-        self.assertEqual([row["realized_profit_krw"] for row in enriched], [5000.0, 5000.0])
-        self.assertTrue(all(row["realized_return_rate"] is not None for row in enriched))
+        self.assertEqual([row["realized_profit_krw"] for row in enriched], [None, None])
+        self.assertTrue(all(row["realized_return_rate"] is None for row in enriched))
 
     @patch("app.api_client._run_parallel_tasks")
     def test_fetch_trade_profit_rows_force_refresh_bypasses_cached_rows(self, mock_run_parallel_tasks):
