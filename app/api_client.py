@@ -133,8 +133,8 @@ def clear_persisted_token_cache() -> None:
                 logger.warning("Failed to remove token cache file", exc_info=True)
 
 
-def _get_ci(row: dict, wanted_key: str):
-    if not isinstance(row, dict):
+def _get_ci(row: Mapping[str, object], wanted_key: str):
+    if not isinstance(row, Mapping):
         return None, None
     wanted = str(wanted_key).lower()
     for k, v in row.items():
@@ -167,6 +167,25 @@ def _to_float(v):
         return float(s)
     except Exception:
         return 0.0
+
+
+def _first_positive_float(row: Mapping[str, object], keys: list[str]) -> float:
+    for key in keys:
+        raw, actual = _get_ci(row, key)
+        if actual is None:
+            continue
+        value = _to_float(raw)
+        if value > 0:
+            return value
+    return 0.0
+
+
+def _amount_or_quantity_price(amount: float, quantity: float, unit_price: float) -> float:
+    if amount > 0:
+        return amount
+    if quantity > 0 and unit_price > 0:
+        return quantity * unit_price
+    return 0.0
 
 
 def _is_kor_regular_session(now_kst: datetime.datetime | None = None) -> bool:
@@ -1833,13 +1852,13 @@ def _normalize_overseas_realized_trade_rows(rows: list[dict]) -> list[dict]:
         symbol = str(row.get("ovrs_pdno", "")).strip() or str(row.get("pdno", "")).strip()
         if not trade_date or not symbol:
             continue
-        quantity = _to_float(row.get("slcl_qty") or 0)
-        amount = _to_float(row.get("frcr_sll_amt_smtl1") or row.get("stck_sll_amt_smtl") or 0)
+        quantity = _first_positive_float(row, ["slcl_qty", "ccld_qty"])
+        amount = _first_positive_float(row, ["frcr_sll_amt_smtl1", "stck_sll_amt_smtl", "frcr_sll_amt_smtl"])
         if quantity <= 0 or amount <= 0:
             continue
         realized_profit = _to_float(row.get("ovrs_rlzt_pfls_amt") or 0)
-        fee = _to_float(row.get("stck_sll_tlex") or row.get("smtl_fee1") or 0)
-        buy_amount = _to_float(row.get("stck_buy_amt_smtl") or 0)
+        fee = _first_positive_float(row, ["stck_sll_tlex", "smtl_fee1"])
+        buy_amount = _first_positive_float(row, ["stck_buy_amt_smtl"])
         if buy_amount <= 0:
             buy_amount = max(amount - realized_profit - fee, 0.0)
         normalized.append({
@@ -2042,12 +2061,17 @@ def _normalize_domestic_trade_rows(rows: list[dict]) -> list[dict]:
         trade_date = str(row.get("ord_dt", "")).strip()
         if not trade_date:
             continue
-        qty = _to_float(row.get("tot_ccld_qty") or row.get("ord_qty") or 0)
-        amount = _to_float(row.get("tot_ccld_amt") or 0)
+        qty = _first_positive_float(row, ["tot_ccld_qty", "ord_qty"])
+        raw_amount = _first_positive_float(row, ["tot_ccld_amt", "ccld_amt", "ord_amt"])
         # Official KIS example exposes avg_prvs as 평균가. We still prefer
         # total amount / filled quantity when both exist because it matches the
-        # actual weighted fill price the user expects to see.
-        unit_price = (amount / qty) if qty > 0 and amount > 0 else _to_float(row.get("avg_prvs") or row.get("ord_unpr") or 0)
+        # actual weighted fill price the user expects to see. When KIS returns
+        # the amount field as a literal "0" but provides an average fill price,
+        # derive the transaction amount from quantity × price instead of
+        # rendering a misleading 0원 row.
+        fallback_unit_price = _first_positive_float(row, ["avg_prvs", "ord_unpr"])
+        unit_price = (raw_amount / qty) if qty > 0 and raw_amount > 0 else fallback_unit_price
+        amount = _amount_or_quantity_price(raw_amount, qty, unit_price)
         symbol = str(row.get("pdno", "")).strip()
         normalized.append({
             "date": trade_date,
@@ -2075,21 +2099,39 @@ def _normalize_overseas_trade_rows(rows: list[dict], fallback_market: str = "OVR
         if not trade_date:
             continue
         currency = str(row.get("crcy_cd", "")).strip() or "USD"
-        quantity = _to_float(row.get("ccld_qty") or 0)
-        amount = _to_float(row.get("tr_frcr_amt2") or row.get("tr_amt") or 0)
-        exchange_rate = _to_float(row.get("erlm_exrt") or 0)
-        buy_amount_native = _to_float(row.get("frcr_buy_amt_smtl") or 0)
-        sell_amount_native = _to_float(row.get("frcr_sll_amt_smtl") or row.get("tr_frcr_amt2") or row.get("tr_amt") or 0)
-        settlement_amount_krw = _to_float(row.get("wcrc_excc_amt") or 0)
-        domestic_fee_krw = _to_float(row.get("dmst_wcrc_fee") or 0)
-        overseas_fee_krw = _to_float(row.get("ovrs_wcrc_fee") or 0)
-        domestic_fee_native = _to_float(row.get("dmst_fee_smtl") or row.get("dmst_frcr_fee1") or 0)
-        overseas_fee_native = _to_float(row.get("ovrs_fee_smtl") or row.get("frcr_fee1") or 0)
+        quantity = _first_positive_float(row, ["ccld_qty", "tot_ccld_qty", "ord_qty"])
+        raw_amount = _first_positive_float(
+            row,
+            [
+                "tr_frcr_amt2",
+                "tr_amt",
+                "frcr_sll_amt_smtl",
+                "frcr_sll_amt_smtl1",
+                "stck_sll_amt_smtl",
+                "frcr_buy_amt_smtl",
+            ],
+        )
+        exchange_rate = _first_positive_float(row, ["erlm_exrt", "frst_bltn_exrt", "bass_exrt"])
+        buy_amount_native = _first_positive_float(row, ["frcr_buy_amt_smtl"])
+        sell_amount_native = _first_positive_float(
+            row,
+            ["frcr_sll_amt_smtl", "frcr_sll_amt_smtl1", "stck_sll_amt_smtl", "tr_frcr_amt2", "tr_amt"],
+        )
+        settlement_amount_krw = _first_positive_float(row, ["wcrc_excc_amt"])
+        domestic_fee_krw = _first_positive_float(row, ["dmst_wcrc_fee"])
+        overseas_fee_krw = _first_positive_float(row, ["ovrs_wcrc_fee"])
+        domestic_fee_native = _first_positive_float(row, ["dmst_fee_smtl", "dmst_frcr_fee1"])
+        overseas_fee_native = _first_positive_float(row, ["ovrs_fee_smtl", "frcr_fee1"])
         # The official example labels tr_frcr_amt2 as foreign-currency trade
         # amount. For display, deriving price from amount / quantity is more
         # reliable than ovrs_stck_ccld_unpr, which can come back in a different
-        # unit from the user-facing filled price.
-        unit_price = (amount / quantity) if quantity > 0 and amount > 0 else _to_float(row.get("ovrs_stck_ccld_unpr") or row.get("ft_ccld_unpr2") or 0)
+        # unit from the user-facing filled price. KIS sometimes sends primary
+        # amount fields as the string "0" and a non-zero fallback sell/buy
+        # subtotal, so candidates must be checked by numeric positivity rather
+        # than Python truthiness.
+        fallback_unit_price = _first_positive_float(row, ["ovrs_stck_ccld_unpr", "ft_ccld_unpr2"])
+        unit_price = (raw_amount / quantity) if quantity > 0 and raw_amount > 0 else fallback_unit_price
+        amount = _amount_or_quantity_price(raw_amount, quantity, unit_price)
         symbol = str(row.get("pdno", "")).strip()
         normalized.append({
             "date": trade_date,
@@ -2348,7 +2390,7 @@ def get_overseas_trade_history(token, app_key, app_secret, cano, acnt_prdt_cd, s
     return rows
 
 
-def get_trade_history(
+def _get_trade_history_base_payload(
     token,
     app_key,
     app_secret,
@@ -2356,29 +2398,20 @@ def get_trade_history(
     acnt_prdt_cd,
     start_date: str,
     end_date: str,
-    *,
-    side_filter: str | None = None,
-    market_filter: str | None = None,
-    page: int | None = None,
-    page_size: int | None = None,
-):
-    normalized_side = _normalize_trade_side_filter(side_filter)
-    normalized_market = _normalize_trade_market_filter(market_filter)
-    safe_page = max(1, int(page or 1))
-    safe_page_size = max(1, min(int(page_size or 10), 100))
+    normalized_side: str,
+    normalized_market: str,
+) -> dict[str, object]:
     cache_key = (
-        "trade_history",
+        "trade_history_base",
         cano,
         acnt_prdt_cd,
         start_date,
         end_date,
         normalized_side,
         normalized_market,
-        safe_page,
-        safe_page_size,
     )
     cached = _get_cached_payload(cache_key)
-    if cached is not None:
+    if isinstance(cached, dict):
         return cached
 
     task_map: dict[str, tuple[object, tuple[object, ...]]] = {
@@ -2425,17 +2458,60 @@ def get_trade_history(
     elif normalized_side == "sell":
         all_rows = [row for row in all_rows if str(row.get("side", "")).strip() == "매도"]
     all_rows.sort(key=lambda row: f"{row.get('date', '')}{row.get('time', '')}", reverse=True)
-    page_rows, pagination = _paginate_trade_rows(all_rows, safe_page, safe_page_size)
     summary_payload = _build_realized_profit_summary_payload(pnl_rows)
-    result = {
-        "items": page_rows,
+    payload = {
+        "rows": all_rows,
         "summary": summary_payload.get("summary", {}),
         "daily": summary_payload.get("daily", []),
+        "filters": {
+            "side": normalized_side,
+            "market": normalized_market,
+        },
+    }
+    _set_cached_payload(cache_key, payload)
+    return payload
+
+
+def get_trade_history(
+    token,
+    app_key,
+    app_secret,
+    cano,
+    acnt_prdt_cd,
+    start_date: str,
+    end_date: str,
+    *,
+    side_filter: str | None = None,
+    market_filter: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+):
+    normalized_side = _normalize_trade_side_filter(side_filter)
+    normalized_market = _normalize_trade_market_filter(market_filter)
+    safe_page = max(1, int(page or 1))
+    safe_page_size = max(1, min(int(page_size or 10), 100))
+
+    base_payload = _get_trade_history_base_payload(
+        token,
+        app_key,
+        app_secret,
+        cano,
+        acnt_prdt_cd,
+        start_date,
+        end_date,
+        normalized_side,
+        normalized_market,
+    )
+    all_rows_value = base_payload.get("rows", [])
+    all_rows = all_rows_value if isinstance(all_rows_value, list) else []
+    page_rows, pagination = _paginate_trade_rows(all_rows, safe_page, safe_page_size)
+    return {
+        "items": page_rows,
+        "summary": base_payload.get("summary", {}),
+        "daily": base_payload.get("daily", []),
         "pagination": pagination,
         "filters": {
             "side": normalized_side,
             "market": normalized_market,
         },
     }
-    _set_cached_payload(cache_key, result)
-    return result

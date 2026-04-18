@@ -60,6 +60,9 @@ import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
+import java.time.Duration
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -164,6 +167,8 @@ fun TradeHistoryScreen(
     LaunchedEffect(Unit) {
         if (tradeData == null) {
             loadTradeHistory(range = selectedRange)
+        } else if (isTradeHistorySnapshotStale(tradeData)) {
+            loadTradeHistory(range = selectedRange, forceRefresh = true)
         }
     }
 
@@ -412,6 +417,18 @@ fun TradeHistoryScreen(
             }
         }
     }
+}
+
+private const val TRADE_HISTORY_SCREEN_STALE_MILLIS = 30_000L
+
+internal fun isTradeHistorySnapshotStale(
+    data: TradeHistoryResponse?,
+    now: OffsetDateTime = OffsetDateTime.now(ZoneOffset.ofHours(9)),
+    ttlMillis: Long = TRADE_HISTORY_SCREEN_STALE_MILLIS,
+): Boolean {
+    val lastSynced = data?.lastSynced?.takeIf(String::isNotBlank) ?: return true
+    val syncedAt = runCatching { OffsetDateTime.parse(lastSynced) }.getOrNull() ?: return true
+    return Duration.between(syncedAt.toInstant(), now.toInstant()).toMillis() > ttlMillis
 }
 
 data class TradeHistorySessionState(

@@ -191,6 +191,7 @@ class AccessTokenCacheTests(unittest.TestCase):
         mock_get_access_token.assert_called_once_with("key", "secret")
         self.assertEqual(mock_get.call_count, 2)
 
+    @patch("app.api_client._is_kor_regular_session", return_value=True)
     @patch("app.api_client.get_access_token", return_value="fresh-token")
     @patch("app.api_client._invalidate_access_token")
     @patch("app.api_client.get_domestic_orderable_cash", return_value=(0, "none"))
@@ -201,6 +202,7 @@ class AccessTokenCacheTests(unittest.TestCase):
         _mock_orderable,
         mock_invalidate,
         mock_get_access_token,
+        _mock_regular_session,
     ):
         mock_get.side_effect = [
             SimpleNamespace(status_code=401, json=lambda: {"msg_cd": "EGW00123", "msg1": "expired token"}),

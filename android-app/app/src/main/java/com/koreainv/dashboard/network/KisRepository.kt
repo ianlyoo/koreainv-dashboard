@@ -40,7 +40,7 @@ class KisRepository(
         private const val BASE_URL = "https://openapi.koreainvestment.com:9443"
         private const val TOKEN_BUFFER_SECONDS = 60L
         private const val DASHBOARD_CACHE_TTL_MILLIS = 15_000L
-        private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 120_000L
+        private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 30_000L
         private const val EXCHANGE_QUERY_CONCURRENCY = 4
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val JSON_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd")
@@ -181,7 +181,7 @@ class KisRepository(
 
             val allTrades = dedupeTradeRows(domesticTrades + overseasTrades)
             attachRealizedProfitToSellTrades(allTrades, domesticTradeProfit, overseasTradeProfit)
-            val sortedTrades = allTrades.sortedByDescending { "${it.date}${if (it.market == "KOR") "1" else "0"}${it.symbol}" }
+            val sortedTrades = sortTradeRowsNewestFirst(allTrades)
 
             val built = buildTradeHistoryResponse(
                 resolved = resolved,
@@ -478,9 +478,11 @@ class KisRepository(
         return pages.flatMap { page ->
             jsonArray(page, "output1").map { element ->
                 val row = element.asJsonObject
-                val quantity = number(row, "tot_ccld_qty").takeIf { it > 0.0 } ?: number(row, "ord_qty")
-                val amount = number(row, "tot_ccld_amt")
-                val unitPrice = if (quantity > 0.0 && amount > 0.0) amount / quantity else number(row, "avg_prvs").takeIf { it > 0.0 } ?: number(row, "ord_unpr")
+                val quantity = firstPositiveNumber(row, listOf("tot_ccld_qty", "ord_qty"))
+                val rawAmount = firstPositiveNumber(row, listOf("tot_ccld_amt", "ccld_amt", "ord_amt"))
+                val fallbackUnitPrice = firstPositiveNumber(row, listOf("avg_prvs", "ord_unpr"))
+                val unitPrice = if (quantity > 0.0 && rawAmount > 0.0) rawAmount / quantity else fallbackUnitPrice
+                val amount = resolvedTradeAmount(rawAmount, quantity, unitPrice)
                 TradeRow(
                     date = string(row, "ord_dt"),
                     market = "KOR",
@@ -637,14 +639,15 @@ class KisRepository(
                         val row = element.asJsonObject
                         val tradeDate = string(row, "trad_day")
                         val symbol = string(row, "ovrs_pdno").ifBlank { string(row, "pdno") }
-                        val quantity = number(row, "slcl_qty")
-                        val amount = number(row, "frcr_sll_amt_smtl1").takeIf { it > 0.0 } ?: number(row, "stck_sll_amt_smtl")
+                        val quantity = firstPositiveNumber(row, listOf("slcl_qty", "ccld_qty"))
+                        val amount = firstPositiveNumber(row, listOf("frcr_sll_amt_smtl1", "stck_sll_amt_smtl", "frcr_sll_amt_smtl"))
                         if (tradeDate.isBlank() || symbol.isBlank() || quantity <= 0.0 || amount <= 0.0) {
                             return@mapNotNull null
                         }
                         val realizedProfit = number(row, "ovrs_rlzt_pfls_amt")
+                        val fee = firstPositiveNumber(row, listOf("stck_sll_tlex", "smtl_fee1"))
                         val buyAmount = number(row, "stck_buy_amt_smtl").takeIf { it > 0.0 }
-                            ?: max(amount - realizedProfit - number(row, "stck_sll_tlex") - number(row, "smtl_fee1"), 0.0)
+                            ?: max(amount - realizedProfit - fee, 0.0)
                         RealizedTradeProfitRow(
                             date = tradeDate,
                             symbol = symbol,
@@ -930,12 +933,24 @@ class KisRepository(
             val row = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
             val date = string(row, "trad_dt")
             val symbol = string(row, "pdno")
-            val quantity = number(row, "ccld_qty")
-            val amount = number(row, "tr_frcr_amt2").takeIf { it > 0.0 } ?: number(row, "tr_amt")
+            val quantity = firstPositiveNumber(row, listOf("ccld_qty", "tot_ccld_qty", "ord_qty"))
+            val rawAmount = firstPositiveNumber(
+                row,
+                listOf(
+                    "tr_frcr_amt2",
+                    "tr_amt",
+                    "frcr_sll_amt_smtl",
+                    "frcr_sll_amt_smtl1",
+                    "stck_sll_amt_smtl",
+                    "frcr_buy_amt_smtl",
+                ),
+            )
+            val fallbackUnitPrice = firstPositiveNumber(row, listOf("ovrs_stck_ccld_unpr", "ft_ccld_unpr2"))
+            val unitPrice = if (quantity > 0.0 && rawAmount > 0.0) rawAmount / quantity else fallbackUnitPrice
+            val amount = resolvedTradeAmount(rawAmount, quantity, unitPrice)
             if (date.isBlank() || symbol.isBlank() || quantity <= 0.0 || amount <= 0.0) {
                 return@mapNotNull null
             }
-            val unitPrice = if (quantity > 0.0) amount / quantity else number(row, "ovrs_stck_ccld_unpr")
             val currency = string(row, "crcy_cd").ifBlank {
                 when (fallbackMarket.uppercase()) {
                     "NAS", "NYS", "AMS", "NASD", "NYSE", "AMEX" -> "USD"
@@ -968,6 +983,18 @@ class KisRepository(
                 time = "",
             )
         }
+
+    private fun sortTradeRowsNewestFirst(rows: List<TradeRow>): List<TradeRow> = rows.sortedWith(
+        compareByDescending<TradeRow> { it.date }
+            .thenByDescending { normalizeTradeTime(it.time) }
+            .thenByDescending { if (it.market == "KOR") 1 else 0 }
+            .thenBy { it.symbol },
+    )
+
+    private fun normalizeTradeTime(raw: String): String {
+        val digits = raw.filter(Char::isDigit)
+        return digits.padEnd(6, '0').take(6)
+    }
 
     private fun dedupeTradeRows(rows: List<TradeRow>): List<TradeRow> {
         val seen = mutableSetOf<String>()
@@ -1149,6 +1176,26 @@ class KisRepository(
             }
         }.getOrDefault(0.0)
 }
+
+internal fun firstPositiveNumber(json: JsonObject, keys: List<String>): Double =
+    keys.firstNotNullOfOrNull { key -> numberFromJson(json, key).takeIf { it > 0.0 } } ?: 0.0
+
+internal fun resolvedTradeAmount(amount: Double, quantity: Double, unitPrice: Double): Double = when {
+    amount > 0.0 -> amount
+    quantity > 0.0 && unitPrice > 0.0 -> quantity * unitPrice
+    else -> 0.0
+}
+
+private fun numberFromJson(json: JsonObject, key: String): Double =
+    runCatching {
+        val value = json.get(key) ?: return@runCatching 0.0
+        when {
+            value.isJsonNull -> 0.0
+            value.asJsonPrimitive.isNumber -> value.asDouble
+            value.asJsonPrimitive.isString -> value.asString.replace(",", "").trim().toDoubleOrNull() ?: 0.0
+            else -> 0.0
+        }
+    }.getOrDefault(0.0)
 
 private data class Quadruple<A, B, C, D>(
     val first: A,

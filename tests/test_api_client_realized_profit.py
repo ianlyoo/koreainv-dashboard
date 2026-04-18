@@ -73,6 +73,71 @@ class RealizedProfitApiClientTests(unittest.TestCase):
             enriched[0]["realized_return_rate"], 11.490434411998407, places=6
         )
 
+    def test_normalize_domestic_trade_rows_derives_amount_from_average_price_when_amount_zero(self):
+        rows = [
+            {
+                "ord_dt": "20260312",
+                "pdno": "005930",
+                "prdt_name": "삼성전자",
+                "sll_buy_dvsn_cd": "01",
+                "sll_buy_dvsn_cd_name": "매도",
+                "tot_ccld_qty": "0",
+                "ord_qty": "3",
+                "tot_ccld_amt": "0",
+                "avg_prvs": "71000",
+            }
+        ]
+
+        normalized = api_client._normalize_domestic_trade_rows(rows)
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["side"], "매도")
+        self.assertEqual(normalized[0]["quantity"], 3.0)
+        self.assertEqual(normalized[0]["unit_price"], 71000.0)
+        self.assertEqual(normalized[0]["amount"], 213000.0)
+
+    def test_normalize_overseas_trade_rows_uses_positive_fallback_amount_after_zero_string(self):
+        rows = [
+            {
+                "trad_dt": "20260312",
+                "pdno": "AAPL",
+                "ovrs_item_name": "Apple",
+                "sll_buy_dvsn_cd": "01",
+                "sll_buy_dvsn_name": "매도",
+                "ccld_qty": "2",
+                "tr_frcr_amt2": "0",
+                "frcr_sll_amt_smtl": "350.50",
+                "crcy_cd": "USD",
+            }
+        ]
+
+        normalized = api_client._normalize_overseas_trade_rows(rows, "NAS")
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["side"], "매도")
+        self.assertEqual(normalized[0]["amount"], 350.50)
+        self.assertEqual(normalized[0]["unit_price"], 175.25)
+        self.assertEqual(normalized[0]["sell_amount_native"], 350.50)
+
+    def test_normalize_overseas_realized_trade_rows_uses_fallback_sell_amount_after_zero_string(self):
+        rows = [
+            {
+                "trad_day": "20260312",
+                "ovrs_pdno": "AAPL",
+                "slcl_qty": "2",
+                "frcr_sll_amt_smtl1": "0",
+                "stck_sll_amt_smtl": "350.50",
+                "ovrs_rlzt_pfls_amt": "10",
+                "stck_buy_amt_smtl": "340.50",
+            }
+        ]
+
+        normalized = api_client._normalize_overseas_realized_trade_rows(rows)
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["amount"], 350.50)
+        self.assertEqual(normalized[0]["buy_amount_krw"], 340.50)
+
     @patch("app.api_client._fetch_trade_profit_rows")
     def test_summary_rate_ignores_profit_without_cost_basis(
         self, mock_fetch_trade_profit_rows
@@ -669,6 +734,75 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         )
         mock_overseas_trade_history.assert_not_called()
         mock_get_japan_trade_history_ccnl.assert_not_called()
+
+    @patch("app.api_client.get_japan_trade_history_ccnl")
+    @patch("app.api_client._fetch_trade_profit_rows")
+    @patch("app.api_client.get_overseas_trade_history")
+    @patch("app.api_client.get_domestic_trade_history")
+    def test_get_trade_history_reuses_base_rows_across_pages(
+        self,
+        mock_domestic_trade_history,
+        mock_overseas_trade_history,
+        mock_fetch_trade_profit_rows,
+        mock_get_japan_trade_history_ccnl,
+    ):
+        mock_domestic_trade_history.return_value = [
+            {
+                "date": "20260312",
+                "time": "110000",
+                "market": "KOR",
+                "symbol": "005930",
+                "ticker": "005930",
+                "side": "매수",
+                "quantity": 1.0,
+                "amount": 70000.0,
+            },
+            {
+                "date": "20260311",
+                "time": "100000",
+                "market": "KOR",
+                "symbol": "000660",
+                "ticker": "000660",
+                "side": "매수",
+                "quantity": 2.0,
+                "amount": 140000.0,
+            },
+        ]
+        mock_fetch_trade_profit_rows.return_value = {"domestic": [], "overseas": []}
+        mock_overseas_trade_history.return_value = []
+        mock_get_japan_trade_history_ccnl.return_value = []
+
+        first_page = api_client.get_trade_history(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+            side_filter="buy",
+            market_filter="domestic",
+            page=1,
+            page_size=1,
+        )
+        second_page = api_client.get_trade_history(
+            "token",
+            "key",
+            "secret",
+            "12345678",
+            "01",
+            "20260301",
+            "20260331",
+            side_filter="buy",
+            market_filter="domestic",
+            page=2,
+            page_size=1,
+        )
+
+        self.assertEqual([item["ticker"] for item in first_page.get("items") or []], ["005930"])
+        self.assertEqual([item["ticker"] for item in second_page.get("items") or []], ["000660"])
+        mock_domestic_trade_history.assert_called_once()
+        mock_fetch_trade_profit_rows.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
