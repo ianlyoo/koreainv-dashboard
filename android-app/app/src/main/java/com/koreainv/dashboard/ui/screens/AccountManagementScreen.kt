@@ -1,0 +1,397 @@
+package com.koreainv.dashboard.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.koreainv.dashboard.R
+import com.koreainv.dashboard.network.AccountCredential
+import com.koreainv.dashboard.network.AccountProfile
+import com.koreainv.dashboard.network.defaultAccountLabel
+import com.koreainv.dashboard.ui.theme.Background
+import com.koreainv.dashboard.ui.theme.SurfaceBorder
+import com.koreainv.dashboard.ui.theme.TextGold
+import com.koreainv.dashboard.ui.theme.TextHint
+import com.koreainv.dashboard.ui.theme.TextPrimary
+import com.koreainv.dashboard.ui.theme.TextSecondary
+
+internal const val ACCOUNT_NUMBER_LENGTH = 8
+internal const val ACCOUNT_PRODUCT_CODE_LENGTH = 2
+internal const val ACCOUNT_PIN_LENGTH = 4
+
+/**
+ * Editable representation of an account. App key/secret are never prefilled:
+ * a blank input means "keep the stored value", which lets users edit an
+ * account without exposing its credentials.
+ */
+internal data class ManagedAccountDraft(
+    val id: String = "",
+    val label: String = "",
+    val cano: String = "",
+    val acntPrdtCd: String = "01",
+    val appKeyInput: String = "",
+    val appSecretInput: String = "",
+    val hasStoredKey: Boolean = false,
+    val hasStoredSecret: Boolean = false,
+)
+
+internal fun accountDraftsFrom(profile: AccountProfile): List<ManagedAccountDraft> =
+    profile.accounts.map { account ->
+        ManagedAccountDraft(
+            id = account.id,
+            label = account.label,
+            cano = account.cano,
+            acntPrdtCd = account.acntPrdtCd,
+            hasStoredKey = account.appKey.isNotBlank(),
+            hasStoredSecret = account.appSecret.isNotBlank(),
+        )
+    }
+
+internal fun isAccountDraftComplete(draft: ManagedAccountDraft): Boolean {
+    val cano = draft.cano.trim()
+    val productCode = draft.acntPrdtCd.trim()
+    val keyOk = draft.appKeyInput.isNotBlank() || draft.hasStoredKey
+    val secretOk = draft.appSecretInput.isNotBlank() || draft.hasStoredSecret
+    val canoOk = cano.length == ACCOUNT_NUMBER_LENGTH && cano.all(Char::isDigit)
+    val productOk = productCode.length == ACCOUNT_PRODUCT_CODE_LENGTH && productCode.all(Char::isDigit)
+    return keyOk && secretOk && canoOk && productOk
+}
+
+internal fun accountManagementValidationError(
+    drafts: List<ManagedAccountDraft>,
+    pin: String,
+    accountsRequiredError: String,
+    pinLengthError: String,
+): String? = when {
+    pin.length != ACCOUNT_PIN_LENGTH -> pinLengthError
+    drafts.isEmpty() || drafts.any { !isAccountDraftComplete(it) } -> accountsRequiredError
+    else -> null
+}
+
+/**
+ * Resolves drafts into credentials. Stored app key/secret are kept whenever
+ * the corresponding input is left blank, and central-server fields are carried
+ * over from the original account so editing never drops them. Existing account
+ * ids are preserved; new accounts keep a blank id for the saver to assign.
+ */
+internal fun resolveAccountDrafts(
+    original: List<AccountCredential>,
+    drafts: List<ManagedAccountDraft>,
+): List<AccountCredential> = drafts.map { draft ->
+    val existing = original.firstOrNull { it.id == draft.id }
+    val cano = draft.cano.trim()
+    val acntPrdtCd = draft.acntPrdtCd.trim()
+    AccountCredential(
+        id = draft.id,
+        label = draft.label.trim().ifBlank { defaultAccountLabel(cano) },
+        appKey = draft.appKeyInput.trim().ifBlank { existing?.appKey.orEmpty() },
+        appSecret = draft.appSecretInput.trim().ifBlank { existing?.appSecret.orEmpty() },
+        cano = cano,
+        acntPrdtCd = acntPrdtCd,
+        centralServerBaseUrl = existing?.centralServerBaseUrl.orEmpty(),
+        centralServerApiToken = existing?.centralServerApiToken.orEmpty(),
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AccountManagementScreen(
+    profile: AccountProfile,
+    isSaving: Boolean,
+    errorMessage: String?,
+    onSave: (pin: String, accounts: List<AccountCredential>) -> Unit,
+    onBack: () -> Unit,
+) {
+    val accountsRequiredError = stringResource(R.string.setup_accounts_required)
+    val pinLengthError = stringResource(R.string.pin_six_digits)
+    var drafts by remember(profile) { mutableStateOf(accountDraftsFrom(profile)) }
+    var pin by remember(profile) { mutableStateOf("") }
+    var validationError by remember(profile) { mutableStateOf<String?>(null) }
+
+    fun submit() {
+        val error = accountManagementValidationError(drafts, pin, accountsRequiredError, pinLengthError)
+        if (error != null) {
+            validationError = error
+            return
+        }
+        validationError = null
+        onSave(pin, resolveAccountDrafts(profile.accounts, drafts))
+    }
+
+    Scaffold(
+        topBar = {
+            DashboardTopBar(
+                title = stringResource(R.string.account_management_title),
+                lastSynced = null,
+                navigationButton = {
+                    HeaderIconButton(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = stringResource(R.string.back),
+                        onClick = onBack,
+                    )
+                },
+            )
+        },
+        containerColor = Background,
+    ) { paddingValues ->
+        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.account_management_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                )
+                drafts.forEachIndexed { index, draft ->
+                    AccountManagementCard(
+                        index = index,
+                        draft = draft,
+                        isPrimary = index == 0,
+                        isRemovable = drafts.size > 1,
+                        isEnabled = !isSaving,
+                        onUpdate = { updated ->
+                            validationError = null
+                            drafts = drafts.mapIndexed { i, current -> if (i == index) updated else current }
+                        },
+                        onRemove = {
+                            validationError = null
+                            drafts = drafts.filterIndexed { i, _ -> i != index }
+                        },
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        validationError = null
+                        drafts = drafts + ManagedAccountDraft()
+                    },
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = stringResource(R.string.add_account), color = TextGold)
+                }
+                Divider(color = SurfaceBorder)
+                ManagementField(
+                    value = pin,
+                    onValueChange = {
+                        validationError = null
+                        if (it.length <= ACCOUNT_PIN_LENGTH) pin = it.filter(Char::isDigit)
+                    },
+                    label = stringResource(R.string.setup_pin),
+                    keyboardType = KeyboardType.NumberPassword,
+                    isSecret = true,
+                    isEnabled = !isSaving,
+                )
+                Button(
+                    onClick = ::submit,
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = TextGold),
+                ) {
+                    Text(
+                        text = stringResource(R.string.save_accounts),
+                        color = Color.Black,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+        }
+    }
+
+    val displayError = errorMessage ?: validationError
+    if (displayError != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 32.dp, vertical = 96.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Text(
+                text = displayError,
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+
+    if (isSaving) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(color = TextGold)
+        }
+    }
+}
+
+@Composable
+private fun AccountManagementCard(
+    index: Int,
+    draft: ManagedAccountDraft,
+    isPrimary: Boolean,
+    isRemovable: Boolean,
+    isEnabled: Boolean,
+    onUpdate: (ManagedAccountDraft) -> Unit,
+    onRemove: () -> Unit,
+) {
+    PremiumGlassCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = stringResource(R.string.account_section_title, index + 1),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                )
+                if (isPrimary) {
+                    Text(
+                        text = stringResource(R.string.primary_account),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextGold,
+                    )
+                }
+            }
+            if (isRemovable) {
+                TextButton(onClick = onRemove, enabled = isEnabled) {
+                    Text(text = stringResource(R.string.remove_account), color = TextSecondary)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+        Divider(color = SurfaceBorder)
+        Spacer(modifier = Modifier.height(14.dp))
+        ManagementField(
+            value = draft.label,
+            onValueChange = { onUpdate(draft.copy(label = it)) },
+            label = stringResource(R.string.account_label),
+            isEnabled = isEnabled,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        ManagementField(
+            value = draft.appKeyInput,
+            onValueChange = { onUpdate(draft.copy(appKeyInput = it)) },
+            label = stringResource(R.string.app_key),
+            isSecret = true,
+            isEnabled = isEnabled,
+            supportingText = if (draft.hasStoredKey) stringResource(R.string.keep_existing_value) else null,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        ManagementField(
+            value = draft.appSecretInput,
+            onValueChange = { onUpdate(draft.copy(appSecretInput = it)) },
+            label = stringResource(R.string.app_secret),
+            isSecret = true,
+            isEnabled = isEnabled,
+            supportingText = if (draft.hasStoredSecret) stringResource(R.string.keep_existing_value) else null,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ManagementField(
+                value = draft.cano,
+                onValueChange = {
+                    onUpdate(draft.copy(cano = it.filter(Char::isDigit).take(ACCOUNT_NUMBER_LENGTH)))
+                },
+                label = stringResource(R.string.account_number),
+                keyboardType = KeyboardType.Number,
+                isEnabled = isEnabled,
+                modifier = Modifier.weight(1f),
+            )
+            ManagementField(
+                value = draft.acntPrdtCd,
+                onValueChange = {
+                    onUpdate(draft.copy(acntPrdtCd = it.filter(Char::isDigit).take(ACCOUNT_PRODUCT_CODE_LENGTH)))
+                },
+                label = stringResource(R.string.account_product_code),
+                keyboardType = KeyboardType.Number,
+                isEnabled = isEnabled,
+                modifier = Modifier.width(112.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ManagementField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    isSecret: Boolean = false,
+    isEnabled: Boolean = true,
+    supportingText: String? = null,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = isEnabled,
+        label = { Text(label, color = TextSecondary) },
+        supportingText = supportingText?.let { { Text(it, color = TextHint) } },
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = TextGold,
+            unfocusedBorderColor = SurfaceBorder,
+            focusedTextColor = TextPrimary,
+            unfocusedTextColor = TextPrimary,
+            cursorColor = TextGold,
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            disabledContainerColor = Color.Transparent,
+            focusedLabelColor = TextGold,
+            unfocusedLabelColor = TextSecondary,
+            disabledTextColor = TextPrimary.copy(alpha = 0.6f),
+            disabledLabelColor = TextSecondary.copy(alpha = 0.7f),
+        ),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        visualTransformation = if (isSecret) PasswordVisualTransformation() else VisualTransformation.None,
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+}

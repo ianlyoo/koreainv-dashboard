@@ -69,6 +69,7 @@ import java.util.Locale
 @Composable
 fun TradeHistoryScreen(
     repository: KisRepository,
+    onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onLogoutClick: () -> Unit,
     onTradeClick: (Trade, Double, String?) -> Unit,
@@ -195,6 +196,7 @@ fun TradeHistoryScreen(
                         )
                     }
                     DashboardUtilityMenu(
+                        onManageAccounts = onManageAccountsClick,
                         onCheckUpdates = onCheckUpdatesClick,
                         onLogout = onLogoutClick,
                     )

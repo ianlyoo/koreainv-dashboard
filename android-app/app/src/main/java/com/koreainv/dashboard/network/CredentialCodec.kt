@@ -88,3 +88,58 @@ internal fun stableAccountId(cano: String, acntPrdtCd: String): String {
 
 internal fun defaultAccountLabel(cano: String): String =
     if (cano.isNotBlank()) "계좌 ${cano.takeLast(4)}" else "메인 계좌"
+
+internal fun normalizeUpdatedAccounts(
+    existing: List<AccountCredential>,
+    updates: List<AccountCredential>,
+): List<AccountCredential> {
+    require(updates.isNotEmpty()) { "ACCOUNT_PROFILE_EMPTY" }
+    val existingById = existing.associateBy { it.id }
+    val explicitIds = updates.map(AccountCredential::id).filter(String::isNotBlank)
+    require(explicitIds.distinct().size == explicitIds.size) { "ACCOUNT_ID_DUPLICATE" }
+    val usedIds = explicitIds.toMutableSet()
+    val normalized = updates.map { account ->
+        val previous = existingById[account.id]
+        val cano = account.cano.trim()
+        val productCode = account.acntPrdtCd.trim()
+        require(cano.length == 8 && cano.all(Char::isDigit)) {
+            "ACCOUNT_NUMBER_INVALID"
+        }
+        require(productCode.length == 2 && productCode.all(Char::isDigit)) {
+            "ACCOUNT_PRODUCT_CODE_INVALID"
+        }
+        val appKey = account.appKey.trim().ifBlank { previous?.appKey.orEmpty() }
+        val appSecret = account.appSecret.trim().ifBlank { previous?.appSecret.orEmpty() }
+        require(appKey.isNotBlank() && appSecret.isNotBlank()) {
+            "ACCOUNT_CREDENTIALS_REQUIRED"
+        }
+        val accountId = if (account.id.isNotBlank()) {
+            account.id
+        } else {
+            val baseId = stableAccountId(cano, productCode)
+            var candidate = baseId
+            var suffix = 2
+            while (!usedIds.add(candidate)) {
+                candidate = "$baseId-$suffix"
+                suffix += 1
+            }
+            candidate
+        }
+        account.copy(
+            id = accountId,
+            label = account.label.trim().ifBlank { defaultAccountLabel(cano) },
+            appKey = appKey,
+            appSecret = appSecret,
+            cano = cano,
+            acntPrdtCd = productCode,
+            centralServerBaseUrl = account.centralServerBaseUrl.trim()
+                .ifBlank { previous?.centralServerBaseUrl.orEmpty() },
+            centralServerApiToken = account.centralServerApiToken.trim()
+                .ifBlank { previous?.centralServerApiToken.orEmpty() },
+        )
+    }
+    require(
+        normalized.map { "${it.cano}:${it.acntPrdtCd}" }.distinct().size == normalized.size,
+    ) { "ACCOUNT_PROFILE_DUPLICATE" }
+    return normalized
+}

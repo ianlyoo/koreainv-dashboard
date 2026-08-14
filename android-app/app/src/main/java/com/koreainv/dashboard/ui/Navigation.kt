@@ -36,6 +36,7 @@ import com.koreainv.dashboard.network.KisRepository
 import com.koreainv.dashboard.network.SettingsManager
 import com.koreainv.dashboard.network.Trade
 import com.koreainv.dashboard.ui.screens.AssetStatusScreen
+import com.koreainv.dashboard.ui.screens.AccountManagementScreen
 import com.koreainv.dashboard.ui.screens.DashboardBottomTabBar
 import com.koreainv.dashboard.ui.screens.DashboardTabItem
 import com.koreainv.dashboard.ui.screens.HoldingDetailScreen
@@ -64,6 +65,7 @@ sealed class Screen(val route: String) {
     data object TradeHistory : Screen("trade_history")
     data object TradeDetail : Screen("trade_detail")
     data object AssetStatus : Screen("asset_status")
+    data object AccountManagement : Screen("account_management")
     data object HoldingDetail : Screen("holding_detail/{symbol}") {
         fun createRoute(symbol: String): String = "holding_detail/$symbol"
     }
@@ -86,6 +88,8 @@ fun KoreaInvApp() {
     var selectedTradeUsdRate by remember { mutableStateOf(1350.0) }
     var selectedTradeLastSynced by remember { mutableStateOf<String?>(null) }
     var tradeHistorySessionState by remember { mutableStateOf(TradeHistorySessionState()) }
+    var isSavingAccounts by remember { mutableStateOf(false) }
+    var accountManagementError by remember { mutableStateOf<String?>(null) }
     val repository = remember(unlockedProfile) {
         unlockedProfile?.let { profile -> KisRepository(profile.accounts, settingsManager) }
     }
@@ -251,6 +255,10 @@ fun KoreaInvApp() {
                     } else {
                         PortfolioScreen(
                             repository = activeRepository,
+                            onManageAccountsClick = {
+                                accountManagementError = null
+                                navController.navigate(Screen.AccountManagement.route)
+                            },
                             onCheckUpdatesClick = ::checkForUpdates,
                             onLogoutClick = ::logout,
                             onHoldingClick = { symbol -> navController.navigate(Screen.HoldingDetail.createRoute(symbol)) },
@@ -265,6 +273,10 @@ fun KoreaInvApp() {
                     } else {
                         AssetStatusScreen(
                             repository = activeRepository,
+                            onManageAccountsClick = {
+                                accountManagementError = null
+                                navController.navigate(Screen.AccountManagement.route)
+                            },
                             onCheckUpdatesClick = ::checkForUpdates,
                             onLogoutClick = ::logout,
                         )
@@ -278,6 +290,10 @@ fun KoreaInvApp() {
                     } else {
                         TradeHistoryScreen(
                             repository = activeRepository,
+                            onManageAccountsClick = {
+                                accountManagementError = null
+                                navController.navigate(Screen.AccountManagement.route)
+                            },
                             onCheckUpdatesClick = ::checkForUpdates,
                             onLogoutClick = ::logout,
                             sessionState = tradeHistorySessionState,
@@ -302,6 +318,46 @@ fun KoreaInvApp() {
                             usdRate = selectedTradeUsdRate,
                             lastSynced = selectedTradeLastSynced,
                             onBackClick = { navController.popBackStack() },
+                        )
+                    }
+                }
+
+                composable(Screen.AccountManagement.route) {
+                    val profile = unlockedProfile
+                    if (profile == null) {
+                        LaunchedEffect(Unit) { navController.navigate(Screen.Unlock.route) }
+                    } else {
+                        AccountManagementScreen(
+                            profile = profile,
+                            isSaving = isSavingAccounts,
+                            errorMessage = accountManagementError,
+                            onSave = { pin, accounts ->
+                                scope.launch {
+                                    isSavingAccounts = true
+                                    accountManagementError = null
+                                    runCatching {
+                                        settingsManager.updateProfile(accounts, pin)
+                                    }.onSuccess { updatedProfile ->
+                                        if (updatedProfile == null) {
+                                            accountManagementError = context.getString(R.string.invalid_pin)
+                                        } else {
+                                            unlockedProfile = updatedProfile
+                                            tradeHistorySessionState = TradeHistorySessionState()
+                                            navController.popBackStack()
+                                        }
+                                    }.onFailure { error ->
+                                        accountManagementError = when (error.message) {
+                                            "ACCOUNT_PROFILE_DUPLICATE" -> "같은 계좌번호와 상품코드를 중복 등록할 수 없습니다."
+                                            "ACCOUNT_NUMBER_INVALID" -> "계좌번호는 숫자 8자리여야 합니다."
+                                            "ACCOUNT_PRODUCT_CODE_INVALID" -> "계좌상품코드는 숫자 2자리여야 합니다."
+                                            "ACCOUNT_CREDENTIALS_REQUIRED" -> "신규 계좌의 APP KEY와 APP SECRET을 입력하세요."
+                                            else -> "계좌 설정을 저장하지 못했습니다."
+                                        }
+                                    }
+                                    isSavingAccounts = false
+                                }
+                            },
+                            onBack = { navController.popBackStack() },
                         )
                     }
                 }

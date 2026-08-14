@@ -64,4 +64,75 @@ class AccountProfileCodecTest {
         assertEquals(tokenScope(first), tokenScope(sameAsFirst))
         assertNotEquals(tokenScope(first), tokenScope(second))
     }
+
+    @Test
+    fun normalizeUpdatedAccountsKeepsIdAndStoredSecrets() {
+        val existing = listOf(
+            AccountCredential("acc-1", "기존", "key", "secret", "11111111", "01"),
+        )
+        val update = existing.single().copy(
+            label = "수정",
+            appKey = "",
+            appSecret = "",
+            cano = "22222222",
+        )
+
+        val normalized = normalizeUpdatedAccounts(existing, listOf(update)).single()
+
+        assertEquals("acc-1", normalized.id)
+        assertEquals("수정", normalized.label)
+        assertEquals("key", normalized.appKey)
+        assertEquals("secret", normalized.appSecret)
+        assertEquals("22222222", normalized.cano)
+    }
+
+    @Test
+    fun normalizeUpdatedAccountsAssignsNewId() {
+        val account = AccountCredential("", "신규", "key", "secret", "33333333", "22")
+
+        val normalized = normalizeUpdatedAccounts(emptyList(), listOf(account)).single()
+
+        assertEquals(stableAccountId("33333333", "22"), normalized.id)
+    }
+
+    @Test
+    fun normalizeUpdatedAccountsRejectsDuplicateAccountPair() {
+        val updates = listOf(
+            AccountCredential("a", "A", "key-a", "secret-a", "11111111", "01"),
+            AccountCredential("b", "B", "key-b", "secret-b", "11111111", "01"),
+        )
+
+        val error = runCatching { normalizeUpdatedAccounts(emptyList(), updates) }.exceptionOrNull()
+
+        assertEquals("ACCOUNT_PROFILE_DUPLICATE", error?.message)
+    }
+
+    @Test
+    fun normalizeUpdatedAccountsDisambiguatesNewIdAfterExistingAccountEdit() {
+        val originalCano = "11111111"
+        val originalId = stableAccountId(originalCano, "01")
+        val existing = listOf(
+            AccountCredential(originalId, "기존", "key", "secret", originalCano, "01"),
+        )
+        val updates = listOf(
+            existing.single().copy(cano = "22222222"),
+            AccountCredential("", "신규", "key-2", "secret-2", originalCano, "01"),
+        )
+
+        val normalized = normalizeUpdatedAccounts(existing, updates)
+
+        assertEquals(originalId, normalized[0].id)
+        assertEquals("$originalId-2", normalized[1].id)
+    }
+
+    @Test
+    fun normalizeUpdatedAccountsRejectsBlankProductCode() {
+        val update = AccountCredential("", "신규", "key", "secret", "11111111", "")
+
+        val error = runCatching {
+            normalizeUpdatedAccounts(emptyList(), listOf(update))
+        }.exceptionOrNull()
+
+        assertEquals("ACCOUNT_PRODUCT_CODE_INVALID", error?.message)
+    }
 }

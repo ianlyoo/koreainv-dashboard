@@ -60,6 +60,7 @@ import java.util.Locale
 @Composable
 fun AssetStatusScreen(
     repository: KisRepository,
+    onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onLogoutClick: () -> Unit,
 ) {
@@ -109,6 +110,7 @@ fun AssetStatusScreen(
                         )
                     }
                     DashboardUtilityMenu(
+                        onManageAccounts = onManageAccountsClick,
                         onCheckUpdates = onCheckUpdatesClick,
                         onLogout = onLogoutClick,
                     )

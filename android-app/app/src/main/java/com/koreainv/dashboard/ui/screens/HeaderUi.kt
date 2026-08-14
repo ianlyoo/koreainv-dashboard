@@ -567,6 +567,7 @@ fun DashboardPillButton(
 
 @Composable
 fun DashboardUtilityMenu(
+    onManageAccounts: () -> Unit,
     onCheckUpdates: () -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -586,6 +587,14 @@ fun DashboardUtilityMenu(
                 .background(SurfaceGlassLight)
                 .border(1.dp, SurfaceBorder, RoundedCornerShape(24.dp)),
         ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.account_management_title), color = TextPrimary) },
+                colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                onClick = {
+                    expanded = false
+                    onManageAccounts()
+                },
+            )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.check_for_updates), color = TextPrimary) },
                 colors = MenuDefaults.itemColors(textColor = TextPrimary),

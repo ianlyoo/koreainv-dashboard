@@ -121,6 +121,31 @@ class SettingsManager(private val context: Context) {
         return AccountProfile(accounts = accounts)
     }
 
+    /**
+     * Replaces the unlocked account profile after verifying the existing PIN.
+     * A wrong PIN returns null without writing. Existing account ids remain
+     * stable, while newly added accounts receive a deterministic id.
+     */
+    suspend fun updateProfile(
+        accounts: List<AccountCredential>,
+        pin: String,
+    ): AccountProfile? {
+        val existing = unlockProfile(pin) ?: return null
+        val normalized = normalizeUpdatedAccounts(existing.accounts, accounts)
+
+        val salt = ByteArray(SALT_LENGTH_BYTES).also(secureRandom::nextBytes)
+        val iv = ByteArray(GCM_IV_LENGTH_BYTES).also(secureRandom::nextBytes)
+        val encrypted = encryptCredentials(normalized, pin, salt, iv)
+        context.dataStore.edit { preferences ->
+            preferences[SETUP_COMPLETE_KEY] = true
+            preferences[ENCRYPTED_CREDENTIALS_KEY] = encrypted
+            preferences[CREDENTIAL_SALT_KEY] = encodeBase64(salt)
+            preferences[CREDENTIAL_IV_KEY] = encodeBase64(iv)
+            clearAuthToken(preferences)
+        }
+        return AccountProfile(accounts = normalized)
+    }
+
     suspend fun clearCredentials() {
         context.dataStore.edit { preferences ->
             preferences.remove(SETUP_COMPLETE_KEY)

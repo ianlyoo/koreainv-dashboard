@@ -72,6 +72,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun PortfolioScreen(
     repository: KisRepository,
+    onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onLogoutClick: () -> Unit,
     onHoldingClick: (String) -> Unit,
@@ -142,6 +143,7 @@ fun PortfolioScreen(
                         )
                     }
                     DashboardUtilityMenu(
+                        onManageAccounts = onManageAccountsClick,
                         onCheckUpdates = onCheckUpdatesClick,
                         onLogout = onLogoutClick,
                     )
