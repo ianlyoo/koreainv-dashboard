@@ -1,22 +1,29 @@
 package com.koreainv.dashboard.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -25,7 +32,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
-import com.koreainv.dashboard.network.AppCredentials
+import com.koreainv.dashboard.network.AccountProfile
 import com.koreainv.dashboard.network.SettingsManager
 import com.koreainv.dashboard.network.SetupInput
 import com.koreainv.dashboard.ui.theme.SurfaceBorder
@@ -34,24 +41,32 @@ import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
 
+private data class AccountDraft(
+    val label: String = "",
+    val appKey: String = "",
+    val appSecret: String = "",
+    val cano: String = "",
+    val acntPrdtCd: String = "01",
+)
+
 @Composable
 fun SetupScreen(
     settingsManager: SettingsManager,
-    onSetupSuccess: (AppCredentials) -> Unit,
+    onSetupSuccess: (AccountProfile) -> Unit,
 ) {
     val pinLengthError = stringResource(R.string.pin_six_digits)
+    val accountsRequiredError = stringResource(R.string.setup_accounts_required)
+    val pinMismatchError = stringResource(R.string.pin_mismatch)
     val scope = rememberCoroutineScope()
-    var appKey by remember { mutableStateOf("") }
-    var appSecret by remember { mutableStateOf("") }
-    var cano by remember { mutableStateOf("") }
+    var accounts by remember { mutableStateOf(listOf(AccountDraft())) }
     var pin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     fun submit() {
-        if (appKey.isBlank() || appSecret.isBlank() || cano.isBlank()) {
-            errorMessage = "필수 정보를 모두 입력하세요."
+        if (accounts.any { it.appKey.isBlank() || it.appSecret.isBlank() || it.cano.isBlank() || it.acntPrdtCd.isBlank() }) {
+            errorMessage = accountsRequiredError
             return
         }
         if (pin.length != 4 || confirmPin.length != 4) {
@@ -59,22 +74,26 @@ fun SetupScreen(
             return
         }
         if (pin != confirmPin) {
-            errorMessage = "PIN 확인값이 일치하지 않습니다."
+            errorMessage = pinMismatchError
             return
         }
         scope.launch {
             isLoading = true
-            val credentials = settingsManager.saveCredentials(
-                SetupInput(
-                    appKey = appKey,
-                    appSecret = appSecret,
-                    cano = cano,
-                    acntPrdtCd = "01",
-                    pin = pin,
-                ),
+            val profile = settingsManager.saveProfile(
+                inputs = accounts.map { account ->
+                    SetupInput(
+                        appKey = account.appKey,
+                        appSecret = account.appSecret,
+                        cano = account.cano,
+                        acntPrdtCd = account.acntPrdtCd,
+                        pin = pin,
+                        label = account.label,
+                    )
+                },
+                pin = pin,
             )
             isLoading = false
-            onSetupSuccess(credentials)
+            onSetupSuccess(profile)
         }
     }
 
@@ -84,21 +103,29 @@ fun SetupScreen(
         isLoading = isLoading,
         errorMessage = errorMessage,
     ) {
-        SetupField(value = appKey, onValueChange = { appKey = it }, label = stringResource(R.string.app_key))
-        Spacer(modifier = Modifier.height(12.dp))
-        SetupField(
-            value = appSecret,
-            onValueChange = { appSecret = it },
-            label = stringResource(R.string.app_secret),
-            isSecret = true,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        SetupField(
-            value = cano,
-            onValueChange = { cano = it },
-            label = stringResource(R.string.account_number),
-            keyboardType = KeyboardType.Number,
-        )
+        accounts.forEachIndexed { index, account ->
+            AccountSection(
+                index = index,
+                account = account,
+                isPrimary = index == 0,
+                isRemovable = accounts.size > 1,
+                onUpdate = { updated ->
+                    accounts = accounts.mapIndexed { i, current -> if (i == index) updated else current }
+                },
+                onRemove = {
+                    accounts = accounts.filterIndexed { i, _ -> i != index }
+                },
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+        OutlinedButton(
+            onClick = { accounts = accounts + AccountDraft() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(text = stringResource(R.string.add_account), color = TextGold)
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+        Divider(color = SurfaceBorder)
         Spacer(modifier = Modifier.height(12.dp))
         SetupField(
             value = pin,
@@ -127,12 +154,89 @@ fun SetupScreen(
 }
 
 @Composable
+private fun AccountSection(
+    index: Int,
+    account: AccountDraft,
+    isPrimary: Boolean,
+    isRemovable: Boolean,
+    onUpdate: (AccountDraft) -> Unit,
+    onRemove: () -> Unit,
+) {
+    PremiumGlassCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = stringResource(R.string.account_section_title, index + 1),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                )
+                if (isPrimary) {
+                    Text(
+                        text = stringResource(R.string.primary_account),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextGold,
+                    )
+                }
+            }
+            if (isRemovable) {
+                TextButton(onClick = onRemove) {
+                    Text(text = stringResource(R.string.remove_account), color = TextSecondary)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+        Divider(color = SurfaceBorder)
+        Spacer(modifier = Modifier.height(14.dp))
+        SetupField(
+            value = account.label,
+            onValueChange = { onUpdate(account.copy(label = it)) },
+            label = stringResource(R.string.account_label),
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        SetupField(
+            value = account.appKey,
+            onValueChange = { onUpdate(account.copy(appKey = it)) },
+            label = stringResource(R.string.app_key),
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        SetupField(
+            value = account.appSecret,
+            onValueChange = { onUpdate(account.copy(appSecret = it)) },
+            label = stringResource(R.string.app_secret),
+            isSecret = true,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SetupField(
+                value = account.cano,
+                onValueChange = { onUpdate(account.copy(cano = it)) },
+                label = stringResource(R.string.account_number),
+                keyboardType = KeyboardType.Number,
+                modifier = Modifier.weight(1f),
+            )
+            SetupField(
+                value = account.acntPrdtCd,
+                onValueChange = { onUpdate(account.copy(acntPrdtCd = it.filter(Char::isDigit).take(3))) },
+                label = stringResource(R.string.account_product_code),
+                keyboardType = KeyboardType.Number,
+                modifier = Modifier.width(112.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun SetupField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
     keyboardType: KeyboardType = KeyboardType.Text,
     isSecret: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     OutlinedTextField(
         value = value,
@@ -152,7 +256,7 @@ private fun SetupField(
         ),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         visualTransformation = if (isSecret) PasswordVisualTransformation() else VisualTransformation.None,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         singleLine = true,
     )
 }

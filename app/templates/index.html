@@ -84,6 +84,16 @@
                 조건주문
             </button>
 
+            <button class="btn-history btn-account" type="button" onclick="openAccountModal()">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <title>계좌 관리</title>
+                    <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                    <line x1="2" y1="10" x2="22" y2="10"></line>
+                    <line x1="6" y1="15" x2="10" y2="15"></line>
+                </svg>
+                계좌 관리
+            </button>
+
             <button class="btn-sync" type="button" onclick="syncData(true)" id="syncBtn">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round" id="syncIcon">
@@ -116,6 +126,8 @@
             </button>
         </div>
     </div>
+
+    <div id="accountSyncWarning" class="account-sync-warning" role="status" aria-live="polite" hidden></div>
 
     <!-- Main Layout -->
     <div class="layout-grid" id="layoutRoot">
@@ -230,29 +242,29 @@
                             </div>
                             <div class="summary-value cash-summary-value" id="val_total_cash">₩61,783</div>
                             <div class="summary-sub cash-summary-sub">
-                                총 보유 현금 (원화 환산)
+                                총 예수금 · 현금 (원화 환산)
                             </div>
                         </div>
                         <div class="flip-card-face flip-card-back">
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <title>통화별 보유 현금</title>
+                                    <title>통화별 예수금</title>
                                     <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
                                     <line x1="12" y1="12" x2="12" y2="12.01"></line>
                                     <path d="M6 12h.01"></path>
                                     <path d="M18 12h.01"></path>
                                 </svg>
-                                통화별 보유 현금
+                                통화별 예수금
                             </div>
                             <div class="asset-card-back-content">
                                 <div class="asset-card-row">
                                     <span class="label">KRW</span>
-                                    <span class="value" id="val_krw_cash">₩2</span>
+                                    <span class="value" id="val_krw_cash">₩0</span>
                                 </div>
                                 <div class="asset-card-row">
                                     <span class="label">USD</span>
-                                    <span class="value" id="val_usd_cash">$43.37</span>
+                                    <span class="value" id="val_usd_cash">$0.00</span>
                                 </div>
                                 <div class="asset-card-row">
                                     <span class="label">JPY</span>
@@ -571,6 +583,151 @@
                         </div>
                     </form>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Management -->
+    <div class="profit-detail-overlay account-overlay" id="accountModal" onclick="handleAccountOverlayClick(event)">
+        <div class="profit-detail-modal account-modal" onclick="handleAccountModalClick(event)">
+            <div class="profit-detail-header">
+                <div class="profit-detail-title-wrap">
+                    <h2>계좌 관리</h2>
+                    <p id="accountModalCaption">등록된 투자 계좌를 확인하고 계좌를 추가하거나 삭제할 수 있습니다.</p>
+                </div>
+                <div class="profit-detail-header-actions">
+                    <button class="profit-detail-close" type="button" onclick="closeAccountModal()" aria-label="계좌 관리 닫기">&times;</button>
+                </div>
+            </div>
+            <div class="profit-detail-body account-body">
+                <div class="profit-detail-loading" id="accountListLoading">계좌 목록을 불러오는 중입니다...</div>
+                <div class="account-list" id="accountList"></div>
+                <div class="profit-detail-empty" id="accountListEmpty">등록된 계좌가 없습니다.</div>
+                <div class="scheduled-order-notice" id="accountModalNotice" role="alert" aria-live="assertive"></div>
+
+                <div class="account-add-section">
+                    <div class="account-add-title">새 계좌 추가</div>
+                    <form class="scheduled-order-form account-add-form" id="accountAddForm" onsubmit="submitAddAccount(event)" novalidate>
+                        <div class="scheduled-order-form-grid">
+                            <label class="scheduled-order-field">
+                                <span>계좌 이름</span>
+                                <input type="text" id="new_account_label" name="label" required autocomplete="off"
+                                    placeholder="예: 주식 계좌">
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>APP KEY</span>
+                                <input type="text" id="new_account_app_key" name="app_key" required autocomplete="off"
+                                    placeholder="한국투자증권 APP KEY">
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>APP SECRET</span>
+                                <input type="password" id="new_account_app_secret" name="app_secret" required
+                                    autocomplete="new-password" placeholder="한국투자증권 APP SECRET">
+                            </label>
+                            <label class="scheduled-order-field">
+                                <span>계좌번호 (8자리 + 상품코드 2자리)</span>
+                                <input type="text" id="new_account_cano" name="cano" required autocomplete="off"
+                                    inputmode="numeric" maxlength="10" placeholder="예: 1234567801"
+                                    oninput="sanitizeAccountNumberInput(this)">
+                            </label>
+                        </div>
+                        <label class="scheduled-order-field account-field-pin">
+                            <span>간편비밀번호 (PIN)</span>
+                            <input type="password" id="new_account_pin" name="pin" class="pin-input" required
+                                autocomplete="new-password" inputmode="numeric" maxlength="6" placeholder="••••••">
+                        </label>
+                        <div class="scheduled-order-form-actions">
+                            <button type="submit" class="btn-modal btn-confirm" id="accountAddSubmitBtn">계좌 추가</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="profit-detail-overlay account-overlay" id="accountDeleteModal"
+        onclick="handleAccountDeleteOverlayClick(event)">
+        <div class="profit-detail-modal account-delete-modal" onclick="handleAccountDeleteModalClick(event)">
+            <div class="profit-detail-header">
+                <div class="profit-detail-title-wrap">
+                    <h2>계좌 삭제</h2>
+                    <p><strong id="accountDeleteLabel">계좌</strong> 계좌를 삭제합니다.</p>
+                </div>
+                <div class="profit-detail-header-actions">
+                    <button class="profit-detail-close" type="button" onclick="closeAccountDeleteModal()"
+                        aria-label="계좌 삭제 닫기">&times;</button>
+                </div>
+            </div>
+            <div class="profit-detail-body account-delete-body">
+                <p class="account-delete-desc">삭제한 계좌는 되돌릴 수 없습니다. 삭제하려면 간편비밀번호(PIN)를 입력하세요.</p>
+                <label class="scheduled-order-field">
+                    <span>간편비밀번호 (PIN)</span>
+                    <input type="password" id="accountDeletePin" class="pin-input" required
+                        autocomplete="new-password" inputmode="numeric" maxlength="6" placeholder="••••••">
+                </label>
+                <div class="scheduled-order-notice" id="accountDeleteError" role="alert" aria-live="assertive"></div>
+                <div class="scheduled-order-form-actions">
+                    <button type="button" class="btn-modal btn-cancel" onclick="closeAccountDeleteModal()">취소</button>
+                    <button type="button" class="btn-modal btn-danger" id="accountDeleteConfirmBtn"
+                        onclick="confirmDeleteAccount()">삭제</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="profit-detail-overlay account-overlay" id="accountEditModal"
+        onclick="handleAccountEditOverlayClick(event)">
+        <div class="profit-detail-modal account-edit-modal" onclick="handleAccountEditModalClick(event)">
+            <div class="profit-detail-header">
+                <div class="profit-detail-title-wrap">
+                    <h2>계좌 수정</h2>
+                    <p><strong id="accountEditLabel">계좌</strong> 정보를 수정합니다. App Key/Secret을 비워 두면 기존 키를 유지합니다.</p>
+                </div>
+                <div class="profit-detail-header-actions">
+                    <button class="profit-detail-close" type="button" onclick="closeAccountEditModal()"
+                        aria-label="계좌 수정 닫기">&times;</button>
+                </div>
+            </div>
+            <div class="profit-detail-body account-edit-body">
+                <form class="scheduled-order-form account-edit-form" id="accountEditForm"
+                    onsubmit="submitEditAccount(event)" novalidate>
+                    <div class="scheduled-order-form-grid">
+                        <label class="scheduled-order-field">
+                            <span>계좌 이름</span>
+                            <input type="text" id="edit_account_label" name="label" required autocomplete="off"
+                                placeholder="예: 주식 계좌">
+                        </label>
+                        <label class="scheduled-order-field">
+                            <span>계좌번호 (8자리 + 상품코드 2자리)</span>
+                            <input type="text" id="edit_account_cano" name="cano" autocomplete="off"
+                                inputmode="numeric" maxlength="10" placeholder="변경 시에만 새 계좌번호 입력"
+                                oninput="sanitizeAccountNumberInput(this)">
+                            <span class="account-field-hint" id="edit_account_cano_hint"></span>
+                        </label>
+                        <label class="scheduled-order-field">
+                            <span>APP KEY</span>
+                            <input type="text" id="edit_account_app_key" name="app_key" autocomplete="off"
+                                placeholder="변경 시에만 입력">
+                            <span class="account-field-hint">빈 값이면 기존 키 유지</span>
+                        </label>
+                        <label class="scheduled-order-field">
+                            <span>APP SECRET</span>
+                            <input type="password" id="edit_account_app_secret" name="app_secret"
+                                autocomplete="new-password" placeholder="변경 시에만 입력">
+                            <span class="account-field-hint">빈 값이면 기존 키 유지</span>
+                        </label>
+                    </div>
+                    <label class="scheduled-order-field account-field-pin">
+                        <span>간편비밀번호 (PIN)</span>
+                        <input type="password" id="edit_account_pin" name="pin" class="pin-input" required
+                            autocomplete="new-password" inputmode="numeric" maxlength="6" placeholder="••••••">
+                    </label>
+                    <div class="scheduled-order-notice" id="accountEditError" role="alert" aria-live="assertive"></div>
+                    <div class="scheduled-order-form-actions">
+                        <button type="button" class="btn-modal btn-cancel" onclick="closeAccountEditModal()">취소</button>
+                        <button type="submit" class="btn-modal btn-confirm" id="accountEditSaveBtn">저장</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

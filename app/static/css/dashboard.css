@@ -495,6 +495,17 @@
             margin-top: 4px;
         }
 
+        .account-sync-warning {
+            margin: 10px 18px 0;
+            padding: 9px 12px;
+            border: 1px solid rgba(251, 191, 36, 0.45);
+            border-radius: 10px;
+            background: rgba(120, 53, 15, 0.28);
+            color: #fde68a;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
         #cashSummaryCard .asset-card-row .value {
             font-size: 15px;
         }
@@ -578,6 +589,17 @@
         .btn-history:hover {
             transform: translateY(-1px);
             background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-account {
+            background: rgba(251, 191, 36, 0.08);
+            border-color: rgba(251, 191, 36, 0.2);
+            color: var(--accent-gold);
+        }
+
+        .btn-account:hover {
+            background: rgba(251, 191, 36, 0.16);
+            border-color: rgba(251, 191, 36, 0.34);
         }
 
         /* Middle: Chart Area */
@@ -1891,6 +1913,186 @@
             display: block;
         }
 
+        .account-modal {
+            width: min(720px, 100%);
+        }
+
+        .account-delete-modal {
+            width: min(480px, 100%);
+        }
+
+        .account-edit-modal {
+            width: min(560px, 100%);
+        }
+
+        .account-body {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .account-delete-body {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .account-edit-body {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .account-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .account-list-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 14px 16px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .account-list-item-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+        }
+
+        .account-list-item-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .account-list-item-title strong {
+            font-size: 15px;
+            color: #fff;
+            font-weight: 700;
+        }
+
+        .account-list-item-meta {
+            font-size: 12px;
+            color: var(--text-sub);
+        }
+
+        .badge-account-primary {
+            background: rgba(251, 191, 36, 0.16);
+            color: var(--accent-gold);
+        }
+
+        .badge-account {
+            background: rgba(45, 212, 191, 0.14);
+            color: #5eead4;
+            max-width: 170px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .account-list-item-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .btn-edit-account {
+            border: 1px solid rgba(251, 191, 36, 0.22);
+            background: rgba(251, 191, 36, 0.1);
+            color: var(--accent-gold);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .btn-edit-account:hover {
+            background: rgba(251, 191, 36, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .btn-edit-account:focus-visible {
+            outline: 2px solid rgba(251, 191, 36, 0.7);
+            outline-offset: 2px;
+        }
+
+        .btn-delete-account {
+            border: 1px solid rgba(239, 68, 68, 0.22);
+            background: rgba(239, 68, 68, 0.1);
+            color: #fca5a5;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .btn-delete-account:hover {
+            background: rgba(239, 68, 68, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .btn-delete-account:focus-visible {
+            outline: 2px solid rgba(239, 68, 68, 0.7);
+            outline-offset: 2px;
+        }
+
+        .account-add-section {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-top: 4px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .account-add-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-sub);
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+
+        .account-field-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .account-field-pin {
+            max-width: 260px;
+        }
+
+        .account-modal .pin-input,
+        .account-delete-modal .pin-input,
+        .account-edit-modal .pin-input {
+            letter-spacing: 6px;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .account-delete-desc {
+            font-size: 13px;
+            color: var(--text-sub);
+            line-height: 1.6;
+            margin: 0;
+        }
+
         .profit-detail-header {
             display: flex;
             align-items: center;
@@ -2268,6 +2470,10 @@
             .insight-header-actions {
                 flex-wrap: wrap;
                 justify-content: flex-end;
+            }
+
+            .account-list-item {
+                flex-wrap: wrap;
             }
 
         }

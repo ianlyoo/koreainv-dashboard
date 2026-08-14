@@ -13,7 +13,8 @@ import yfinance as yf
 from fastapi import APIRouter, HTTPException, Request
 
 from app import api_client
-from app.session_store import has_active_session, require_session
+from app.services.balance_aggregation import fetch_aggregated_balances
+from app.session_store import accounts_metadata, has_active_session, require_session
 
 
 router = APIRouter()
@@ -213,31 +214,11 @@ async def sync_data(request: Request, manual_refresh: bool = False):
     session = require_session(request)
     session_id = request.cookies.get("session")
     try:
-        token = await asyncio.to_thread(
-            api_client.get_access_token, session.app_key, session.app_secret
+        aggregated = await asyncio.to_thread(
+            fetch_aggregated_balances, session.accounts
         )
-        if not token:
-            raise HTTPException(
-                status_code=500, detail="Failed to get access token from API"
-            )
-
-        domestic_task = asyncio.to_thread(
-            api_client.get_domestic_balance,
-            token,
-            session.app_key,
-            session.app_secret,
-            session.cano,
-            session.acnt_prdt_cd,
-        )
-        overseas_task = asyncio.to_thread(
-            api_client.get_overseas_balance,
-            token,
-            session.app_key,
-            session.app_secret,
-            session.cano,
-            session.acnt_prdt_cd,
-        )
-        domestic, overseas = await asyncio.gather(domestic_task, overseas_task)
+        domestic = aggregated["domestic"]
+        overseas = aggregated["overseas"]
 
         quote_service = getattr(request.app.state, "us_quote_service", None)
         if quote_service is not None:
@@ -273,7 +254,13 @@ async def sync_data(request: Request, manual_refresh: bool = False):
                     ],
                 )
 
-        return {"status": "success", "domestic": domestic, "overseas": overseas}
+        return {
+            "status": "success",
+            "domestic": domestic,
+            "overseas": overseas,
+            "accounts": accounts_metadata(session.accounts),
+            "account_errors": aggregated.get("account_errors", []),
+        }
     except HTTPException:
         raise
     except Exception:

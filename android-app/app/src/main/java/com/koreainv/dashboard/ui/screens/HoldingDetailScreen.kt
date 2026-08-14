@@ -189,6 +189,9 @@ fun HoldingDetailScreen(
                         HeroTopSection {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 SurfaceBadge(label = data.market, tone = AccentTone.Info)
+                                data.accountLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                                    SurfaceBadge(label = label, tone = AccentTone.Neutral)
+                                }
                                 if (data.market == "USA" && data.quoteSession == "day_market" && data.quoteStale) {
                                     SurfaceBadge(label = "종가", tone = AccentTone.Neutral)
                                 }

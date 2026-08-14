@@ -75,6 +75,21 @@ class DashboardSmokeTests(unittest.TestCase):
         response = self.client.post("/api/reset")
         self.assertEqual(response.status_code, 401)
 
+    def test_accounts_returns_masked_registered_accounts(self):
+        active_sessions["test-session"] = SessionData(
+            "local-app-key", "local-app-secret", "12345678", "01"
+        )
+        self.client.cookies.set("session", "test-session")
+
+        response = self.client.get("/api/accounts")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "success")
+        self.assertEqual(len(payload["accounts"]), 1)
+        self.assertEqual(payload["accounts"][0]["cano_masked"], "****5678")
+        self.assertNotIn("local-app-secret", response.text)
+
     def test_templates_no_longer_depend_on_dashboard_auth_storage(self):
         login_html = Path("app/templates/login.html").read_text(encoding="utf-8")
         index_html = Path("app/templates/index.html").read_text(encoding="utf-8")

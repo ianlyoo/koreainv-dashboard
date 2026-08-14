@@ -1,5 +1,7 @@
 package com.koreainv.dashboard.network
 
+import java.security.MessageDigest
+
 data class AppCredentials(
     val appKey: String,
     val appSecret: String,
@@ -9,6 +11,39 @@ data class AppCredentials(
     val centralServerApiToken: String = "",
 )
 
+/**
+ * Account credential with stable id and display label, used for multi-account
+ * profiles. The first account in an [AccountProfile] is the primary account.
+ */
+data class AccountCredential(
+    val id: String,
+    val label: String,
+    val appKey: String,
+    val appSecret: String,
+    val cano: String,
+    val acntPrdtCd: String,
+    val centralServerBaseUrl: String = "",
+    val centralServerApiToken: String = "",
+) {
+    fun toAppCredentials(): AppCredentials = AppCredentials(
+        appKey = appKey,
+        appSecret = appSecret,
+        cano = cano,
+        acntPrdtCd = acntPrdtCd,
+        centralServerBaseUrl = centralServerBaseUrl,
+        centralServerApiToken = centralServerApiToken,
+    )
+}
+
+data class AccountProfile(
+    val accounts: List<AccountCredential>,
+) {
+    val primary: AccountCredential
+        get() = accounts.firstOrNull() ?: throw IllegalStateException("EMPTY_ACCOUNT_PROFILE")
+
+    fun toAppCredentials(): List<AppCredentials> = accounts.map { it.toAppCredentials() }
+}
+
 data class SetupInput(
     val appKey: String,
     val appSecret: String,
@@ -17,6 +52,8 @@ data class SetupInput(
     val pin: String,
     val centralServerBaseUrl: String = "",
     val centralServerApiToken: String = "",
+    val id: String = "",
+    val label: String = "",
 )
 
 sealed interface AppLockState {
@@ -41,6 +78,7 @@ data class DashboardSummary(
     val totalCashKrw: Double,
     val cashUsd: Double,
     val cashJpy: Double,
+    val orderableCashKrw: Double = 0.0,
     val usdExchangeRate: Double,
     val domesticCount: Int,
     val overseasCount: Int,
@@ -66,6 +104,8 @@ data class Holding(
     val quoteStale: Boolean = false,
     val quoteTimestamp: String? = null,
     val quoteTrKey: String? = null,
+    val accountLabel: String? = null,
+    val accountId: String? = null,
 )
 
 data class UsMarketStatus(
@@ -126,6 +166,18 @@ data class AuthToken(
     val issuedAtMillis: Long,
     val expiresAtMillis: Long,
 )
+
+/** Stable token scope derived from credential identity so tokens never leak across accounts. */
+internal fun tokenScope(credentials: AppCredentials): String {
+    val raw = listOf(
+        credentials.appKey.trim(),
+        credentials.appSecret.trim(),
+        credentials.cano.trim(),
+        credentials.acntPrdtCd.trim(),
+    ).joinToString("::")
+    val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+    return digest.joinToString("") { "%02x".format(it) }
+}
 
 data class ScheduledDomesticOrderRequest(
     val executeAt: String,

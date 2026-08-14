@@ -31,7 +31,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.koreainv.dashboard.R
-import com.koreainv.dashboard.network.AppCredentials
+import com.koreainv.dashboard.network.AccountProfile
 import com.koreainv.dashboard.network.KisRepository
 import com.koreainv.dashboard.network.SettingsManager
 import com.koreainv.dashboard.network.Trade
@@ -76,7 +76,7 @@ fun KoreaInvApp() {
     val context = LocalContext.current
     val settingsManager = remember { SettingsManager(context) }
     val updateManager = remember { AppUpdateManager() }
-    var unlockedCredentials by remember { mutableStateOf<AppCredentials?>(null) }
+    var unlockedProfile by remember { mutableStateOf<AccountProfile?>(null) }
     var availableUpdate by remember { mutableStateOf<ReleaseInfo?>(null) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -86,7 +86,9 @@ fun KoreaInvApp() {
     var selectedTradeUsdRate by remember { mutableStateOf(1350.0) }
     var selectedTradeLastSynced by remember { mutableStateOf<String?>(null) }
     var tradeHistorySessionState by remember { mutableStateOf(TradeHistorySessionState()) }
-    val repository = remember(unlockedCredentials) { unlockedCredentials?.let { KisRepository(it, settingsManager) } }
+    val repository = remember(unlockedProfile) {
+        unlockedProfile?.let { profile -> KisRepository(profile.accounts, settingsManager) }
+    }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val primaryTabs = listOf(
@@ -102,8 +104,8 @@ fun KoreaInvApp() {
         }
     }
 
-    LaunchedEffect(unlockedCredentials) {
-        if (unlockedCredentials == null || hasAutoCheckedUpdate) return@LaunchedEffect
+    LaunchedEffect(unlockedProfile) {
+        if (unlockedProfile == null || hasAutoCheckedUpdate) return@LaunchedEffect
 
         navController.currentBackStackEntryFlow
             .map { it.destination.route in primaryRoutes }
@@ -145,7 +147,7 @@ fun KoreaInvApp() {
 
     fun logout() {
         scope.launch {
-            unlockedCredentials = null
+            unlockedProfile = null
             hasAutoCheckedUpdate = false
             selectedTrade = null
             selectedTradeUsdRate = 1350.0
@@ -201,8 +203,8 @@ fun KoreaInvApp() {
                 composable(Screen.Setup.route) {
                     SetupScreen(
                         settingsManager = settingsManager,
-                        onSetupSuccess = { credentials ->
-                            unlockedCredentials = credentials
+                        onSetupSuccess = { profile ->
+                            unlockedProfile = profile
                             hasAutoCheckedUpdate = false
                             navController.navigate(Screen.Portfolio.route) {
                                 popUpTo(Screen.Setup.route) { inclusive = true }
@@ -221,9 +223,9 @@ fun KoreaInvApp() {
                         onUnlock = { pin ->
                             scope.launch {
                                 isUnlocking = true
-                                val credentials = settingsManager.unlock(pin)
-                                if (credentials != null) {
-                                    unlockedCredentials = credentials
+                                val profile = settingsManager.unlockProfile(pin)
+                                if (profile != null) {
+                                    unlockedProfile = profile
                                     hasAutoCheckedUpdate = false
                                     errorMessage = null
                                     navController.navigate(Screen.Portfolio.route) {
@@ -323,7 +325,7 @@ fun KoreaInvApp() {
             }
         }
 
-        if (unlockedCredentials != null && currentRoute in primaryRoutes) {
+        if (unlockedProfile != null && currentRoute in primaryRoutes) {
             Box(modifier = Modifier.align(Alignment.BottomCenter)) {
                 DashboardBottomTabBar(
                     items = primaryTabs,

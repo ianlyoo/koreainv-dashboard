@@ -240,6 +240,10 @@ fun CashBalanceCard(data: DashboardResponse) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)
                     CurrencyBreakdownRow(label = "KRW", value = "₩${formatter.format(data.summary.cashKrw)}")
+                    CurrencyBreakdownRow(
+                        label = stringResource(R.string.orderable_cash),
+                        value = "₩${formatter.format(data.summary.orderableCashKrw)}",
+                    )
                     CurrencyBreakdownRow(label = "USD", value = "$${formatter.format(data.summary.cashUsd)}")
                     CurrencyBreakdownRow(label = "JPY", value = "¥${formatter.format(data.summary.cashJpy)}")
                 }

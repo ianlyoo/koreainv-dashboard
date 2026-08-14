@@ -8,8 +8,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app import api_client, auth
-from app.routes.auth_pages import decrypt_credentials_for_session
+from app.routes.auth_pages import (
+    decrypt_accounts_for_session,
+    decrypt_credentials_for_session,
+)
+from app.services.balance_aggregation import fetch_aggregated_balances
 from app.session_store import (
+    AccountCredential,
     SessionData,
     create_session,
     destroy_session,
@@ -168,6 +173,11 @@ def _build_mobile_holdings(
                     "currency": currency,
                 }
             )
+            holding = holdings[-1]
+            if item.get("account_id") is not None:
+                holding["account_id"] = item.get("account_id")
+            if item.get("account_label") is not None:
+                holding["account_label"] = item.get("account_label")
 
     _append_items(domestic.get("items", []), "KOR", "KRW")
     _append_items(overseas.get("us_items", []), "USA", "USD")
@@ -319,12 +329,21 @@ async def mobile_login(payload: MobileLoginRequest):
             detail="Failed to decrypt credentials. Invalid PIN or corrupted settings.",
         )
 
+    accounts = decrypt_accounts_for_session(settings, payload.pin)
+    if not accounts:
+        accounts = [
+            AccountCredential.make(
+                app_key, app_secret, cano, acnt_prdt_cd or "01"
+            )
+        ]
+    primary = accounts[0]
     session_id = create_session(
         SessionData(
-            app_key=app_key,
-            app_secret=app_secret,
-            cano=cano,
-            acnt_prdt_cd=acnt_prdt_cd or "01",
+            app_key=primary.app_key,
+            app_secret=primary.app_secret,
+            cano=primary.cano,
+            acnt_prdt_cd=primary.acnt_prdt_cd,
+            accounts=accounts,
         )
     )
     response = JSONResponse({"status": "success", "message": "Login successful"})
@@ -336,60 +355,30 @@ async def mobile_login(payload: MobileLoginRequest):
 async def get_mobile_portfolio_summary(request: Request):
     session = require_session(request)
 
-    token = await asyncio.to_thread(
-        api_client.get_access_token, session.app_key, session.app_secret
+    aggregated = await asyncio.to_thread(
+        fetch_aggregated_balances, session.accounts
     )
-    if not token:
-        raise HTTPException(status_code=500, detail="Failed to get access token from API")
-
-    domestic_task = asyncio.to_thread(
-        api_client.get_domestic_balance,
-        token,
-        session.app_key,
-        session.app_secret,
-        session.cano,
-        session.acnt_prdt_cd,
+    result = _build_mobile_portfolio_summary(
+        aggregated["domestic"], aggregated["overseas"]
     )
-    overseas_task = asyncio.to_thread(
-        api_client.get_overseas_balance,
-        token,
-        session.app_key,
-        session.app_secret,
-        session.cano,
-        session.acnt_prdt_cd,
-    )
-    domestic, overseas = await asyncio.gather(domestic_task, overseas_task)
-    return _build_mobile_portfolio_summary(domestic, overseas)
+    account_errors = aggregated.get("account_errors", [])
+    if account_errors:
+        result["account_errors"] = account_errors
+    return result
 
 
 @router.get("/api/mobile/dashboard")
 async def get_mobile_dashboard(request: Request):
     session = require_session(request)
 
-    token = await asyncio.to_thread(
-        api_client.get_access_token, session.app_key, session.app_secret
+    aggregated = await asyncio.to_thread(
+        fetch_aggregated_balances, session.accounts
     )
-    if not token:
-        raise HTTPException(status_code=500, detail="Failed to get access token from API")
-
-    domestic_task = asyncio.to_thread(
-        api_client.get_domestic_balance,
-        token,
-        session.app_key,
-        session.app_secret,
-        session.cano,
-        session.acnt_prdt_cd,
-    )
-    overseas_task = asyncio.to_thread(
-        api_client.get_overseas_balance,
-        token,
-        session.app_key,
-        session.app_secret,
-        session.cano,
-        session.acnt_prdt_cd,
-    )
-    domestic, overseas = await asyncio.gather(domestic_task, overseas_task)
-    return _build_mobile_dashboard(domestic, overseas)
+    result = _build_mobile_dashboard(aggregated["domestic"], aggregated["overseas"])
+    account_errors = aggregated.get("account_errors", [])
+    if account_errors:
+        result["account_errors"] = account_errors
+    return result
 
 
 @router.get("/api/mobile/trade-history")

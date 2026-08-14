@@ -198,6 +198,187 @@ function activateView(viewId) {
     }
 }
 
+let accountCards = [{ label: '', appKey: '', appSecret: '', account: '' }];
+
+function escapeAttributeValue(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function accountCardTemplate(card, index) {
+    const isLast = accountCards.length <= 1;
+    const removeAttrs = isLast
+        ? 'disabled aria-disabled="true"'
+        : '';
+    return `
+        <div class="account-card" role="listitem" data-account-index="${index}">
+            <div class="account-card-header">
+                <span class="account-card-title">계좌 ${index + 1}</span>
+                <button type="button" class="btn-remove-account" ${removeAttrs}
+                    onclick="removeAccountCard(${index})" aria-label="계좌 ${index + 1} 삭제" title="계좌 삭제">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="form-group">
+                <label for="account_${index}_label">계좌 이름</label>
+                <input type="text" id="account_${index}_label" name="label" required autocomplete="off"
+                    placeholder="예: 주식 계좌" value="${escapeAttributeValue(card.label)}">
+            </div>
+            <div class="form-group">
+                <label for="account_${index}_app_key">APP KEY</label>
+                <input type="text" id="account_${index}_app_key" name="app_key" required autocomplete="off"
+                    placeholder="한국투자증권 APP KEY" value="${escapeAttributeValue(card.appKey)}">
+            </div>
+            <div class="form-group">
+                <label for="account_${index}_app_secret">APP SECRET</label>
+                <input type="password" id="account_${index}_app_secret" name="app_secret" required
+                    autocomplete="new-password" placeholder="한국투자증권 APP SECRET" value="${escapeAttributeValue(card.appSecret)}">
+            </div>
+            <div class="form-group">
+                <label for="account_${index}_cano">계좌번호 (8자리 + 상품코드 2자리)</label>
+                <input type="text" id="account_${index}_cano" name="cano" required autocomplete="off"
+                    inputmode="numeric" maxlength="10" placeholder="예: 1234567801"
+                    oninput="sanitizeAccountInput(this)" value="${escapeAttributeValue(card.account)}">
+            </div>
+        </div>
+    `;
+}
+
+function renderAccountCards() {
+    const container = document.getElementById('account-cards');
+    if (!container) return;
+    container.innerHTML = accountCards.map(accountCardTemplate).join('');
+}
+
+function syncAccountCardState() {
+    const container = document.getElementById('account-cards');
+    if (!container) return;
+    const cards = container.querySelectorAll('.account-card');
+    cards.forEach((card, index) => {
+        const read = (id) => {
+            const el = document.getElementById(`account_${index}_${id}`);
+            return el ? el.value : '';
+        };
+        if (accountCards[index]) {
+            accountCards[index] = {
+                label: read('label'),
+                appKey: read('app_key'),
+                appSecret: read('app_secret'),
+                account: read('cano')
+            };
+        }
+    });
+}
+
+function addAccountCard() {
+    syncAccountCardState();
+    accountCards.push({ label: '', appKey: '', appSecret: '', account: '' });
+    renderAccountCards();
+    const newIndex = accountCards.length - 1;
+    const firstInput = document.getElementById(`account_${newIndex}_label`);
+    if (firstInput) firstInput.focus();
+}
+
+function removeAccountCard(index) {
+    if (accountCards.length <= 1) return;
+    syncAccountCardState();
+    accountCards.splice(index, 1);
+    renderAccountCards();
+    const addBtn = document.getElementById('add-account-btn');
+    if (addBtn) addBtn.focus();
+}
+
+function sanitizeAccountInput(input) {
+    const digits = input.value.replace(/\D/g, '').slice(0, 10);
+    if (input.value !== digits) {
+        input.value = digits;
+    }
+}
+
+function parseAccountNumber(raw) {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (digits.length !== 8 && digits.length !== 10) return null;
+    return {
+        cano: digits.slice(0, 8),
+        acnt_prdt_cd: digits.length === 10 ? digits.slice(8) : '01'
+    };
+}
+
+function validateSetupForm() {
+    const errors = [];
+    const accounts = [];
+    const invalidFields = [];
+
+    accountCards.forEach((card, index) => {
+        const label = card.label.trim();
+        const appKey = card.appKey.trim();
+        const appSecret = card.appSecret;
+        const parsed = parseAccountNumber(card.account);
+
+        if (!label) {
+            errors.push(`계좌 ${index + 1}: 계좌 이름을 입력하세요.`);
+            invalidFields.push(`account_${index}_label`);
+        }
+        if (!appKey) {
+            errors.push(`계좌 ${index + 1}: APP KEY를 입력하세요.`);
+            invalidFields.push(`account_${index}_app_key`);
+        }
+        if (!appSecret) {
+            errors.push(`계좌 ${index + 1}: APP SECRET을 입력하세요.`);
+            invalidFields.push(`account_${index}_app_secret`);
+        }
+        if (!parsed) {
+            errors.push(`계좌 ${index + 1}: 계좌번호는 숫자 8자리 또는 10자리로 입력하세요.`);
+            invalidFields.push(`account_${index}_cano`);
+        } else {
+            accounts.push({
+                label,
+                app_key: appKey,
+                app_secret: appSecret,
+                cano: parsed.cano,
+                acnt_prdt_cd: parsed.acnt_prdt_cd
+            });
+        }
+    });
+
+    const pin = document.getElementById('setup_pin').value;
+    if (!/^\d{4,6}$/.test(pin)) {
+        errors.push('PIN은 4~6자리 숫자로 입력하세요.');
+        invalidFields.push('setup_pin');
+    }
+
+    const errDiv = document.getElementById('setup-error');
+    document.querySelectorAll('#setup-form .invalid').forEach((el) => {
+        el.classList.remove('invalid');
+        el.removeAttribute('aria-invalid');
+    });
+    invalidFields.forEach((fieldId) => {
+        const el = document.getElementById(fieldId);
+        if (el) {
+            el.classList.add('invalid');
+            el.setAttribute('aria-invalid', 'true');
+        }
+    });
+
+    if (errors.length > 0) {
+        errDiv.textContent = errors.join(' ');
+        errDiv.style.display = 'block';
+        const firstInvalid = document.getElementById(invalidFields[0]);
+        if (firstInvalid) firstInvalid.focus();
+        return null;
+    }
+
+    errDiv.style.display = 'none';
+    return accounts;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let starfield = null;
@@ -214,6 +395,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (data.authenticated) {
             window.location.href = '/';
             return;
+        }
+
+        if (!data.setup_complete) {
+            renderAccountCards();
         }
 
         activateView(data.setup_complete ? 'login-view' : 'setup-view');
@@ -237,9 +422,10 @@ async function handleSetup(e) {
     const spinner = btn.querySelector('.spinner');
     const errDiv = document.getElementById('setup-error');
 
-    const rawKey = document.getElementById('app_key').value.trim();
-    const rawSecret = document.getElementById('app_secret').value.trim();
-    const rawCano = document.getElementById('cano').value.trim();
+    syncAccountCardState();
+    const accounts = validateSetupForm();
+    if (!accounts) return;
+
     const rawPin = document.getElementById('setup_pin').value;
 
     btn.disabled = true;
@@ -248,10 +434,7 @@ async function handleSetup(e) {
     errDiv.style.display = 'none';
 
     const formData = new FormData();
-    formData.append('app_key', rawKey);
-    formData.append('app_secret', rawSecret);
-    formData.append('cano', rawCano.substring(0, 8));
-    formData.append('acnt_prdt_cd', rawCano.substring(8) || '01');
+    formData.append('accounts_json', JSON.stringify(accounts));
     formData.append('pin', rawPin);
 
     try {

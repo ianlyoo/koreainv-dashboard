@@ -341,6 +341,9 @@ fun HoldingItem(
                     market = holding.market,
                     modifier = Modifier.offset(x = (-6).dp),
                 )
+                holding.accountLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                    SurfaceBadge(label = label, tone = AccentTone.Neutral)
+                }
                 Text(
                     text = holding.name,
                     modifier = Modifier.weight(1f),

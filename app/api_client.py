@@ -458,9 +458,10 @@ def _pick_foreign_sell_reuse_from_output2(rows: list, currency_code: str):
 
 
 def _pick_foreign_balance_from_output2(rows: list, currency_code: str):
+    # Exchange-rate and balance scan. Strict currency matching only: a row that
+    # belongs to another currency must never stand in for the requested one.
     candidates = [
         "frcr_dncl_amt_2",
-        "tot_frcr_cblc_smtl",
         "frcr_use_psbl_amt",
         "frcr_drwg_psbl_amt_1",
         "frcr_drwg_psbl_amt1",
@@ -485,13 +486,46 @@ def _pick_foreign_balance_from_output2(rows: list, currency_code: str):
         if exrt <= 0:
             exrt = _to_float(row.get("bass_exrt") or row.get("frst_bltn_exrt") or 0.0)
 
-    if not matched_rows and target_currency:
-        for idx, row in enumerate(rows or []):
-            if not isinstance(row, dict):
+    if not matched_rows:
+        return 0.0, exrt, "none"
+
+    for key in candidates:
+        matches = []
+        for idx, row in matched_rows:
+            raw, actual = _get_ci(row, key)
+            if actual is None:
                 continue
-            matched_rows.append((idx, row))
-            if exrt <= 0:
-                exrt = _to_float(row.get("bass_exrt") or row.get("frst_bltn_exrt") or 0.0)
+            value = _to_float(raw)
+            if value > 0:
+                matches.append((value, f"output2[{idx}].{actual}"))
+        if matches:
+            matches.sort(key=lambda x: x[0], reverse=True)
+            return matches[0][0], exrt, matches[0][1]
+
+    return 0.0, exrt, "none"
+
+
+def _pick_foreign_deposit_from_output2(rows: list, currency_code: str):
+    # Actual foreign-currency deposit (예수금) only. Never uses the blended
+    # "tot_frcr_cblc_smtl" total, which mixes currencies and over-reports cash.
+    candidates = [
+        "frcr_dncl_amt_2",
+        "frcr_dncl_amt_1",
+        "ccld_qty_smtl1",
+    ]
+    exrt = 0.0
+    matched_rows = []
+    target_currency = str(currency_code or "").strip().upper()
+
+    for idx, row in enumerate(rows or []):
+        if not isinstance(row, dict):
+            continue
+        crcy = str(row.get("crcy_cd", "")).strip().upper()
+        if crcy != target_currency:
+            continue
+        matched_rows.append((idx, row))
+        if exrt <= 0:
+            exrt = _to_float(row.get("bass_exrt") or row.get("frst_bltn_exrt") or 0.0)
 
     if not matched_rows:
         return 0.0, exrt, "none"
@@ -513,7 +547,7 @@ def _pick_foreign_balance_from_output2(rows: list, currency_code: str):
 
 
 def _pick_foreign_cash_balance_from_output2(rows: list, currency_code: str):
-    return _pick_foreign_balance_from_output2(rows, currency_code)
+    return _pick_foreign_deposit_from_output2(rows, currency_code)
 
 
 def _normalize_balance_rows(rows):
@@ -524,7 +558,7 @@ def _normalize_balance_rows(rows):
     return []
 
 
-def _pick_foreign_cash_balance_from_output1_cash_row(rows, currency_code: str):
+def _pick_foreign_deposit_from_output1_cash_row(rows, currency_code: str):
     target_currency = str(currency_code or "").strip().upper()
     if not target_currency:
         return 0.0, 0.0, "none"
@@ -532,9 +566,7 @@ def _pick_foreign_cash_balance_from_output1_cash_row(rows, currency_code: str):
     candidates = [
         "ccld_qty_smtl1",
         "frcr_dncl_amt_2",
-        "tot_frcr_cblc_smtl",
-        "frcr_use_psbl_amt",
-        "frcr_drwg_psbl_amt_1",
+        "frcr_dncl_amt_1",
     ]
 
     for idx, row in enumerate(_normalize_balance_rows(rows)):
@@ -554,16 +586,20 @@ def _pick_foreign_cash_balance_from_output1_cash_row(rows, currency_code: str):
     return 0.0, 0.0, "none"
 
 
+# Backward-compatible internal name retained for existing integrations/tests.
+_pick_foreign_cash_balance_from_output1_cash_row = (
+    _pick_foreign_deposit_from_output1_cash_row
+)
+
+
 def _pick_foreign_cash_balance_from_output3(summary_row: dict):
     if not isinstance(summary_row, dict):
         return 0.0, "none"
 
     candidates = [
         "frcr_dncl_amt_2",
-        "tot_frcr_cblc_smtl",
-        "frcr_use_psbl_amt",
-        "ord_psbl_frcr_amt",
-        "frcr_drwg_psbl_amt_1",
+        "frcr_dncl_amt_1",
+        "ccld_qty_smtl1",
     ]
     for key in candidates:
         raw, actual = _get_ci(summary_row, key)
@@ -1245,7 +1281,10 @@ def get_domestic_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 "total_purchase_amt": _to_int(summary.get('pchs_amt_smtl_amt', 0)),
                 "total_eval_amt": _to_int(summary.get('evlu_amt_smtl_amt', 0)),
                 "total_profit_loss": _to_int(summary.get('evlu_pfls_smtl_amt', 0)),
-                "cash_balance": orderable_cash
+                # Actual deposit (예수금총금액) from inquire-balance output2.
+                "cash_balance": _to_int(summary.get("dnca_tot_amt", 0)),
+                # Orderable KRW amount from the dedicated TTTC8908R inquiry.
+                "orderable_cash": orderable_cash,
             }
         output1_raw = data.get("output1") or []
         output1_rows: list[dict[str, object]] = (
@@ -1395,6 +1434,12 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                         [row for row in output1_page_raw if isinstance(row, dict)]
                     )
                     for item in output1_page:
+                        if str(item.get("pdno", "")).strip().upper() == "USD":
+                            # Pseudo-currency cash row, not a holding.
+                            continue
+                        holding_qty = _to_float(item.get("ccld_qty_smtl1", "0"))
+                        if holding_qty <= 0:
+                            continue
                         avg_unpr3 = _to_float(item.get("avg_unpr3", "0"))
                         ovrs_now_pric1 = _to_float(item.get("ovrs_now_pric1", "0"))
                         bass_exrt = _to_float(item.get("bass_exrt", "1"))
@@ -1405,7 +1450,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                             "name": item.get("prdt_name", "?뚯닔?놁쓬"),
                             "ticker": item.get("pdno", ""),
                             "excg_cd": item.get("ovrs_excg_cd", "NASD"),
-                            "qty": _to_float(item.get("ccld_qty_smtl1", "0")),
+                            "qty": holding_qty,
                             "profit_rt": ((ovrs_now_pric1 - avg_unpr3) / avg_unpr3 * 100) if avg_unpr3 > 0 else 0.0,
                             "avg_price": avg_unpr3,
                             "now_price": ovrs_now_pric1,
@@ -1415,36 +1460,39 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 out3_raw = data.get("output3") or {}
                 if isinstance(out3_raw, dict) and not us_result["us_summary"]:
                     out3: dict[str, object] = out3_raw if isinstance(out3_raw, dict) else {}
-                    usd_cash = 0.0
+                    usd_deposit = 0.0
                     usd_exrt = 0.0
-                    usd_cash_key = "none"
+                    usd_deposit_key = "none"
                     output1_rows = _normalize_balance_rows(data.get("output1"))
-                    usd_cash, usd_cash_key = _get_overseas_orderable_cash("USD")
+                    usd_orderable, usd_orderable_key = _get_overseas_orderable_cash("USD")
                     output2_page_raw = data.get("output2") or []
                     if isinstance(output2_page_raw, list):
                         output2_page = output2_page_raw
                         _, usd_exrt, _ = _pick_foreign_balance_from_output2(output2_page, "USD")
-                    if usd_cash <= 0 and output1_rows:
-                        usd_cash, usd_exrt, usd_cash_key = _pick_foreign_cash_balance_from_output1_cash_row(output1_rows, "USD")
-                    if usd_cash <= 0 and isinstance(output2_page_raw, list):
+                    if output1_rows:
+                        usd_deposit, usd_exrt, usd_deposit_key = _pick_foreign_deposit_from_output1_cash_row(output1_rows, "USD")
+                    if usd_deposit <= 0 and isinstance(output2_page_raw, list):
                         output2_page = output2_page_raw
-                        usd_cash, usd_exrt, usd_cash_key = _pick_foreign_cash_balance_from_output2(output2_page, "USD")
-                    if usd_cash <= 0:
+                        usd_deposit, usd_exrt, usd_deposit_key = _pick_foreign_deposit_from_output2(output2_page, "USD")
+                    if usd_deposit <= 0:
                         fallback_cash, fallback_key = _pick_foreign_cash_balance_from_output3(out3)
                         if fallback_cash > 0:
-                            usd_cash = fallback_cash
-                            usd_cash_key = fallback_key
+                            usd_deposit = fallback_cash
+                            usd_deposit_key = fallback_key
 
                     logger.info(
-                        "Overseas USD cash selected: cash_key=%s, value=%s",
-                        usd_cash_key,
-                        usd_cash,
+                        "Overseas USD deposit selected: deposit_key=%s, value=%s, orderable_key=%s, orderable=%s",
+                        usd_deposit_key,
+                        usd_deposit,
+                        usd_orderable_key,
+                        usd_orderable,
                     )
 
                     us_result["us_summary"] = {
                         "krw_purchase_amt": _to_float(out3.get("pchs_amt_smtl_amt", 0)),
                         "krw_eval_amt": _to_float(out3.get("evlu_amt_smtl_amt", 0)),
-                        "usd_cash_balance": usd_cash,
+                        "usd_cash_balance": usd_deposit,
+                        "usd_orderable_cash": usd_orderable,
                         "usd_exrt": usd_exrt,
                     }
 
@@ -1466,7 +1514,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
             "ACNT_PRDT_CD": acnt_prdt_cd,
             "WCRC_FRCR_DVSN_CD": "02",
             "NATN_CD": "392",
-            "TR_MKET_CD": "00",
+            "TR_MKET_CD": "01",
             "INQR_DVSN_CD": "00",
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
@@ -1492,9 +1540,9 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
             if data.get("rt_cd") != "0":
                 return jp_result
 
-            jp_cash = 0.0
+            jp_deposit = 0.0
             jp_exrt = 0.0
-            jp_cash_key = "none"
+            jp_deposit_key = "none"
 
             output1_rows = _normalize_balance_rows(data.get("output1"))
             output2_rows = _normalize_balance_rows(data.get("output2"))
@@ -1503,38 +1551,43 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                 output3_row_raw if isinstance(output3_row_raw, dict) else {}
             )
 
-            jp_cash, jp_cash_key = _get_overseas_orderable_cash("JPY")
+            jp_orderable, jp_orderable_key = _get_overseas_orderable_cash("JPY")
 
-            if output1_rows and jp_cash <= 0:
-                jp_cash, jp_exrt, jp_cash_key = _pick_foreign_cash_balance_from_output1_cash_row(
+            if output1_rows:
+                jp_deposit, jp_exrt, jp_deposit_key = _pick_foreign_deposit_from_output1_cash_row(
                     output1_rows, "JPY"
                 )
 
-            if output2_rows:
-                if jp_exrt <= 0:
-                    _, jp_exrt, _ = _pick_foreign_balance_from_output2(output2_rows, "JPY")
-                if jp_cash <= 0:
-                    jp_cash, jp_exrt, jp_cash_key = _pick_foreign_cash_balance_from_output2(output2_rows, "JPY")
+            if output2_rows and jp_deposit <= 0:
+                jp_deposit, jp_exrt, jp_deposit_key = _pick_foreign_deposit_from_output2(output2_rows, "JPY")
+            if output2_rows and jp_exrt <= 0:
+                _, jp_exrt, _ = _pick_foreign_balance_from_output2(output2_rows, "JPY")
 
-            if jp_cash <= 0 and output3_row:
+            if jp_deposit <= 0 and output3_row:
                 fallback_cash, fallback_key = _pick_foreign_cash_balance_from_output3(output3_row)
                 if fallback_cash > 0:
-                    jp_cash = fallback_cash
-                    jp_cash_key = fallback_key
+                    jp_deposit = fallback_cash
+                    jp_deposit_key = fallback_key
 
             logger.info(
-                "Overseas JPY cash selected: cash_key=%s, value=%s",
-                jp_cash_key,
-                jp_cash,
+                "Overseas JPY deposit selected: deposit_key=%s, value=%s, orderable_key=%s, orderable=%s",
+                jp_deposit_key,
+                jp_deposit,
+                jp_orderable_key,
+                jp_orderable,
             )
 
             jp_result["jp_summary"] = {
-                "jpy_cash_balance": jp_cash,
+                "jpy_cash_balance": jp_deposit,
+                "jpy_orderable_cash": jp_orderable,
                 "jpy_exrt": jp_exrt,
             }
 
             for item in output1_rows:
                 if str(item.get("pdno", "")).strip().upper() == "JPY":
+                    continue
+                holding_qty = _to_float(item.get("ccld_qty_smtl1", "0"))
+                if holding_qty <= 0:
                     continue
                 avg_unpr3 = _to_float(item.get("avg_unpr3", "0"))
                 ovrs_now_pric1 = _to_float(item.get("ovrs_now_pric1", "0"))
@@ -1546,7 +1599,7 @@ def get_overseas_balance(token, app_key, app_secret, cano, acnt_prdt_cd):
                     "name": item.get("prdt_name", "?뚯닔?놁쓬"),
                     "ticker": item.get("pdno", ""),
                     "excg_cd": item.get("ovrs_excg_cd", "TKSE"),
-                    "qty": _to_float(item.get("ccld_qty_smtl1", "0")),
+                    "qty": holding_qty,
                     "profit_rt": ((ovrs_now_pric1 - avg_unpr3) / avg_unpr3 * 100) if avg_unpr3 > 0 else 0.0,
                     "avg_price": avg_unpr3,
                     "now_price": ovrs_now_pric1,

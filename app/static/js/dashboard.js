@@ -551,6 +551,7 @@
             let dp = 0;
             const tickerText = String(item.ticker || '');
             const nameText = String(item.name || '-');
+            const accountLabel = String(item.account_label || '').trim();
             const normalizedTicker = normalizeTicker(tickerText);
             const safeTicker = escapeHtml(tickerText);
             const safeName = escapeHtml(nameText);
@@ -613,6 +614,7 @@
                             <div class="ticker-meta-row">
                                 ${badgeHtml}
                                 ${quoteBadgeHtml}
+                                ${accountLabel ? `<span class="badge badge-account" title="출처 계좌: ${escapeAttributeValue(accountLabel)}">${escapeHtml(accountLabel)}</span>` : ''}
                                 ${tickerText ? `<span class="ticker-symbol">${safeTicker}</span>` : ''}
                             </div>
                         </div>
@@ -1022,6 +1024,18 @@
                 const data = await res.json();
 
                 if (data.status === "success") {
+                    const accountSyncWarning = document.getElementById('accountSyncWarning');
+                    const accountErrors = Array.isArray(data.account_errors) ? data.account_errors : [];
+                    if (accountSyncWarning) {
+                        if (accountErrors.length > 0) {
+                            const labels = accountErrors.map(error => error.account_label || '계좌').join(', ');
+                            accountSyncWarning.textContent = `${labels} 동기화에 실패해 합계에서 제외되었습니다. 계좌 설정을 확인해 주세요.`;
+                            accountSyncWarning.hidden = false;
+                        } else {
+                            accountSyncWarning.textContent = '';
+                            accountSyncWarning.hidden = true;
+                        }
+                    }
                     const krCash = data?.domestic?.summary?.cash_balance || 0;
                     const usCash = data?.overseas?.us_summary?.usd_cash_balance || 0;
                     const jpCash = data?.overseas?.jp_summary?.jpy_cash_balance || 0;
@@ -3036,6 +3050,439 @@
                     }
                 }
             });
+        }
+
+        // 계좌 관리
+        let accountList = [];
+        let accountDeleteTarget = null;
+        let accountEditTarget = null;
+
+        function sanitizeAccountNumberInput(input) {
+            const digits = input.value.replace(/\D/g, '').slice(0, 10);
+            if (input.value !== digits) {
+                input.value = digits;
+            }
+        }
+
+        function parseAccountNumberInput(raw) {
+            const digits = String(raw || '').replace(/\D/g, '');
+            if (digits.length !== 8 && digits.length !== 10) return null;
+            return {
+                cano: digits.slice(0, 8),
+                acnt_prdt_cd: digits.length === 10 ? digits.slice(8) : '01'
+            };
+        }
+
+        function openAccountModal() {
+            document.getElementById('accountModal').classList.add('active');
+            document.addEventListener('keydown', handleAccountModalKeydown);
+            loadAccountList();
+            window.setTimeout(() => {
+                const firstField = document.getElementById('new_account_label');
+                if (firstField) firstField.focus();
+            }, 80);
+        }
+
+        function closeAccountModal() {
+            document.getElementById('accountModal').classList.remove('active');
+            document.removeEventListener('keydown', handleAccountModalKeydown);
+            clearAccountNotice();
+            document.getElementById('accountAddForm').reset();
+        }
+
+        function handleAccountOverlayClick(event) {
+            if (event.target.id === 'accountModal') {
+                closeAccountModal();
+            }
+        }
+
+        function handleAccountModalClick(_event) {
+        }
+
+        function handleAccountModalKeydown(event) {
+            if (event.key !== 'Escape') return;
+            const editModal = document.getElementById('accountEditModal');
+            if (editModal && editModal.classList.contains('active')) {
+                closeAccountEditModal();
+                return;
+            }
+            const deleteModal = document.getElementById('accountDeleteModal');
+            if (deleteModal && deleteModal.classList.contains('active')) {
+                closeAccountDeleteModal();
+                return;
+            }
+            const accountModal = document.getElementById('accountModal');
+            if (accountModal && accountModal.classList.contains('active')) {
+                closeAccountModal();
+            }
+        }
+
+        async function loadAccountList(force = false) {
+            const listEl = document.getElementById('accountList');
+            const emptyEl = document.getElementById('accountListEmpty');
+            const loadingEl = document.getElementById('accountListLoading');
+            if (!listEl || !emptyEl || !loadingEl) return;
+            listEl.innerHTML = '';
+            emptyEl.classList.remove('active');
+            loadingEl.classList.add('active');
+            try {
+                const res = await fetch('/api/accounts', { cache: force ? 'no-store' : 'default' });
+                if (res.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                const data = await res.json();
+                if (data.status === 'success' && Array.isArray(data.accounts)) {
+                    accountList = data.accounts;
+                    renderAccountList();
+                } else {
+                    showAccountNotice(data.detail || '계좌 목록을 불러오지 못했습니다.', true);
+                }
+            } catch (err) {
+                console.error('loadAccountList error', err);
+                showAccountNotice('계좌 목록을 불러오지 못했습니다.', true);
+            } finally {
+                loadingEl.classList.remove('active');
+            }
+        }
+
+        function renderAccountList() {
+            const listEl = document.getElementById('accountList');
+            const emptyEl = document.getElementById('accountListEmpty');
+            if (!listEl || !emptyEl) return;
+            if (!accountList.length) {
+                listEl.innerHTML = '';
+                emptyEl.classList.add('active');
+                return;
+            }
+            emptyEl.classList.remove('active');
+            listEl.innerHTML = accountList.map((acc) => {
+                const safeId = escapeAttributeValue(String(acc.account_id || ''));
+                const safeLabel = escapeHtml(String(acc.label || ''));
+                const safeLabelAttr = escapeAttributeValue(String(acc.label || ''));
+                const safeCano = escapeHtml(String(acc.cano_masked || ''));
+                const safePrdt = escapeHtml(String(acc.acnt_prdt_cd || ''));
+                const safePrdtAttr = escapeAttributeValue(String(acc.acnt_prdt_cd || ''));
+                const safeCanoAttr = escapeAttributeValue(String(acc.cano || ''));
+                const safeMaskedCanoAttr = escapeAttributeValue(String(acc.cano_masked || ''));
+                const primaryBadge = acc.is_primary
+                    ? '<span class="badge badge-account-primary">기본</span>'
+                    : '';
+                return `
+                    <div class="account-list-item">
+                        <div class="account-list-item-main">
+                            <div class="account-list-item-title">
+                                <strong>${safeLabel}</strong>
+                                ${primaryBadge}
+                            </div>
+                            <div class="account-list-item-meta">
+                                계좌 ${safeCano} · 상품코드 ${safePrdt}
+                            </div>
+                        </div>
+                        <div class="account-list-item-actions">
+                            <button type="button" class="btn-edit-account"
+                                data-account-id="${safeId}" data-account-label="${safeLabelAttr}"
+                                data-account-cano="${safeCanoAttr}" data-account-product="${safePrdtAttr}"
+                                data-account-masked-cano="${safeMaskedCanoAttr}"
+                                onclick="requestEditAccount(this)">수정</button>
+                            <button type="button" class="btn-delete-account"
+                                data-account-id="${safeId}" data-account-label="${safeLabelAttr}"
+                                onclick="requestDeleteAccount(this)">삭제</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function showAccountNotice(message, isError) {
+            const notice = document.getElementById('accountModalNotice');
+            if (!notice) return;
+            notice.textContent = message || '';
+            notice.classList.toggle('scheduled-order-notice--error', !!isError);
+            notice.classList.toggle('scheduled-order-notice--success', !isError);
+            notice.classList.add('active');
+        }
+
+        function clearAccountNotice() {
+            const notice = document.getElementById('accountModalNotice');
+            if (!notice) return;
+            notice.textContent = '';
+            notice.className = 'scheduled-order-notice';
+        }
+
+        async function submitAddAccount(event) {
+            event.preventDefault();
+            const submitBtn = document.getElementById('accountAddSubmitBtn');
+            const label = document.getElementById('new_account_label').value.trim();
+            const appKey = document.getElementById('new_account_app_key').value.trim();
+            const appSecret = document.getElementById('new_account_app_secret').value;
+            const parsed = parseAccountNumberInput(document.getElementById('new_account_cano').value);
+            const pin = document.getElementById('new_account_pin').value;
+
+            const errors = [];
+            if (!label) errors.push('계좌 이름을 입력하세요.');
+            if (!appKey) errors.push('APP KEY를 입력하세요.');
+            if (!appSecret) errors.push('APP SECRET을 입력하세요.');
+            if (!parsed) errors.push('계좌번호는 숫자 8자리 또는 10자리로 입력하세요.');
+            if (!/^\d{4,6}$/.test(pin)) errors.push('PIN은 4~6자리 숫자로 입력하세요.');
+            if (errors.length) {
+                showAccountNotice(errors.join(' '), true);
+                return;
+            }
+
+            clearAccountNotice();
+            submitBtn.disabled = true;
+            const originalText = submitBtn.innerText;
+            submitBtn.innerText = '추가 중...';
+            try {
+                const res = await fetch('/api/accounts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        pin,
+                        label,
+                        app_key: appKey,
+                        app_secret: appSecret,
+                        cano: parsed.cano,
+                        acnt_prdt_cd: parsed.acnt_prdt_cd
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.status === 'success') {
+                    showAccountNotice(data.message || '계좌가 추가되었습니다.', false);
+                    document.getElementById('accountAddForm').reset();
+                    await loadAccountList(true);
+                    syncData(true);
+                } else {
+                    showAccountNotice(data.detail || '계좌 추가에 실패했습니다.', true);
+                }
+            } catch (err) {
+                console.error('submitAddAccount error', err);
+                showAccountNotice('계좌 추가에 실패했습니다.', true);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerText = originalText;
+            }
+        }
+
+        function requestDeleteAccount(btn) {
+            const accountId = btn.getAttribute('data-account-id');
+            const label = btn.getAttribute('data-account-label') || '계좌';
+            accountDeleteTarget = { accountId, label };
+            const labelEl = document.getElementById('accountDeleteLabel');
+            if (labelEl) labelEl.innerText = label;
+            clearAccountDeleteError();
+            document.getElementById('accountDeletePin').value = '';
+            document.getElementById('accountDeleteModal').classList.add('active');
+            window.setTimeout(() => {
+                const pinField = document.getElementById('accountDeletePin');
+                if (pinField) pinField.focus();
+            }, 80);
+        }
+
+        function closeAccountDeleteModal() {
+            document.getElementById('accountDeleteModal').classList.remove('active');
+            accountDeleteTarget = null;
+            clearAccountDeleteError();
+        }
+
+        function handleAccountDeleteOverlayClick(event) {
+            if (event.target.id === 'accountDeleteModal') {
+                closeAccountDeleteModal();
+            }
+        }
+
+        function handleAccountDeleteModalClick(_event) {
+        }
+
+        function clearAccountDeleteError() {
+            const errEl = document.getElementById('accountDeleteError');
+            if (!errEl) return;
+            errEl.textContent = '';
+            errEl.className = 'scheduled-order-notice';
+        }
+
+        async function confirmDeleteAccount() {
+            if (!accountDeleteTarget) return;
+            const pin = document.getElementById('accountDeletePin').value;
+            const errEl = document.getElementById('accountDeleteError');
+            const confirmBtn = document.getElementById('accountDeleteConfirmBtn');
+            if (!/^\d{4,6}$/.test(pin)) {
+                errEl.textContent = 'PIN은 4~6자리 숫자로 입력하세요.';
+                errEl.classList.add('scheduled-order-notice--error', 'active');
+                return;
+            }
+            clearAccountDeleteError();
+            confirmBtn.disabled = true;
+            const originalText = confirmBtn.innerText;
+            confirmBtn.innerText = '삭제 중...';
+            try {
+                const res = await fetch(`/api/accounts/${encodeURIComponent(accountDeleteTarget.accountId)}/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.status === 'success') {
+                    closeAccountDeleteModal();
+                    showAccountNotice(data.message || '계좌가 삭제되었습니다.', false);
+                    await loadAccountList(true);
+                    syncData(true);
+                } else {
+                    errEl.textContent = data.detail || '계좌 삭제에 실패했습니다.';
+                    errEl.classList.add('scheduled-order-notice--error', 'active');
+                }
+            } catch (err) {
+                console.error('confirmDeleteAccount error', err);
+                errEl.textContent = '계좌 삭제에 실패했습니다.';
+                errEl.classList.add('scheduled-order-notice--error', 'active');
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.innerText = originalText;
+            }
+        }
+
+        function requestEditAccount(btn) {
+            const accountId = btn.getAttribute('data-account-id');
+            const account = accountList.find(
+                (acc) => String(acc.account_id || '') === accountId
+            ) || {};
+            accountEditTarget = { accountId };
+
+            const label = String(
+                account.label || btn.getAttribute('data-account-label') || '계좌'
+            );
+            const product = String(
+                account.acnt_prdt_cd || btn.getAttribute('data-account-product') || '01'
+            );
+            const fullCano = String(
+                account.cano || btn.getAttribute('data-account-cano') || ''
+            );
+            const maskedCano = String(
+                account.cano_masked || btn.getAttribute('data-account-masked-cano') || ''
+            );
+
+            const labelHeader = document.getElementById('accountEditLabel');
+            if (labelHeader) labelHeader.innerText = label;
+            document.getElementById('edit_account_label').value = label;
+            document.getElementById('edit_account_app_key').value = '';
+            document.getElementById('edit_account_app_secret').value = '';
+            document.getElementById('edit_account_pin').value = '';
+
+            const canoInput = document.getElementById('edit_account_cano');
+            if (fullCano) {
+                canoInput.value = fullCano + product;
+                setAccountEditCanoHint('');
+            } else {
+                canoInput.value = '';
+                setAccountEditCanoHint(
+                    maskedCano
+                        ? `현재: ${maskedCano} · 상품코드 ${product}`
+                        : `현재 상품코드: ${product}`
+                );
+            }
+
+            clearAccountEditError();
+            document.getElementById('accountEditModal').classList.add('active');
+            window.setTimeout(() => {
+                const firstField = document.getElementById('edit_account_label');
+                if (firstField) firstField.focus();
+            }, 80);
+        }
+
+        function closeAccountEditModal() {
+            document.getElementById('accountEditModal').classList.remove('active');
+            accountEditTarget = null;
+            clearAccountEditError();
+            document.getElementById('accountEditForm').reset();
+            setAccountEditCanoHint('');
+        }
+
+        function handleAccountEditOverlayClick(event) {
+            if (event.target.id === 'accountEditModal') {
+                closeAccountEditModal();
+            }
+        }
+
+        function handleAccountEditModalClick(_event) {
+        }
+
+        function clearAccountEditError() {
+            const errEl = document.getElementById('accountEditError');
+            if (!errEl) return;
+            errEl.textContent = '';
+            errEl.className = 'scheduled-order-notice';
+        }
+
+        function showAccountEditError(message) {
+            const errEl = document.getElementById('accountEditError');
+            if (!errEl) return;
+            errEl.textContent = message || '';
+            errEl.classList.add('scheduled-order-notice--error', 'active');
+        }
+
+        function setAccountEditCanoHint(text) {
+            const hintEl = document.getElementById('edit_account_cano_hint');
+            if (hintEl) hintEl.textContent = text || '';
+        }
+
+        async function submitEditAccount(event) {
+            event.preventDefault();
+            if (!accountEditTarget) return;
+            const saveBtn = document.getElementById('accountEditSaveBtn');
+            const label = document.getElementById('edit_account_label').value.trim();
+            const appKey = document.getElementById('edit_account_app_key').value.trim();
+            const appSecret = document.getElementById('edit_account_app_secret').value;
+            const accountNumber = document.getElementById('edit_account_cano').value.trim();
+            const parsed = accountNumber ? parseAccountNumberInput(accountNumber) : null;
+            const pin = document.getElementById('edit_account_pin').value;
+
+            const errors = [];
+            if (!label) errors.push('계좌 이름을 입력해 주세요.');
+            if (accountNumber && !parsed) errors.push('계좌번호를 숫자 8자리 또는 10자리로 입력해 주세요.');
+            if (!/^\d{4,6}$/.test(pin)) errors.push('PIN은 4~6자리 숫자로 입력해 주세요.');
+            if (errors.length) {
+                showAccountEditError(errors.join(' '));
+                return;
+            }
+
+            const body = { label, pin };
+            if (parsed) {
+                body.cano = parsed.cano;
+                body.acnt_prdt_cd = parsed.acnt_prdt_cd;
+            }
+            if (appKey) body.app_key = appKey;
+            if (appSecret) body.app_secret = appSecret;
+
+            clearAccountEditError();
+            saveBtn.disabled = true;
+            const originalText = saveBtn.innerText;
+            saveBtn.innerText = '저장 중...';
+            try {
+                const res = await fetch(
+                    `/api/accounts/${encodeURIComponent(accountEditTarget.accountId)}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    }
+                );
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.status === 'success') {
+                    closeAccountEditModal();
+                    showAccountNotice(data.message || '계좌가 수정되었습니다.', false);
+                    await loadAccountList(true);
+                    syncData(true);
+                } else {
+                    showAccountEditError(data.detail || '계좌 수정에 실패했습니다.');
+                }
+            } catch (err) {
+                console.error('submitEditAccount error', err);
+                showAccountEditError('계좌 수정에 실패했습니다.');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.innerText = originalText;
+            }
         }
 
         function runDeferredBootTasks() {

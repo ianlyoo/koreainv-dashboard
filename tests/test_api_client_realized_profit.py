@@ -441,16 +441,16 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(exrt, 915.0)
         self.assertEqual(source, "output2[1].frcr_dncl_amt_2")
 
-    def test_pick_foreign_cash_balance_from_output2_falls_back_without_currency_match(self):
+    def test_pick_foreign_cash_balance_from_output2_rejects_currency_mismatch(self):
         rows = [
             {"crcy_cd": "", "frcr_dncl_amt_2": "33000", "sl_ruse_frcr_amt": "2000", "bass_exrt": "910"},
         ]
 
         amount, exrt, source = api_client._pick_foreign_cash_balance_from_output2(rows, "JPY")
 
-        self.assertEqual(amount, 33000.0)
-        self.assertEqual(exrt, 910.0)
-        self.assertEqual(source, "output2[0].frcr_dncl_amt_2")
+        self.assertEqual(amount, 0.0)
+        self.assertEqual(exrt, 0.0)
+        self.assertEqual(source, "none")
 
     def test_pick_foreign_cash_balance_from_output1_cash_row_reads_jpy_pdno(self):
         rows = [
@@ -474,13 +474,13 @@ class RealizedProfitApiClientTests(unittest.TestCase):
         self.assertEqual(exrt, 1400.0)
         self.assertEqual(source, "output2[0].sll_ruse_psbl_amt")
 
-    def test_pick_foreign_cash_balance_from_output3_reads_orderable_fields(self):
+    def test_pick_foreign_cash_balance_from_output3_rejects_orderable_fields(self):
         amount, source = api_client._pick_foreign_cash_balance_from_output3(
             {"ord_psbl_frcr_amt": "12000"}
         )
 
-        self.assertEqual(amount, 12000.0)
-        self.assertEqual(source, "output3.ord_psbl_frcr_amt")
+        self.assertEqual(amount, 0.0)
+        self.assertEqual(source, "none")
 
     @patch("app.api_client._run_parallel_tasks")
     def test_fetch_trade_profit_rows_dedupes_overlapping_calls(self, mock_run_parallel_tasks):

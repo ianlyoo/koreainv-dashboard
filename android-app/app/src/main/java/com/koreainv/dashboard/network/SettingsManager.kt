@@ -9,8 +9,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.google.gson.Gson
-import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
@@ -29,6 +27,8 @@ class SettingsManager(private val context: Context) {
         private val ENCRYPTED_CREDENTIALS_KEY = stringPreferencesKey("encrypted_credentials")
         private val CREDENTIAL_SALT_KEY = stringPreferencesKey("credential_salt")
         private val CREDENTIAL_IV_KEY = stringPreferencesKey("credential_iv")
+        private val TOKEN_CACHE_KEY = stringPreferencesKey("token_cache")
+        // Legacy single-record token keys, kept only to migrate pre-multi-account installs.
         private val TOKEN_SCOPE_KEY = stringPreferencesKey("token_scope")
         private val ACCESS_TOKEN_KEY = stringPreferencesKey("access_token")
         private val TOKEN_ISSUED_AT_KEY = longPreferencesKey("token_issued_at")
@@ -40,7 +40,6 @@ class SettingsManager(private val context: Context) {
         private const val SALT_LENGTH_BYTES = 16
     }
 
-    private val gson = Gson()
     private val secureRandom = SecureRandom()
 
     val isSetupCompleteFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
@@ -48,15 +47,20 @@ class SettingsManager(private val context: Context) {
     }
 
     suspend fun saveCredentials(input: SetupInput): AppCredentials {
-        val credentials = AppCredentials(
+        val account = AccountCredential(
+            id = input.id.ifBlank { stableAccountId(input.cano, input.acntPrdtCd) },
+            label = input.label.ifBlank { defaultAccountLabel(input.cano) },
             appKey = input.appKey.trim(),
             appSecret = input.appSecret.trim(),
             cano = input.cano.trim(),
             acntPrdtCd = input.acntPrdtCd.trim(),
+            centralServerBaseUrl = input.centralServerBaseUrl.trim(),
+            centralServerApiToken = input.centralServerApiToken.trim(),
         )
+        val credentials = account.toAppCredentials()
         val salt = ByteArray(SALT_LENGTH_BYTES).also(secureRandom::nextBytes)
         val iv = ByteArray(GCM_IV_LENGTH_BYTES).also(secureRandom::nextBytes)
-        val encrypted = encryptCredentials(credentials, input.pin, salt, iv)
+        val encrypted = encryptCredentials(listOf(account), input.pin, salt, iv)
 
         context.dataStore.edit { preferences ->
             preferences[SETUP_COMPLETE_KEY] = true
@@ -68,7 +72,41 @@ class SettingsManager(private val context: Context) {
         return credentials
     }
 
+    suspend fun saveProfile(inputs: List<SetupInput>, pin: String): AccountProfile {
+        require(inputs.isNotEmpty()) { "ACCOUNT_PROFILE_EMPTY" }
+        val accounts = inputs.map { input ->
+            AccountCredential(
+                id = input.id.ifBlank {
+                    stableAccountId(input.cano, input.acntPrdtCd)
+                },
+                label = input.label.ifBlank { defaultAccountLabel(input.cano) },
+                appKey = input.appKey.trim(),
+                appSecret = input.appSecret.trim(),
+                cano = input.cano.trim(),
+                acntPrdtCd = input.acntPrdtCd.trim(),
+                centralServerBaseUrl = input.centralServerBaseUrl.trim(),
+                centralServerApiToken = input.centralServerApiToken.trim(),
+            )
+        }
+        val salt = ByteArray(SALT_LENGTH_BYTES).also(secureRandom::nextBytes)
+        val iv = ByteArray(GCM_IV_LENGTH_BYTES).also(secureRandom::nextBytes)
+        val encrypted = encryptCredentials(accounts, pin, salt, iv)
+
+        context.dataStore.edit { preferences ->
+            preferences[SETUP_COMPLETE_KEY] = true
+            preferences[ENCRYPTED_CREDENTIALS_KEY] = encrypted
+            preferences[CREDENTIAL_SALT_KEY] = encodeBase64(salt)
+            preferences[CREDENTIAL_IV_KEY] = encodeBase64(iv)
+            clearAuthToken(preferences)
+        }
+        return AccountProfile(accounts = accounts)
+    }
+
     suspend fun unlock(pin: String): AppCredentials? {
+        return unlockProfile(pin)?.primary?.toAppCredentials()
+    }
+
+    suspend fun unlockProfile(pin: String): AccountProfile? {
         val values = context.dataStore.data.map { preferences ->
             Triple(
                 preferences[ENCRYPTED_CREDENTIALS_KEY],
@@ -79,7 +117,8 @@ class SettingsManager(private val context: Context) {
         val encrypted = values.first ?: return null
         val salt = values.second ?: return null
         val iv = values.third ?: return null
-        return decryptCredentials(encrypted, pin, decodeBase64(salt), decodeBase64(iv))
+        val accounts = decryptCredentials(encrypted, pin, decodeBase64(salt), decodeBase64(iv)) ?: return null
+        return AccountProfile(accounts = accounts)
     }
 
     suspend fun clearCredentials() {
@@ -93,36 +132,25 @@ class SettingsManager(private val context: Context) {
     }
 
     suspend fun loadAuthToken(credentials: AppCredentials): AuthToken? {
-        val values = context.dataStore.data.map { preferences ->
-            TokenStoreRecord(
-                scope = preferences[TOKEN_SCOPE_KEY],
-                value = preferences[ACCESS_TOKEN_KEY],
-                issuedAtMillis = preferences[TOKEN_ISSUED_AT_KEY],
-                expiresAtMillis = preferences[TOKEN_EXPIRES_AT_KEY],
-            )
-        }.first()
-        if (values.scope != tokenScope(credentials)) {
-            return null
+        val scope = tokenScope(credentials)
+        val payload = context.dataStore.data.map { preferences -> preferences[TOKEN_CACHE_KEY] }.first()
+        payload?.let { raw ->
+            TokenCacheCodec.parse(raw)[scope]?.let { return it }
         }
-        val value = values.value?.trim().orEmpty()
-        val issuedAtMillis = values.issuedAtMillis ?: return null
-        val expiresAtMillis = values.expiresAtMillis ?: return null
-        if (value.isBlank() || expiresAtMillis <= issuedAtMillis) {
-            return null
-        }
-        return AuthToken(
-            value = value,
-            issuedAtMillis = issuedAtMillis,
-            expiresAtMillis = expiresAtMillis,
-        )
+        // Migrate a token stored by the legacy single-record format only when its
+        // scope matches the requested credentials, so one account's token is never
+        // reused for another account's key.
+        val legacy = loadLegacyAuthToken(scope) ?: return null
+        saveAuthToken(credentials, legacy)
+        return legacy
     }
 
     suspend fun saveAuthToken(credentials: AppCredentials, token: AuthToken) {
+        val scope = tokenScope(credentials)
         context.dataStore.edit { preferences ->
-            preferences[TOKEN_SCOPE_KEY] = tokenScope(credentials)
-            preferences[ACCESS_TOKEN_KEY] = token.value
-            preferences[TOKEN_ISSUED_AT_KEY] = token.issuedAtMillis
-            preferences[TOKEN_EXPIRES_AT_KEY] = token.expiresAtMillis
+            val current = preferences[TOKEN_CACHE_KEY]?.let { TokenCacheCodec.parse(it) } ?: emptyMap()
+            preferences[TOKEN_CACHE_KEY] = TokenCacheCodec.serialize(current + (scope to token))
+            clearLegacyTokenKeys(preferences)
         }
     }
 
@@ -133,14 +161,14 @@ class SettingsManager(private val context: Context) {
     }
 
     private fun encryptCredentials(
-        credentials: AppCredentials,
+        accounts: List<AccountCredential>,
         pin: String,
         salt: ByteArray,
         iv: ByteArray,
     ): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, deriveAesKey(pin, salt), GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
-        val encryptedBytes = cipher.doFinal(gson.toJson(credentials).toByteArray(Charsets.UTF_8))
+        val encryptedBytes = cipher.doFinal(AccountProfileCodec.serialize(accounts).toByteArray(Charsets.UTF_8))
         return encodeBase64(encryptedBytes)
     }
 
@@ -149,12 +177,12 @@ class SettingsManager(private val context: Context) {
         pin: String,
         salt: ByteArray,
         iv: ByteArray,
-    ): AppCredentials? {
+    ): List<AccountCredential>? {
         return try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, deriveAesKey(pin, salt), GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
             val decryptedBytes = cipher.doFinal(decodeBase64(encrypted))
-            gson.fromJson(String(decryptedBytes, Charsets.UTF_8), AppCredentials::class.java)
+            AccountProfileCodec.parse(String(decryptedBytes, Charsets.UTF_8))
         } catch (_: Exception) {
             null
         }
@@ -170,18 +198,29 @@ class SettingsManager(private val context: Context) {
 
     private fun decodeBase64(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
 
-    private fun tokenScope(credentials: AppCredentials): String {
-        val raw = listOf(
-            credentials.appKey.trim(),
-            credentials.appSecret.trim(),
-            credentials.cano.trim(),
-            credentials.acntPrdtCd.trim(),
-        ).joinToString("::")
-        val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }
+    private suspend fun loadLegacyAuthToken(expectedScope: String): AuthToken? {
+        val values = context.dataStore.data.map { preferences ->
+            TokenStoreRecord(
+                scope = preferences[TOKEN_SCOPE_KEY],
+                value = preferences[ACCESS_TOKEN_KEY],
+                issuedAtMillis = preferences[TOKEN_ISSUED_AT_KEY],
+                expiresAtMillis = preferences[TOKEN_EXPIRES_AT_KEY],
+            )
+        }.first()
+        if (values.scope != expectedScope) return null
+        val value = values.value?.trim().orEmpty()
+        val issuedAtMillis = values.issuedAtMillis ?: return null
+        val expiresAtMillis = values.expiresAtMillis ?: return null
+        if (value.isBlank() || expiresAtMillis <= issuedAtMillis) return null
+        return AuthToken(value = value, issuedAtMillis = issuedAtMillis, expiresAtMillis = expiresAtMillis)
     }
 
     private fun clearAuthToken(preferences: androidx.datastore.preferences.core.MutablePreferences) {
+        preferences.remove(TOKEN_CACHE_KEY)
+        clearLegacyTokenKeys(preferences)
+    }
+
+    private fun clearLegacyTokenKeys(preferences: androidx.datastore.preferences.core.MutablePreferences) {
         preferences.remove(TOKEN_SCOPE_KEY)
         preferences.remove(ACCESS_TOKEN_KEY)
         preferences.remove(TOKEN_ISSUED_AT_KEY)

@@ -41,24 +41,19 @@
                     <img src="/img/fa82e0f8872e03ff459435036237a46d.jpg" alt="" class="app-brand-icon">
                 </div>
                 <h1>Welcome to Dashboard</h1>
-                <p>최초 1회만 한국투자증권 API 정보와<br>간편비밀번호(PIN)를 설정합니다.</p>
+                <p>하나 이상의 한국투자증권 계좌 정보와<br>간편비밀번호(PIN)를 설정합니다.</p>
             </div>
-            <form id="setup-form" onsubmit="handleSetup(event)">
-                <div class="form-group">
-                    <label for="app_key">APP KEY</label>
-                    <input type="text" id="app_key" name="app_key" required autocomplete="off"
-                        placeholder="한국투자증권 APP KEY">
-                </div>
-                <div class="form-group">
-                    <label for="app_secret">APP SECRET</label>
-                    <input type="password" id="app_secret" name="app_secret" required autocomplete="off"
-                        placeholder="한국투자증권 APP SECRET">
-                </div>
-                <div class="form-group">
-                    <label for="cano">계좌번호 앞 8자리</label>
-                    <input type="text" id="cano" name="cano" required autocomplete="off" placeholder="ex) 12345678"
-                        maxlength="8">
-                </div>
+            <form id="setup-form" onsubmit="handleSetup(event)" novalidate>
+                <div id="account-cards" class="account-cards" role="list"
+                    aria-label="등록할 투자 계좌 목록"></div>
+                <button type="button" id="add-account-btn" class="btn-add-account" onclick="addAccountCard()">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    계좌 추가
+                </button>
                 <div class="form-group" style="margin-top: 32px;">
                     <label for="setup_pin">사용할 간편비밀번호 (PIN)</label>
                     <input type="password" id="setup_pin" name="pin" class="pin-input" required autocomplete="off"
