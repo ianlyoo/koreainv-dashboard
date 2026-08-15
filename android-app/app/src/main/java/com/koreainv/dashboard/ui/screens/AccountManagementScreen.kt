@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -40,7 +39,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.AccountCredential
@@ -156,7 +154,9 @@ fun AccountManagementScreen(
         onSave(pin, resolveAccountDrafts(profile.accounts, drafts))
     }
 
-    Scaffold(
+    val displayError = errorMessage ?: validationError
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             DashboardTopBar(
                 title = stringResource(R.string.account_management_title),
@@ -185,6 +185,13 @@ fun AccountManagementScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                 )
+                if (displayError != null) {
+                    Text(
+                        text = displayError,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 drafts.forEachIndexed { index, draft ->
                     AccountManagementCard(
                         index = index,
@@ -238,33 +245,17 @@ fun AccountManagementScreen(
                 }
             }
         }
-    }
-
-    val displayError = errorMessage ?: validationError
-    if (displayError != null) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 32.dp, vertical = 96.dp),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Text(
-                text = displayError,
-                color = MaterialTheme.colorScheme.error,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
-    }
 
-    if (isSaving) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.5f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            CircularProgressIndicator(color = TextGold)
+        if (isSaving) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(color = TextGold)
+            }
         }
     }
 }
@@ -280,60 +271,60 @@ private fun AccountManagementCard(
     onRemove: () -> Unit,
 ) {
     PremiumGlassCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = stringResource(R.string.account_section_title, index + 1),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextPrimary,
-                )
-                if (isPrimary) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = stringResource(R.string.primary_account),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextGold,
+                        text = stringResource(R.string.account_section_title, index + 1),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextPrimary,
                     )
+                    if (isPrimary) {
+                        Text(
+                            text = stringResource(R.string.primary_account),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextGold,
+                        )
+                    }
+                }
+                if (isRemovable) {
+                    TextButton(onClick = onRemove, enabled = isEnabled) {
+                        Text(text = stringResource(R.string.remove_account), color = TextSecondary)
+                    }
                 }
             }
-            if (isRemovable) {
-                TextButton(onClick = onRemove, enabled = isEnabled) {
-                    Text(text = stringResource(R.string.remove_account), color = TextSecondary)
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(14.dp))
-        Divider(color = SurfaceBorder)
-        Spacer(modifier = Modifier.height(14.dp))
-        ManagementField(
-            value = draft.label,
-            onValueChange = { onUpdate(draft.copy(label = it)) },
-            label = stringResource(R.string.account_label),
-            isEnabled = isEnabled,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        ManagementField(
-            value = draft.appKeyInput,
-            onValueChange = { onUpdate(draft.copy(appKeyInput = it)) },
-            label = stringResource(R.string.app_key),
-            isSecret = true,
-            isEnabled = isEnabled,
-            supportingText = if (draft.hasStoredKey) stringResource(R.string.keep_existing_value) else null,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        ManagementField(
-            value = draft.appSecretInput,
-            onValueChange = { onUpdate(draft.copy(appSecretInput = it)) },
-            label = stringResource(R.string.app_secret),
-            isSecret = true,
-            isEnabled = isEnabled,
-            supportingText = if (draft.hasStoredSecret) stringResource(R.string.keep_existing_value) else null,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Divider(color = SurfaceBorder)
+            Spacer(modifier = Modifier.height(14.dp))
+            ManagementField(
+                value = draft.label,
+                onValueChange = { onUpdate(draft.copy(label = it)) },
+                label = stringResource(R.string.account_label),
+                isEnabled = isEnabled,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ManagementField(
+                value = draft.appKeyInput,
+                onValueChange = { onUpdate(draft.copy(appKeyInput = it)) },
+                label = stringResource(R.string.app_key),
+                isSecret = true,
+                isEnabled = isEnabled,
+                supportingText = if (draft.hasStoredKey) stringResource(R.string.keep_existing_value) else null,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ManagementField(
+                value = draft.appSecretInput,
+                onValueChange = { onUpdate(draft.copy(appSecretInput = it)) },
+                label = stringResource(R.string.app_secret),
+                isSecret = true,
+                isEnabled = isEnabled,
+                supportingText = if (draft.hasStoredSecret) stringResource(R.string.keep_existing_value) else null,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             ManagementField(
                 value = draft.cano,
                 onValueChange = {
@@ -342,8 +333,8 @@ private fun AccountManagementCard(
                 label = stringResource(R.string.account_number),
                 keyboardType = KeyboardType.Number,
                 isEnabled = isEnabled,
-                modifier = Modifier.weight(1f),
             )
+            Spacer(modifier = Modifier.height(12.dp))
             ManagementField(
                 value = draft.acntPrdtCd,
                 onValueChange = {
@@ -352,7 +343,6 @@ private fun AccountManagementCard(
                 label = stringResource(R.string.account_product_code),
                 keyboardType = KeyboardType.Number,
                 isEnabled = isEnabled,
-                modifier = Modifier.width(112.dp),
             )
         }
     }

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,6 +47,9 @@ private data class AccountDraft(
     val cano: String = "",
     val acntPrdtCd: String = "01",
 )
+
+private const val SETUP_ACCOUNT_NUMBER_LENGTH = 8
+private const val SETUP_PRODUCT_CODE_LENGTH = 2
 
 @Composable
 fun SetupScreen(
@@ -163,67 +165,70 @@ private fun AccountSection(
     onRemove: () -> Unit,
 ) {
     PremiumGlassCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = stringResource(R.string.account_section_title, index + 1),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextPrimary,
-                )
-                if (isPrimary) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = stringResource(R.string.primary_account),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextGold,
+                        text = stringResource(R.string.account_section_title, index + 1),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextPrimary,
                     )
+                    if (isPrimary) {
+                        Text(
+                            text = stringResource(R.string.primary_account),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextGold,
+                        )
+                    }
+                }
+                if (isRemovable) {
+                    TextButton(onClick = onRemove) {
+                        Text(text = stringResource(R.string.remove_account), color = TextSecondary)
+                    }
                 }
             }
-            if (isRemovable) {
-                TextButton(onClick = onRemove) {
-                    Text(text = stringResource(R.string.remove_account), color = TextSecondary)
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(14.dp))
-        Divider(color = SurfaceBorder)
-        Spacer(modifier = Modifier.height(14.dp))
-        SetupField(
-            value = account.label,
-            onValueChange = { onUpdate(account.copy(label = it)) },
-            label = stringResource(R.string.account_label),
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        SetupField(
-            value = account.appKey,
-            onValueChange = { onUpdate(account.copy(appKey = it)) },
-            label = stringResource(R.string.app_key),
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        SetupField(
-            value = account.appSecret,
-            onValueChange = { onUpdate(account.copy(appSecret = it)) },
-            label = stringResource(R.string.app_secret),
-            isSecret = true,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Divider(color = SurfaceBorder)
+            Spacer(modifier = Modifier.height(14.dp))
+            SetupField(
+                value = account.label,
+                onValueChange = { onUpdate(account.copy(label = it)) },
+                label = stringResource(R.string.account_label),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            SetupField(
+                value = account.appKey,
+                onValueChange = { onUpdate(account.copy(appKey = it)) },
+                label = stringResource(R.string.app_key),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            SetupField(
+                value = account.appSecret,
+                onValueChange = { onUpdate(account.copy(appSecret = it)) },
+                label = stringResource(R.string.app_secret),
+                isSecret = true,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             SetupField(
                 value = account.cano,
-                onValueChange = { onUpdate(account.copy(cano = it)) },
+                onValueChange = {
+                    onUpdate(account.copy(cano = it.filter(Char::isDigit).take(SETUP_ACCOUNT_NUMBER_LENGTH)))
+                },
                 label = stringResource(R.string.account_number),
                 keyboardType = KeyboardType.Number,
-                modifier = Modifier.weight(1f),
             )
+            Spacer(modifier = Modifier.height(12.dp))
             SetupField(
                 value = account.acntPrdtCd,
-                onValueChange = { onUpdate(account.copy(acntPrdtCd = it.filter(Char::isDigit).take(3))) },
+                onValueChange = {
+                    onUpdate(account.copy(acntPrdtCd = it.filter(Char::isDigit).take(SETUP_PRODUCT_CODE_LENGTH)))
+                },
                 label = stringResource(R.string.account_product_code),
                 keyboardType = KeyboardType.Number,
-                modifier = Modifier.width(112.dp),
             )
         }
     }
