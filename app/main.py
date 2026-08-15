@@ -13,6 +13,7 @@ from app.routes.market import router as market_router
 from app.routes.mobile import router as mobile_router
 from app.routes.portfolio import router as portfolio_router
 from app.routes.scheduled_orders import router as scheduled_orders_router
+from app.routes.toss_proxy import router as toss_proxy_router
 from app.services.scheduled_order_store import ScheduledOrderStore
 from app.services.scheduled_order_worker import ScheduledOrderWorker
 from app.services.kis_us_quote_service import KISUSQuoteService
@@ -63,6 +64,7 @@ app.include_router(portfolio_router)
 app.include_router(market_router)
 app.include_router(insight_router)
 app.include_router(scheduled_orders_router)
+app.include_router(toss_proxy_router)
 
 
 if __name__ == "__main__":

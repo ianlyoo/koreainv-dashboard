@@ -75,6 +75,30 @@ flowchart LR
 - 예약주문은 쓰기 가능한 user-data 디렉토리의 `scheduled_orders.json`에 저장된다.
 - 시작 systemd 유닛 예시: `scripts/koreainv-dashboard-central.service.example`
 
+## 토스 개인 조회 프록시 (선택)
+
+고정 공인 IP가 없는 Android 모바일 데이터 환경에서는 개인 Oracle/VPS 서버를 토스 조회 전용 프록시로 사용할 수 있다. 프록시는 계좌 목록·보유자산·환율만 중계하며 주문 API를 제공하지 않고, 토스 자격증명을 서버 디스크에 저장하지 않는다.
+
+Oracle 서버의 비공개 `.env`:
+
+```env
+TOSS_PROXY_SERVER_ENABLED=true
+TOSS_PROXY_SERVER_TOKEN=<충분히 긴 랜덤 토큰>
+CENTRAL_ORDER_EXECUTION_ENABLED=false
+```
+
+1. Oracle 서버를 HTTPS 리버스 프록시 뒤에서 실행한다.
+2. Oracle 서버의 고정 공인 IPv4를 토스 WTS Open API 허용 IP로 등록한다.
+3. Android 토스 계좌 설정에서 `개인 서버`를 선택하고 HTTPS 주소와 토큰을 입력한다. 이 값은 API 자격증명과 함께 기기에서 암호화된다.
+4. 웹/데스크톱도 프록시를 사용할 경우 해당 클라이언트의 비공개 `.env`에 아래 값을 설정한다.
+
+```env
+TOSS_PROXY_REMOTE_URL=https://your-private-server.example
+TOSS_PROXY_REMOTE_TOKEN=<서버와 동일한 토큰>
+```
+
+서버 자체에는 `TOSS_PROXY_REMOTE_URL`을 설정하지 않는다. 실제 서버 주소·토큰·API 자격증명은 저장소나 APK에 하드코딩하지 않는다.
+
 ## 설정 레퍼런스
 
 | 환경변수 | 필수 | 설명 |
@@ -86,6 +110,10 @@ flowchart LR
 | `CENTRAL_ORDER_POLL_INTERVAL_SECONDS` |  | 만기 주문 폴링 주기 |
 | `CENTRAL_ORDER_REMOTE_URL` |  | 데스크톱 클라이언트가 주문을 넘길 중앙 서버 URL |
 | `CENTRAL_ORDER_REMOTE_TOKEN` |  | 원격 전달용 토큰 |
+| `TOSS_PROXY_SERVER_ENABLED` |  | 읽기 전용 토스 프록시 서버 활성화 |
+| `TOSS_PROXY_SERVER_TOKEN` | 프록시 서버 시 | 프록시 요청 Bearer 토큰 |
+| `TOSS_PROXY_REMOTE_URL` | 프록시 클라이언트 시 | 개인 프록시 HTTPS URL |
+| `TOSS_PROXY_REMOTE_TOKEN` | 프록시 클라이언트 시 | 개인 프록시 Bearer 토큰 |
 | `COOKIE_SECURE` |  | HTTPS 뒤 배포 시 `true` |
 
 ### Oracle Ubuntu 배포 참고

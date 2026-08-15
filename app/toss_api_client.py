@@ -131,6 +131,34 @@ def get_accounts(client_id: str, client_secret: str) -> list[dict[str, object]]:
     return [dict(row) for row in _as_rows(payload.get("result"))]
 
 
+def get_dashboard_source(
+    client_id: str, client_secret: str, account_seq: str
+) -> tuple[dict[str, object], dict[str, object]]:
+    safe_seq = str(account_seq or "").strip()
+    if not safe_seq.isdigit() or not (0 < int(safe_seq) <= 9_223_372_036_854_775_807):
+        raise ValueError("Toss account_seq must be a positive integer")
+    holdings = dict(
+        _authorized_get(
+            "/api/v1/holdings",
+            client_id,
+            client_secret,
+            account_seq=safe_seq,
+        )
+    )
+    try:
+        exchange_rate = dict(
+            _authorized_get(
+                "/api/v1/exchange-rate",
+                client_id,
+                client_secret,
+                params={"baseCurrency": "USD", "quoteCurrency": "KRW"},
+            )
+        )
+    except Exception:
+        exchange_rate = {}
+    return holdings, exchange_rate
+
+
 def _get_usd_exchange_rate(client_id: str, client_secret: str) -> float:
     try:
         payload = _authorized_get(

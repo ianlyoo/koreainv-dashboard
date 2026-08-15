@@ -169,10 +169,16 @@ internal fun normalizeUpdatedAccounts(
             cano = cano,
             acntPrdtCd = productCode,
             broker = broker,
-            centralServerBaseUrl = account.centralServerBaseUrl.trim()
-                .ifBlank { previous?.centralServerBaseUrl.orEmpty() },
-            centralServerApiToken = account.centralServerApiToken.trim()
-                .ifBlank { previous?.centralServerApiToken.orEmpty() },
+            centralServerBaseUrl = if (broker == Broker.TOSS) {
+                account.centralServerBaseUrl.trim()
+            } else {
+                account.centralServerBaseUrl.trim().ifBlank { previous?.centralServerBaseUrl.orEmpty() }
+            },
+            centralServerApiToken = if (broker == Broker.TOSS) {
+                account.centralServerApiToken.trim()
+            } else {
+                account.centralServerApiToken.trim().ifBlank { previous?.centralServerApiToken.orEmpty() }
+            },
         )
     }
     require(

@@ -4,7 +4,7 @@ import logging
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 
-from app import api_client, toss_api_client
+from app import api_client, toss_api_client, toss_proxy_client
 from app.session_store import AccountCredential
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,12 @@ def fetch_aggregated_balances(
     def fetch_one(account: AccountCredential):
         try:
             if account.broker == "toss":
-                domestic, overseas = toss_api_client.get_balances(
+                balance_loader = (
+                    toss_proxy_client.get_balances
+                    if toss_proxy_client.is_configured()
+                    else toss_api_client.get_balances
+                )
+                domestic, overseas = balance_loader(
                     account.app_key,
                     account.app_secret,
                     account.cano,

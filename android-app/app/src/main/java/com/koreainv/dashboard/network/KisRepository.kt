@@ -172,31 +172,37 @@ class KisRepository(
     }
 
     private suspend fun loadTossAccountDashboard(account: AccountCredential): AccountDashboardPayload = coroutineScope {
-        val token = requireToken(account) ?: throw IllegalStateException("TOSS_TOKEN_FAILURE[dashboard]")
-        val holdingsDeferred = async {
-            getTossJson(
-                account = account,
-                path = "/api/v1/holdings",
-                query = emptyMap(),
-                token = token,
-                includeAccount = true,
-            )
-        }
-        val exchangeDeferred = async {
-            runCatching {
+        val proxyEnabled = account.centralServerBaseUrl.isNotBlank() && account.centralServerApiToken.isNotBlank()
+        val source = if (proxyEnabled) {
+            getTossProxyDashboard(account)
+        } else {
+            val token = requireToken(account) ?: throw IllegalStateException("TOSS_TOKEN_FAILURE[dashboard]")
+            val holdingsDeferred = async {
                 getTossJson(
                     account = account,
-                    path = "/api/v1/exchange-rate",
-                    query = mapOf("baseCurrency" to "USD", "quoteCurrency" to "KRW"),
+                    path = "/api/v1/holdings",
+                    query = emptyMap(),
                     token = token,
-                    includeAccount = false,
+                    includeAccount = true,
                 )
-            }.getOrNull()
+            }
+            val exchangeDeferred = async {
+                runCatching {
+                    getTossJson(
+                        account = account,
+                        path = "/api/v1/exchange-rate",
+                        query = mapOf("baseCurrency" to "USD", "quoteCurrency" to "KRW"),
+                        token = token,
+                        includeAccount = false,
+                    )
+                }.getOrNull()
+            }
+            holdingsDeferred.await() to exchangeDeferred.await()
         }
-        val response = holdingsDeferred.await()
+        val response = source.first
             ?: throw IllegalStateException("TOSS_HOLDINGS_EMPTY")
         val result = jsonObject(response, "result") ?: JsonObject()
-        val exchangeResult = exchangeDeferred.await()?.let { jsonObject(it, "result") }
+        val exchangeResult = source.second?.let { jsonObject(it, "result") }
         val usdRate = exchangeResult?.let { number(it, "rate").takeIf { value -> value > 0.0 } }
             ?: exchangeResult?.let { number(it, "midRate").takeIf { value -> value > 0.0 } }
             ?: 1350.0
@@ -249,6 +255,31 @@ class KisRepository(
                 usHoldings = usHoldings,
             ),
         )
+    }
+
+    private fun getTossProxyDashboard(account: AccountCredential): Pair<JsonObject?, JsonObject?> {
+        val baseUrl = account.centralServerBaseUrl.trim().trimEnd('/')
+        val proxyToken = account.centralServerApiToken.trim()
+        val payload = JsonObject().apply {
+            addProperty("client_id", account.appKey)
+            addProperty("client_secret", account.appSecret)
+            addProperty("account_seq", account.cano)
+        }
+        val request = Request.Builder()
+            .url("$baseUrl/api/toss-proxy/dashboard")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer $proxyToken")
+            .build()
+        client.newCall(request).execute().use { response ->
+            val body = parseObject(response.body?.string().orEmpty()) ?: JsonObject()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(
+                    "TOSS_PROXY_HTTP_ERROR code=${response.code} detail=${string(body, "detail")}",
+                )
+            }
+            return jsonObject(body, "holdings") to jsonObject(body, "exchange_rate")
+        }
     }
 
     private suspend fun getTossJson(

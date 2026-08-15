@@ -10,7 +10,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 data class TossAccountOption(
     val accountSeq: String,
@@ -49,6 +51,7 @@ internal fun parseTossAccountOptions(payload: String): List<TossAccountOption> {
 object TossAccountDiscoveryClient {
     private const val BASE_URL = "https://openapi.tossinvest.com"
     private const val CACHE_MILLIS = 60_000L
+    private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
     private data class CacheEntry(
         val cachedAt: Long,
@@ -67,35 +70,83 @@ object TossAccountDiscoveryClient {
         clientId: String,
         clientSecret: String,
         forceRefresh: Boolean = false,
+        proxyBaseUrl: String = "",
+        proxyApiToken: String = "",
     ): List<TossAccountOption> = withContext(Dispatchers.IO) {
         val safeClientId = clientId.trim()
         val safeClientSecret = clientSecret.trim()
         require(safeClientId.isNotBlank() && safeClientSecret.isNotBlank()) {
             "CLIENT ID와 CLIENT SECRET을 모두 입력하세요."
         }
-        val scope = credentialScope(safeClientId, safeClientSecret)
+        val safeProxyUrl = proxyBaseUrl.trim().trimEnd('/')
+        val safeProxyToken = proxyApiToken.trim()
+        require(safeProxyUrl.isBlank() == safeProxyToken.isBlank()) {
+            "개인 서버 주소와 인증 토큰을 모두 입력하세요."
+        }
+        require(safeProxyUrl.isBlank() || safeProxyUrl.startsWith("https://", ignoreCase = true)) {
+            "개인 서버는 HTTPS 주소를 사용해야 합니다."
+        }
+        val scope = credentialScope(safeClientId, safeClientSecret, safeProxyUrl)
         mutex.withLock {
             val now = System.currentTimeMillis()
             cache[scope]?.takeIf { !forceRefresh && now - it.cachedAt < CACHE_MILLIS }?.let {
                 return@withLock it.accounts
             }
 
-            val token = issueToken(safeClientId, safeClientSecret)
-            val request = Request.Builder()
-                .url("$BASE_URL/api/v1/accounts")
-                .get()
-                .header("Accept", "application/json")
-                .header("Authorization", "Bearer $token")
-                .build()
-            val accounts = client.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    throw IllegalStateException(tossErrorMessage(body, "토스 계좌 조회에 실패했습니다."))
-                }
-                parseTossAccountOptions(body)
+            val accounts = if (safeProxyUrl.isNotBlank()) {
+                fetchAccountsViaProxy(
+                    safeProxyUrl,
+                    safeProxyToken,
+                    safeClientId,
+                    safeClientSecret,
+                )
+            } else {
+                fetchAccountsDirect(safeClientId, safeClientSecret)
             }
             cache[scope] = CacheEntry(now, accounts)
             accounts
+        }
+    }
+
+    private fun fetchAccountsDirect(clientId: String, clientSecret: String): List<TossAccountOption> {
+        val token = issueToken(clientId, clientSecret)
+        val request = Request.Builder()
+            .url("$BASE_URL/api/v1/accounts")
+            .get()
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer $token")
+            .build()
+        return client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(tossErrorMessage(body, "토스 계좌 조회에 실패했습니다."))
+            }
+            parseTossAccountOptions(body)
+        }
+    }
+
+    private fun fetchAccountsViaProxy(
+        proxyBaseUrl: String,
+        proxyApiToken: String,
+        clientId: String,
+        clientSecret: String,
+    ): List<TossAccountOption> {
+        val payload = JsonObject().apply {
+            addProperty("client_id", clientId)
+            addProperty("client_secret", clientSecret)
+        }
+        val request = Request.Builder()
+            .url("$proxyBaseUrl/api/toss-proxy/accounts")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer $proxyApiToken")
+            .build()
+        return client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(tossErrorMessage(body, "개인 서버를 통한 토스 계좌 조회에 실패했습니다."))
+            }
+            parseTossAccountOptions(body)
         }
     }
 
@@ -130,6 +181,7 @@ object TossAccountDiscoveryClient {
         val error = errorElement?.takeIf { it.isJsonObject }?.asJsonObject
         val errorCode = errorElement?.takeIf { it.isJsonPrimitive }?.asString
         return error?.string("message")
+            ?: root.string("detail")
             ?: root.string("error_description")
             ?: error?.string("code")
             ?: errorCode
@@ -139,9 +191,9 @@ object TossAccountDiscoveryClient {
     private fun JsonObject.string(key: String): String? =
         get(key)?.takeUnless { it.isJsonNull }?.asString?.takeIf(String::isNotBlank)
 
-    private fun credentialScope(clientId: String, clientSecret: String): String {
+    private fun credentialScope(clientId: String, clientSecret: String, proxyBaseUrl: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
-            .digest("$clientId::$clientSecret".toByteArray(Charsets.UTF_8))
+            .digest("$clientId::$clientSecret::$proxyBaseUrl".toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { byte -> "%02x".format(byte) }
     }
 }

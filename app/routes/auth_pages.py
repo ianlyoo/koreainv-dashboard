@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from app import api_client, auth, toss_api_client
+from app import api_client, auth, toss_api_client, toss_proxy_client
 from app.session_store import (
     AccountCredential,
     SessionData,
@@ -544,9 +544,12 @@ async def discover_toss_accounts(
         client_secret = target.app_secret
 
     try:
-        rows = await run_in_threadpool(
-            toss_api_client.get_accounts, client_id, client_secret
+        account_loader = (
+            toss_proxy_client.get_accounts
+            if toss_proxy_client.is_configured()
+            else toss_api_client.get_accounts
         )
+        rows = await run_in_threadpool(account_loader, client_id, client_secret)
     except Exception as exc:
         raise HTTPException(
             status_code=502, detail=f"Failed to load Toss accounts: {exc}"

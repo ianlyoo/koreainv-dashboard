@@ -25,26 +25,47 @@ import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 
+internal fun tossAccountLookupErrorMessage(error: Throwable): String {
+    val raw = error.message.orEmpty()
+    return if (raw.contains("IP address not allowed", ignoreCase = true) ||
+        raw.contains("access_denied", ignoreCase = true)
+    ) {
+        "현재 네트워크 IP가 토스증권에서 허용되지 않았습니다. 모바일 데이터에서는 개인 서버 연결을 사용하세요."
+    } else {
+        raw.ifBlank { "토스 계좌 조회에 실패했습니다." }
+    }
+}
+
 @Composable
 internal fun TossAccountPicker(
     clientId: String,
     clientSecret: String,
+    proxyBaseUrl: String = "",
+    proxyApiToken: String = "",
     selectedAccountSeq: String,
     isEnabled: Boolean = true,
     onAccountSelected: (String) -> Unit,
 ) {
-    var accounts by remember(clientId, clientSecret) { mutableStateOf<List<TossAccountOption>>(emptyList()) }
-    var isLoading by remember(clientId, clientSecret) { mutableStateOf(false) }
-    var message by remember(clientId, clientSecret) { mutableStateOf("") }
-    var expanded by remember(clientId, clientSecret) { mutableStateOf(false) }
-    var refreshNonce by remember(clientId, clientSecret) { mutableIntStateOf(0) }
+    var accounts by remember(clientId, clientSecret, proxyBaseUrl, proxyApiToken) { mutableStateOf<List<TossAccountOption>>(emptyList()) }
+    var isLoading by remember(clientId, clientSecret, proxyBaseUrl, proxyApiToken) { mutableStateOf(false) }
+    var message by remember(clientId, clientSecret, proxyBaseUrl, proxyApiToken) { mutableStateOf("") }
+    var expanded by remember(clientId, clientSecret, proxyBaseUrl, proxyApiToken) { mutableStateOf(false) }
+    var refreshNonce by remember(clientId, clientSecret, proxyBaseUrl, proxyApiToken) { mutableIntStateOf(0) }
     val safeClientId = clientId.trim()
     val safeClientSecret = clientSecret.trim()
+    val safeProxyUrl = proxyBaseUrl.trim()
+    val safeProxyToken = proxyApiToken.trim()
+    val proxyComplete = safeProxyUrl.isBlank() == safeProxyToken.isBlank()
 
-    LaunchedEffect(safeClientId, safeClientSecret, refreshNonce) {
+    LaunchedEffect(safeClientId, safeClientSecret, safeProxyUrl, safeProxyToken, refreshNonce) {
         if (safeClientId.isBlank() || safeClientSecret.isBlank()) {
             accounts = emptyList()
             message = "CLIENT ID와 CLIENT SECRET을 입력하면 계좌를 자동으로 조회합니다."
+            return@LaunchedEffect
+        }
+        if (!proxyComplete) {
+            accounts = emptyList()
+            message = "개인 서버 주소와 인증 토큰을 모두 입력하세요."
             return@LaunchedEffect
         }
         if (refreshNonce == 0) delay(700)
@@ -55,6 +76,8 @@ internal fun TossAccountPicker(
                 clientId = safeClientId,
                 clientSecret = safeClientSecret,
                 forceRefresh = refreshNonce > 0,
+                proxyBaseUrl = safeProxyUrl,
+                proxyApiToken = safeProxyToken,
             )
         }.onSuccess { loaded ->
             accounts = loaded
@@ -71,7 +94,7 @@ internal fun TossAccountPicker(
             }
         }.onFailure { error ->
             accounts = emptyList()
-            message = error.message ?: "토스 계좌 조회에 실패했습니다."
+            message = tossAccountLookupErrorMessage(error)
         }
         isLoading = false
     }
@@ -109,7 +132,7 @@ internal fun TossAccountPicker(
         }
         OutlinedButton(
             onClick = { refreshNonce += 1 },
-            enabled = isEnabled && !isLoading && safeClientId.isNotBlank() && safeClientSecret.isNotBlank(),
+            enabled = isEnabled && !isLoading && safeClientId.isNotBlank() && safeClientSecret.isNotBlank() && proxyComplete,
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (isLoading) {

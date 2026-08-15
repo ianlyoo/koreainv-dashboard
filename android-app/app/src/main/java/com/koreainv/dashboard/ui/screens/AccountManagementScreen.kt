@@ -71,6 +71,10 @@ internal data class ManagedAccountDraft(
     val appSecretInput: String = "",
     val hasStoredKey: Boolean = false,
     val hasStoredSecret: Boolean = false,
+    val useTossProxy: Boolean = false,
+    val proxyBaseUrlInput: String = "",
+    val proxyApiTokenInput: String = "",
+    val hasStoredProxyConfig: Boolean = false,
 )
 
 internal fun accountDraftsFrom(profile: AccountProfile): List<ManagedAccountDraft> =
@@ -83,6 +87,10 @@ internal fun accountDraftsFrom(profile: AccountProfile): List<ManagedAccountDraf
             acntPrdtCd = account.acntPrdtCd,
             hasStoredKey = account.appKey.isNotBlank(),
             hasStoredSecret = account.appSecret.isNotBlank(),
+            useTossProxy = Broker.normalize(account.broker) == Broker.TOSS &&
+                account.centralServerBaseUrl.isNotBlank() && account.centralServerApiToken.isNotBlank(),
+            hasStoredProxyConfig = account.centralServerBaseUrl.isNotBlank() &&
+                account.centralServerApiToken.isNotBlank(),
         )
     }
 
@@ -93,6 +101,15 @@ internal fun isAccountDraftComplete(draft: ManagedAccountDraft): Boolean {
     val secretOk = draft.appSecretInput.isNotBlank() || draft.hasStoredSecret
     val tossCredentialPairOk = draft.broker != Broker.TOSS ||
         draft.appKeyInput.isBlank() == draft.appSecretInput.isBlank()
+    val proxyValuesOk = if (draft.broker == Broker.TOSS && draft.useTossProxy) {
+        val pairOk = draft.proxyBaseUrlInput.isBlank() == draft.proxyApiTokenInput.isBlank()
+        val inputUrlOk = draft.proxyBaseUrlInput.isBlank() ||
+            draft.proxyBaseUrlInput.trim().startsWith("https://", ignoreCase = true)
+        pairOk && inputUrlOk && (draft.hasStoredProxyConfig ||
+            (draft.proxyBaseUrlInput.isNotBlank() && draft.proxyApiTokenInput.isNotBlank()))
+    } else {
+        true
+    }
     val canoOk = if (draft.broker == Broker.TOSS) {
         cano.isNotBlank() && cano.all(Char::isDigit) && cano.toLongOrNull()?.let { it > 0 } == true
     } else {
@@ -100,7 +117,7 @@ internal fun isAccountDraftComplete(draft: ManagedAccountDraft): Boolean {
     }
     val productOk = draft.broker == Broker.TOSS ||
         (productCode.length == ACCOUNT_PRODUCT_CODE_LENGTH && productCode.all(Char::isDigit))
-    return keyOk && secretOk && tossCredentialPairOk && canoOk && productOk
+    return keyOk && secretOk && tossCredentialPairOk && proxyValuesOk && canoOk && productOk
 }
 
 internal fun accountManagementValidationError(
@@ -137,8 +154,16 @@ internal fun resolveAccountDrafts(
         cano = cano,
         acntPrdtCd = acntPrdtCd,
         broker = broker,
-        centralServerBaseUrl = existing?.centralServerBaseUrl.orEmpty(),
-        centralServerApiToken = existing?.centralServerApiToken.orEmpty(),
+        centralServerBaseUrl = if (broker == Broker.TOSS && draft.useTossProxy) {
+            draft.proxyBaseUrlInput.trim().ifBlank { credentialSource?.centralServerBaseUrl.orEmpty() }
+        } else {
+            existing?.centralServerBaseUrl.orEmpty().takeIf { broker == Broker.KIS }.orEmpty()
+        },
+        centralServerApiToken = if (broker == Broker.TOSS && draft.useTossProxy) {
+            draft.proxyApiTokenInput.trim().ifBlank { credentialSource?.centralServerApiToken.orEmpty() }
+        } else {
+            existing?.centralServerApiToken.orEmpty().takeIf { broker == Broker.KIS }.orEmpty()
+        },
     )
 }
 
@@ -289,6 +314,9 @@ private fun AccountManagementCard(
     val storedTossAccount = storedAccount?.takeIf { Broker.normalize(it.broker) == Broker.TOSS }
     val tossClientId = if (hasCredentialEdits) draft.appKeyInput else storedTossAccount?.appKey.orEmpty()
     val tossClientSecret = if (hasCredentialEdits) draft.appSecretInput else storedTossAccount?.appSecret.orEmpty()
+    val hasProxyEdits = draft.proxyBaseUrlInput.isNotBlank() || draft.proxyApiTokenInput.isNotBlank()
+    val tossProxyUrl = if (hasProxyEdits) draft.proxyBaseUrlInput else storedTossAccount?.centralServerBaseUrl.orEmpty()
+    val tossProxyToken = if (hasProxyEdits) draft.proxyApiTokenInput else storedTossAccount?.centralServerApiToken.orEmpty()
     PremiumGlassCard {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
@@ -339,11 +367,52 @@ private fun AccountManagementCard(
                             appSecretInput = "",
                             hasStoredKey = false,
                             hasStoredSecret = false,
+                            useTossProxy = false,
+                            proxyBaseUrlInput = "",
+                            proxyApiTokenInput = "",
+                            hasStoredProxyConfig = false,
                         ),
                     )
                 },
             )
             Spacer(modifier = Modifier.height(12.dp))
+            if (draft.broker == Broker.TOSS) {
+                ManagementTossConnectionSelector(
+                    useProxy = draft.useTossProxy,
+                    isEnabled = isEnabled,
+                    onChange = { useProxy ->
+                        onUpdate(
+                            draft.copy(
+                                useTossProxy = useProxy,
+                                cano = "",
+                                proxyBaseUrlInput = "",
+                                proxyApiTokenInput = "",
+                                hasStoredProxyConfig = useProxy && draft.hasStoredProxyConfig,
+                            ),
+                        )
+                    },
+                )
+                if (draft.useTossProxy) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ManagementField(
+                        value = draft.proxyBaseUrlInput,
+                        onValueChange = { onUpdate(draft.copy(proxyBaseUrlInput = it, cano = "")) },
+                        label = stringResource(R.string.toss_proxy_url),
+                        isEnabled = isEnabled,
+                        supportingText = if (draft.hasStoredProxyConfig) stringResource(R.string.keep_existing_value) else null,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ManagementField(
+                        value = draft.proxyApiTokenInput,
+                        onValueChange = { onUpdate(draft.copy(proxyApiTokenInput = it, cano = "")) },
+                        label = stringResource(R.string.toss_proxy_token),
+                        isSecret = true,
+                        isEnabled = isEnabled,
+                        supportingText = if (draft.hasStoredProxyConfig) stringResource(R.string.keep_existing_value) else null,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
             ManagementField(
                 value = draft.appKeyInput,
                 onValueChange = {
@@ -381,6 +450,8 @@ private fun AccountManagementCard(
                     clientId = tossClientId,
                     clientSecret = tossClientSecret,
                     selectedAccountSeq = draft.cano,
+                    proxyBaseUrl = if (draft.useTossProxy) tossProxyUrl else "",
+                    proxyApiToken = if (draft.useTossProxy) tossProxyToken else "",
                     isEnabled = isEnabled,
                     onAccountSelected = { accountSeq ->
                         onUpdate(draft.copy(cano = accountSeq))
@@ -406,6 +477,31 @@ private fun AccountManagementCard(
                     keyboardType = KeyboardType.Number,
                     isEnabled = isEnabled,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagementTossConnectionSelector(
+    useProxy: Boolean,
+    isEnabled: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = stringResource(R.string.toss_connection_method), color = TextSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(false to R.string.toss_connection_direct, true to R.string.toss_connection_proxy).forEach { (value, label) ->
+                OutlinedButton(
+                    onClick = { onChange(value) },
+                    enabled = isEnabled,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (useProxy == value) TextGold.copy(alpha = 0.15f) else Color.Transparent,
+                    ),
+                ) {
+                    Text(text = stringResource(label), color = if (useProxy == value) TextGold else TextSecondary)
+                }
             }
         }
     }

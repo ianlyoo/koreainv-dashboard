@@ -48,6 +48,9 @@ private data class AccountDraft(
     val appSecret: String = "",
     val cano: String = "",
     val acntPrdtCd: String = "01",
+    val useTossProxy: Boolean = false,
+    val proxyBaseUrl: String = "",
+    val proxyApiToken: String = "",
 )
 
 private const val SETUP_ACCOUNT_NUMBER_LENGTH = 8
@@ -71,7 +74,10 @@ fun SetupScreen(
     fun submit() {
         if (accounts.any {
                 it.appKey.isBlank() || it.appSecret.isBlank() || it.cano.isBlank() ||
-                    (it.broker == Broker.KIS && it.acntPrdtCd.isBlank())
+                    (it.broker == Broker.KIS && it.acntPrdtCd.isBlank()) ||
+                    (it.broker == Broker.TOSS && it.useTossProxy &&
+                        (it.proxyBaseUrl.isBlank() || it.proxyApiToken.isBlank() ||
+                            !it.proxyBaseUrl.trim().startsWith("https://", ignoreCase = true)))
             }
         ) {
             errorMessage = accountsRequiredError
@@ -97,6 +103,8 @@ fun SetupScreen(
                         pin = pin,
                         label = account.label,
                         broker = account.broker,
+                        centralServerBaseUrl = if (account.useTossProxy) account.proxyBaseUrl else "",
+                        centralServerApiToken = if (account.useTossProxy) account.proxyApiToken else "",
                     )
                 },
                 pin = pin,
@@ -215,11 +223,45 @@ private fun AccountSection(
                             broker = broker,
                             cano = "",
                             acntPrdtCd = if (broker == Broker.KIS) "01" else "",
+                            useTossProxy = false,
+                            proxyBaseUrl = "",
+                            proxyApiToken = "",
                         ),
                     )
                 },
             )
             Spacer(modifier = Modifier.height(12.dp))
+            if (account.broker == Broker.TOSS) {
+                TossConnectionSelector(
+                    useProxy = account.useTossProxy,
+                    onChange = { useProxy ->
+                        onUpdate(
+                            account.copy(
+                                useTossProxy = useProxy,
+                                cano = "",
+                                proxyBaseUrl = if (useProxy) account.proxyBaseUrl else "",
+                                proxyApiToken = if (useProxy) account.proxyApiToken else "",
+                            ),
+                        )
+                    },
+                )
+                if (account.useTossProxy) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SetupField(
+                        value = account.proxyBaseUrl,
+                        onValueChange = { onUpdate(account.copy(proxyBaseUrl = it, cano = "")) },
+                        label = stringResource(R.string.toss_proxy_url),
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SetupField(
+                        value = account.proxyApiToken,
+                        onValueChange = { onUpdate(account.copy(proxyApiToken = it, cano = "")) },
+                        label = stringResource(R.string.toss_proxy_token),
+                        isSecret = true,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
             SetupField(
                 value = account.appKey,
                 onValueChange = {
@@ -252,6 +294,8 @@ private fun AccountSection(
                     clientId = account.appKey,
                     clientSecret = account.appSecret,
                     selectedAccountSeq = account.cano,
+                    proxyBaseUrl = if (account.useTossProxy) account.proxyBaseUrl else "",
+                    proxyApiToken = if (account.useTossProxy) account.proxyApiToken else "",
                     onAccountSelected = { accountSeq ->
                         onUpdate(account.copy(cano = accountSeq))
                     },
@@ -274,6 +318,26 @@ private fun AccountSection(
                     label = stringResource(R.string.account_product_code),
                     keyboardType = KeyboardType.Number,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TossConnectionSelector(useProxy: Boolean, onChange: (Boolean) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = stringResource(R.string.toss_connection_method), color = TextSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(false to R.string.toss_connection_direct, true to R.string.toss_connection_proxy).forEach { (value, label) ->
+                OutlinedButton(
+                    onClick = { onChange(value) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (useProxy == value) TextGold.copy(alpha = 0.15f) else Color.Transparent,
+                    ),
+                ) {
+                    Text(text = stringResource(label), color = if (useProxy == value) TextGold else TextSecondary)
+                }
             }
         }
     }

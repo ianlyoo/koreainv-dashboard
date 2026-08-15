@@ -182,6 +182,45 @@ class AccountManagementScreenLogicTest {
     }
 
     @Test
+    fun tossProxyConfigIsKeptEncryptedAndRequiresCompleteReplacementPair() {
+        val tossAccount = AccountCredential(
+            id = "acct_toss",
+            label = "토스",
+            appKey = "client",
+            appSecret = "secret",
+            cano = "1",
+            acntPrdtCd = "",
+            broker = Broker.TOSS,
+            centralServerBaseUrl = "https://proxy.example",
+            centralServerApiToken = "proxy-token",
+        )
+        val drafts = accountDraftsFrom(AccountProfile(listOf(tossAccount)))
+        val draft = drafts.single()
+
+        assertTrue(draft.useTossProxy)
+        assertTrue(draft.proxyBaseUrlInput.isBlank())
+        assertTrue(draft.proxyApiTokenInput.isBlank())
+        assertTrue(draft.hasStoredProxyConfig)
+        assertTrue(isAccountDraftComplete(draft))
+        assertFalse(isAccountDraftComplete(draft.copy(proxyBaseUrlInput = "https://new.example")))
+
+        val resolved = resolveAccountDrafts(listOf(tossAccount), drafts).single()
+        assertEquals("https://proxy.example", resolved.centralServerBaseUrl)
+        assertEquals("proxy-token", resolved.centralServerApiToken)
+
+        val direct = resolveAccountDrafts(
+            listOf(tossAccount),
+            listOf(draft.copy(useTossProxy = false)),
+        ).single()
+        val normalized = com.koreainv.dashboard.network.normalizeUpdatedAccounts(
+            listOf(tossAccount),
+            listOf(direct),
+        ).single()
+        assertEquals("", normalized.centralServerBaseUrl)
+        assertEquals("", normalized.centralServerApiToken)
+    }
+
+    @Test
     fun accountManagementValidationErrorReportsPinThenAccounts() {
         val drafts = accountDraftsFrom(AccountProfile(accounts = existing))
 
@@ -191,5 +230,11 @@ class AccountManagementScreenLogicTest {
             accountManagementValidationError(drafts + ManagedAccountDraft(), "1234", "accounts-error", "pin-error"),
         )
         assertNull(accountManagementValidationError(drafts, "1234", "accounts-error", "pin-error"))
+    }
+
+    @Test
+    fun tossIpAllowlistErrorRecommendsPrivateServer() {
+        val message = tossAccountLookupErrorMessage(IllegalStateException("IP address not allowed"))
+        assertTrue(message.contains("개인 서버"))
     }
 }
