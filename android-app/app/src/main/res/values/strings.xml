@@ -14,7 +14,7 @@
     <string name="pin_six_digits">PIN은 4자리 숫자여야 합니다.</string>
     <string name="pin_mismatch">PIN 확인값이 일치하지 않습니다.</string>
     <string name="credentials_required">APP_KEY, APP_SECRET, 계좌번호를 모두 입력하세요.</string>
-    <string name="setup_accounts_required">모든 계좌의 APP_KEY, APP_SECRET, 계좌번호, 상품코드를 입력하세요.</string>
+    <string name="setup_accounts_required">모든 계좌의 API 자격증명과 계좌 식별 정보를 입력하세요.</string>
     <string name="enter_pin">간편비밀번호 입력</string>
     <string name="login_failed">로그인에 실패했습니다: %1$d</string>
     <string name="login_failed_generic">로그인에 실패했습니다.</string>
@@ -29,6 +29,12 @@
     <string name="retry">다시 시도</string>
     <string name="app_key">APP_KEY</string>
     <string name="app_secret">APP_SECRET</string>
+    <string name="client_id">CLIENT ID</string>
+    <string name="client_secret">CLIENT SECRET</string>
+    <string name="broker">증권사</string>
+    <string name="broker_kis">한국투자증권</string>
+    <string name="broker_toss">토스증권</string>
+    <string name="toss_account_seq">계좌 순번(accountSeq)</string>
     <string name="account_number">계좌번호(CANO)</string>
     <string name="account_product_code">계좌상품코드(ACNT_PRDT_CD)</string>
     <string name="account_label">계좌 이름</string>

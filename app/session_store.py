@@ -16,6 +16,7 @@ class AccountCredential:
     app_secret: str
     cano: str
     acnt_prdt_cd: str
+    broker: str = "kis"
 
     @classmethod
     def make(
@@ -26,10 +27,16 @@ class AccountCredential:
         acnt_prdt_cd: str = "01",
         label: str = "계좌",
         account_id: str | None = None,
+        broker: str = "kis",
     ) -> "AccountCredential":
+        safe_broker = normalize_broker(broker)
         safe_cano = str(cano or "").strip()
-        safe_product = str(acnt_prdt_cd or "").strip() or "01"
-        derived_id = build_account_id(safe_cano, safe_product)
+        safe_product = (
+            (str(acnt_prdt_cd or "").strip() or "01")
+            if safe_broker == "kis"
+            else ""
+        )
+        derived_id = build_account_id(safe_cano, safe_product, safe_broker)
         final_id = str(account_id or "").strip() or derived_id
         return cls(
             account_id=final_id,
@@ -38,7 +45,12 @@ class AccountCredential:
             app_secret=str(app_secret or "").strip(),
             cano=safe_cano,
             acnt_prdt_cd=safe_product,
+            broker=safe_broker,
         )
+
+    @property
+    def supports_orders(self) -> bool:
+        return self.broker == "kis"
 
     def masked_metadata(self) -> dict[str, object]:
         key = self.app_key
@@ -53,9 +65,15 @@ class AccountCredential:
             "label": self.label,
             "masked_app_key": masked_key,
             "cano_masked": (
-                f"****{self.cano[-4:]}" if len(self.cano) >= 4 else "****"
+                f"#{self.cano}"
+                if self.broker == "toss"
+                else (f"****{self.cano[-4:]}" if len(self.cano) >= 4 else "****")
             ),
             "acnt_prdt_cd": self.acnt_prdt_cd,
+            "broker": self.broker,
+            "broker_name": "토스증권" if self.broker == "toss" else "한국투자증권",
+            "account_ref_label": "계좌 순번" if self.broker == "toss" else "계좌번호",
+            "supports_orders": self.supports_orders,
         }
 
 
@@ -82,6 +100,9 @@ class SessionData:
 
     @property
     def primary_account(self) -> AccountCredential:
+        primary_kis = self.primary_kis_account
+        if primary_kis is not None:
+            return primary_kis
         if self.accounts:
             return self.accounts[0]
         return AccountCredential.make(
@@ -91,14 +112,29 @@ class SessionData:
             self.acnt_prdt_cd or "01",
         )
 
+    @property
+    def primary_kis_account(self) -> AccountCredential | None:
+        return next((account for account in self.accounts if account.broker == "kis"), None)
 
-def build_account_id(cano: str, acnt_prdt_cd: str) -> str:
+
+def normalize_broker(value: object) -> str:
+    broker = str(value or "kis").strip().lower()
+    if broker not in {"kis", "toss"}:
+        raise ValueError(f"Unsupported broker: {broker}")
+    return broker
+
+
+def build_account_id(cano: str, acnt_prdt_cd: str, broker: str = "kis") -> str:
     """Stable account id derived from cano + product, never from secrets."""
     safe_cano = str(cano or "").strip()
     safe_product = str(acnt_prdt_cd or "").strip() or "01"
-    digest = hashlib.sha256(
-        f"{safe_cano}:{safe_product}".encode("utf-8")
-    ).hexdigest()[:16]
+    safe_broker = normalize_broker(broker)
+    identity = (
+        f"{safe_cano}:{safe_product}"
+        if safe_broker == "kis"
+        else f"{safe_broker}:{safe_cano}"
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
     return f"acct_{digest}"
 
 
@@ -126,7 +162,8 @@ def upsert_account(
     result = list(accounts)
     for index, existing in enumerate(result):
         if (
-            existing.cano == candidate.cano
+            existing.broker == candidate.broker
+            and existing.cano == candidate.cano
             and existing.acnt_prdt_cd == candidate.acnt_prdt_cd
         ):
             result[index] = candidate
@@ -140,8 +177,12 @@ def accounts_metadata(
 ) -> list[dict[str, object]]:
     """Masked, order-stable metadata for every account in a session."""
     metadata = [account.masked_metadata() for account in accounts]
-    for index, entry in enumerate(metadata):
-        entry["is_primary"] = index == 0
+    primary_id = next(
+        (account.account_id for account in accounts if account.broker == "kis"),
+        accounts[0].account_id if accounts else None,
+    )
+    for entry in metadata:
+        entry["is_primary"] = entry.get("account_id") == primary_id
     return metadata
 
 
@@ -182,7 +223,9 @@ def update_session_accounts(
         return
     if not accounts:
         return
-    primary = accounts[0]
+    primary = next(
+        (account for account in accounts if account.broker == "kis"), accounts[0]
+    )
     session.app_key = primary.app_key
     session.app_secret = primary.app_secret
     session.cano = primary.cano

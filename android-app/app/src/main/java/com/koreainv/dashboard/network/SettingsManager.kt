@@ -48,14 +48,15 @@ class SettingsManager(private val context: Context) {
 
     suspend fun saveCredentials(input: SetupInput): AppCredentials {
         val account = AccountCredential(
-            id = input.id.ifBlank { stableAccountId(input.cano, input.acntPrdtCd) },
-            label = input.label.ifBlank { defaultAccountLabel(input.cano) },
+            id = input.id.ifBlank { stableAccountId(input.cano, input.acntPrdtCd, input.broker) },
+            label = input.label.ifBlank { defaultAccountLabel(input.cano, input.broker) },
             appKey = input.appKey.trim(),
             appSecret = input.appSecret.trim(),
             cano = input.cano.trim(),
-            acntPrdtCd = input.acntPrdtCd.trim(),
+            acntPrdtCd = if (Broker.normalize(input.broker) == Broker.KIS) input.acntPrdtCd.trim() else "",
             centralServerBaseUrl = input.centralServerBaseUrl.trim(),
             centralServerApiToken = input.centralServerApiToken.trim(),
+            broker = Broker.normalize(input.broker),
         )
         val credentials = account.toAppCredentials()
         val salt = ByteArray(SALT_LENGTH_BYTES).also(secureRandom::nextBytes)
@@ -77,15 +78,16 @@ class SettingsManager(private val context: Context) {
         val accounts = inputs.map { input ->
             AccountCredential(
                 id = input.id.ifBlank {
-                    stableAccountId(input.cano, input.acntPrdtCd)
+                    stableAccountId(input.cano, input.acntPrdtCd, input.broker)
                 },
-                label = input.label.ifBlank { defaultAccountLabel(input.cano) },
+                label = input.label.ifBlank { defaultAccountLabel(input.cano, input.broker) },
                 appKey = input.appKey.trim(),
                 appSecret = input.appSecret.trim(),
                 cano = input.cano.trim(),
-                acntPrdtCd = input.acntPrdtCd.trim(),
+                acntPrdtCd = if (Broker.normalize(input.broker) == Broker.KIS) input.acntPrdtCd.trim() else "",
                 centralServerBaseUrl = input.centralServerBaseUrl.trim(),
                 centralServerApiToken = input.centralServerApiToken.trim(),
+                broker = Broker.normalize(input.broker),
             )
         }
         val salt = ByteArray(SALT_LENGTH_BYTES).also(secureRandom::nextBytes)

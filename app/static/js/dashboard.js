@@ -3058,7 +3058,7 @@
         let accountEditTarget = null;
 
         function sanitizeAccountNumberInput(input) {
-            const digits = input.value.replace(/\D/g, '').slice(0, 10);
+            const digits = input.value.replace(/\D/g, '').slice(0, 19);
             if (input.value !== digits) {
                 input.value = digits;
             }
@@ -3066,11 +3066,51 @@
 
         function parseAccountNumberInput(raw) {
             const digits = String(raw || '').replace(/\D/g, '');
+            const editBroker = document.getElementById('edit_account_broker')?.value;
+            const editModalActive = document.getElementById('accountEditModal')?.classList.contains('active');
+            if (editModalActive && editBroker === 'toss') {
+                return digits && Number(digits) > 0
+                    ? { cano: digits, acnt_prdt_cd: '' }
+                    : null;
+            }
             if (digits.length !== 8 && digits.length !== 10) return null;
             return {
                 cano: digits.slice(0, 8),
                 acnt_prdt_cd: digits.length === 10 ? digits.slice(8) : '01'
             };
+        }
+
+        function parseBrokerAccountInput(raw, broker) {
+            const digits = String(raw || '').replace(/\D/g, '');
+            if (broker === 'toss') {
+                return digits && Number(digits) > 0
+                    ? { cano: digits, acnt_prdt_cd: '' }
+                    : null;
+            }
+            return parseAccountNumberInput(digits);
+        }
+
+        function updateAccountFormFields(prefix) {
+            const broker = document.getElementById(`${prefix}_account_broker`)?.value || 'kis';
+            const isToss = broker === 'toss';
+            const keyLabel = document.getElementById(`${prefix}_account_key_label`);
+            const secretLabel = document.getElementById(`${prefix}_account_secret_label`);
+            const refLabel = document.getElementById(`${prefix}_account_ref_label`);
+            const refInput = document.getElementById(`${prefix}_account_cano`);
+            if (keyLabel) keyLabel.textContent = isToss ? 'CLIENT ID' : 'APP KEY';
+            if (secretLabel) secretLabel.textContent = isToss ? 'CLIENT SECRET' : 'APP SECRET';
+            if (refLabel) refLabel.textContent = isToss ? '계좌 순번 (accountSeq)' : '계좌번호 (8자리 + 상품코드 2자리)';
+            if (refInput) {
+                refInput.maxLength = isToss ? 19 : 10;
+                refInput.placeholder = isToss ? '예: 1' : '예: 1234567801';
+            }
+        }
+
+        function handleAccountBrokerChange(prefix) {
+            document.getElementById(`${prefix}_account_app_key`).value = '';
+            document.getElementById(`${prefix}_account_app_secret`).value = '';
+            document.getElementById(`${prefix}_account_cano`).value = '';
+            updateAccountFormFields(prefix);
         }
 
         function openAccountModal() {
@@ -3088,6 +3128,7 @@
             document.removeEventListener('keydown', handleAccountModalKeydown);
             clearAccountNotice();
             document.getElementById('accountAddForm').reset();
+            updateAccountFormFields('new');
         }
 
         function handleAccountOverlayClick(event) {
@@ -3165,6 +3206,10 @@
                 const safePrdtAttr = escapeAttributeValue(String(acc.acnt_prdt_cd || ''));
                 const safeCanoAttr = escapeAttributeValue(String(acc.cano || ''));
                 const safeMaskedCanoAttr = escapeAttributeValue(String(acc.cano_masked || ''));
+                const broker = String(acc.broker || 'kis');
+                const brokerName = escapeHtml(String(acc.broker_name || (broker === 'toss' ? '토스증권' : '한국투자증권')));
+                const refLabel = escapeHtml(String(acc.account_ref_label || '계좌번호'));
+                const brokerBadge = `<span class="badge badge-account">${brokerName}</span>`;
                 const primaryBadge = acc.is_primary
                     ? '<span class="badge badge-account-primary">기본</span>'
                     : '';
@@ -3173,10 +3218,11 @@
                         <div class="account-list-item-main">
                             <div class="account-list-item-title">
                                 <strong>${safeLabel}</strong>
+                                ${brokerBadge}
                                 ${primaryBadge}
                             </div>
                             <div class="account-list-item-meta">
-                                계좌 ${safeCano} · 상품코드 ${safePrdt}
+                                ${refLabel} ${safeCano}${broker === 'kis' ? ` · 상품코드 ${safePrdt}` : ''}
                             </div>
                         </div>
                         <div class="account-list-item-actions">
@@ -3214,16 +3260,17 @@
             event.preventDefault();
             const submitBtn = document.getElementById('accountAddSubmitBtn');
             const label = document.getElementById('new_account_label').value.trim();
+            const broker = document.getElementById('new_account_broker').value;
             const appKey = document.getElementById('new_account_app_key').value.trim();
             const appSecret = document.getElementById('new_account_app_secret').value;
-            const parsed = parseAccountNumberInput(document.getElementById('new_account_cano').value);
+            const parsed = parseBrokerAccountInput(document.getElementById('new_account_cano').value, broker);
             const pin = document.getElementById('new_account_pin').value;
 
             const errors = [];
             if (!label) errors.push('계좌 이름을 입력하세요.');
-            if (!appKey) errors.push('APP KEY를 입력하세요.');
-            if (!appSecret) errors.push('APP SECRET을 입력하세요.');
-            if (!parsed) errors.push('계좌번호는 숫자 8자리 또는 10자리로 입력하세요.');
+            if (!appKey) errors.push(broker === 'toss' ? 'CLIENT ID를 입력하세요.' : 'APP KEY를 입력하세요.');
+            if (!appSecret) errors.push(broker === 'toss' ? 'CLIENT SECRET을 입력하세요.' : 'APP SECRET을 입력하세요.');
+            if (!parsed) errors.push(broker === 'toss' ? '토스 계좌 순번을 입력하세요.' : '계좌번호는 숫자 8자리 또는 10자리로 입력하세요.');
             if (!/^\d{4,6}$/.test(pin)) errors.push('PIN은 4~6자리 숫자로 입력하세요.');
             if (errors.length) {
                 showAccountNotice(errors.join(' '), true);
@@ -3241,6 +3288,7 @@
                     body: JSON.stringify({
                         pin,
                         label,
+                        broker,
                         app_key: appKey,
                         app_secret: appSecret,
                         cano: parsed.cano,
@@ -3251,6 +3299,7 @@
                 if (res.ok && data.status === 'success') {
                     showAccountNotice(data.message || '계좌가 추가되었습니다.', false);
                     document.getElementById('accountAddForm').reset();
+                    updateAccountFormFields('new');
                     await loadAccountList(true);
                     syncData(true);
                 } else {
@@ -3352,6 +3401,7 @@
             const label = String(
                 account.label || btn.getAttribute('data-account-label') || '계좌'
             );
+            const broker = String(account.broker || 'kis');
             const product = String(
                 account.acnt_prdt_cd || btn.getAttribute('data-account-product') || '01'
             );
@@ -3365,6 +3415,8 @@
             const labelHeader = document.getElementById('accountEditLabel');
             if (labelHeader) labelHeader.innerText = label;
             document.getElementById('edit_account_label').value = label;
+            document.getElementById('edit_account_broker').value = broker;
+            updateAccountFormFields('edit');
             document.getElementById('edit_account_app_key').value = '';
             document.getElementById('edit_account_app_secret').value = '';
             document.getElementById('edit_account_pin').value = '';
@@ -3372,6 +3424,7 @@
             const canoInput = document.getElementById('edit_account_cano');
             if (fullCano) {
                 canoInput.value = fullCano + product;
+                if (broker === 'toss') canoInput.value = fullCano;
                 setAccountEditCanoHint('');
             } else {
                 canoInput.value = '';
@@ -3431,6 +3484,7 @@
             if (!accountEditTarget) return;
             const saveBtn = document.getElementById('accountEditSaveBtn');
             const label = document.getElementById('edit_account_label').value.trim();
+            const broker = document.getElementById('edit_account_broker').value;
             const appKey = document.getElementById('edit_account_app_key').value.trim();
             const appSecret = document.getElementById('edit_account_app_secret').value;
             const accountNumber = document.getElementById('edit_account_cano').value.trim();
@@ -3439,14 +3493,14 @@
 
             const errors = [];
             if (!label) errors.push('계좌 이름을 입력해 주세요.');
-            if (accountNumber && !parsed) errors.push('계좌번호를 숫자 8자리 또는 10자리로 입력해 주세요.');
+            if (accountNumber && !parsed) errors.push(broker === 'toss' ? '토스 계좌 순번을 입력해 주세요.' : '계좌번호를 숫자 8자리 또는 10자리로 입력해 주세요.');
             if (!/^\d{4,6}$/.test(pin)) errors.push('PIN은 4~6자리 숫자로 입력해 주세요.');
             if (errors.length) {
                 showAccountEditError(errors.join(' '));
                 return;
             }
 
-            const body = { label, pin };
+            const body = { label, pin, broker };
             if (parsed) {
                 body.cano = parsed.cano;
                 body.acnt_prdt_cd = parsed.acnt_prdt_cd;

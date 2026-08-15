@@ -9,7 +9,15 @@ data class AppCredentials(
     val acntPrdtCd: String,
     val centralServerBaseUrl: String = "",
     val centralServerApiToken: String = "",
+    val broker: String = Broker.KIS,
 )
+
+object Broker {
+    const val KIS = "kis"
+    const val TOSS = "toss"
+
+    fun normalize(value: String?): String = if (value?.trim()?.lowercase() == TOSS) TOSS else KIS
+}
 
 /**
  * Account credential with stable id and display label, used for multi-account
@@ -24,6 +32,7 @@ data class AccountCredential(
     val acntPrdtCd: String,
     val centralServerBaseUrl: String = "",
     val centralServerApiToken: String = "",
+    val broker: String = Broker.KIS,
 ) {
     fun toAppCredentials(): AppCredentials = AppCredentials(
         appKey = appKey,
@@ -32,6 +41,7 @@ data class AccountCredential(
         acntPrdtCd = acntPrdtCd,
         centralServerBaseUrl = centralServerBaseUrl,
         centralServerApiToken = centralServerApiToken,
+        broker = broker,
     )
 }
 
@@ -39,7 +49,9 @@ data class AccountProfile(
     val accounts: List<AccountCredential>,
 ) {
     val primary: AccountCredential
-        get() = accounts.firstOrNull() ?: throw IllegalStateException("EMPTY_ACCOUNT_PROFILE")
+        get() = accounts.firstOrNull { Broker.normalize(it.broker) == Broker.KIS }
+            ?: accounts.firstOrNull()
+            ?: throw IllegalStateException("EMPTY_ACCOUNT_PROFILE")
 
     fun toAppCredentials(): List<AppCredentials> = accounts.map { it.toAppCredentials() }
 }
@@ -54,6 +66,7 @@ data class SetupInput(
     val centralServerApiToken: String = "",
     val id: String = "",
     val label: String = "",
+    val broker: String = Broker.KIS,
 )
 
 sealed interface AppLockState {
@@ -106,6 +119,7 @@ data class Holding(
     val quoteTrKey: String? = null,
     val accountLabel: String? = null,
     val accountId: String? = null,
+    val broker: String = Broker.KIS,
 )
 
 data class UsMarketStatus(
@@ -170,6 +184,7 @@ data class AuthToken(
 /** Stable token scope derived from credential identity so tokens never leak across accounts. */
 internal fun tokenScope(credentials: AppCredentials): String {
     val raw = listOf(
+        Broker.normalize(credentials.broker),
         credentials.appKey.trim(),
         credentials.appSecret.trim(),
         credentials.cano.trim(),

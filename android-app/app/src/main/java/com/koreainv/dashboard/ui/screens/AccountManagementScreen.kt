@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.AccountCredential
 import com.koreainv.dashboard.network.AccountProfile
+import com.koreainv.dashboard.network.Broker
 import com.koreainv.dashboard.network.defaultAccountLabel
 import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.SurfaceBorder
@@ -61,6 +62,7 @@ internal const val ACCOUNT_PIN_LENGTH = 4
  * account without exposing its credentials.
  */
 internal data class ManagedAccountDraft(
+    val broker: String = Broker.KIS,
     val id: String = "",
     val label: String = "",
     val cano: String = "",
@@ -75,6 +77,7 @@ internal fun accountDraftsFrom(profile: AccountProfile): List<ManagedAccountDraf
     profile.accounts.map { account ->
         ManagedAccountDraft(
             id = account.id,
+            broker = Broker.normalize(account.broker),
             label = account.label,
             cano = account.cano,
             acntPrdtCd = account.acntPrdtCd,
@@ -88,8 +91,13 @@ internal fun isAccountDraftComplete(draft: ManagedAccountDraft): Boolean {
     val productCode = draft.acntPrdtCd.trim()
     val keyOk = draft.appKeyInput.isNotBlank() || draft.hasStoredKey
     val secretOk = draft.appSecretInput.isNotBlank() || draft.hasStoredSecret
-    val canoOk = cano.length == ACCOUNT_NUMBER_LENGTH && cano.all(Char::isDigit)
-    val productOk = productCode.length == ACCOUNT_PRODUCT_CODE_LENGTH && productCode.all(Char::isDigit)
+    val canoOk = if (draft.broker == Broker.TOSS) {
+        cano.isNotBlank() && cano.all(Char::isDigit) && cano.toLongOrNull()?.let { it > 0 } == true
+    } else {
+        cano.length == ACCOUNT_NUMBER_LENGTH && cano.all(Char::isDigit)
+    }
+    val productOk = draft.broker == Broker.TOSS ||
+        (productCode.length == ACCOUNT_PRODUCT_CODE_LENGTH && productCode.all(Char::isDigit))
     return keyOk && secretOk && canoOk && productOk
 }
 
@@ -116,14 +124,17 @@ internal fun resolveAccountDrafts(
 ): List<AccountCredential> = drafts.map { draft ->
     val existing = original.firstOrNull { it.id == draft.id }
     val cano = draft.cano.trim()
-    val acntPrdtCd = draft.acntPrdtCd.trim()
+    val broker = Broker.normalize(draft.broker)
+    val credentialSource = existing?.takeIf { Broker.normalize(it.broker) == broker }
+    val acntPrdtCd = if (broker == Broker.KIS) draft.acntPrdtCd.trim() else ""
     AccountCredential(
         id = draft.id,
-        label = draft.label.trim().ifBlank { defaultAccountLabel(cano) },
-        appKey = draft.appKeyInput.trim().ifBlank { existing?.appKey.orEmpty() },
-        appSecret = draft.appSecretInput.trim().ifBlank { existing?.appSecret.orEmpty() },
+        label = draft.label.trim().ifBlank { defaultAccountLabel(cano, broker) },
+        appKey = draft.appKeyInput.trim().ifBlank { credentialSource?.appKey.orEmpty() },
+        appSecret = draft.appSecretInput.trim().ifBlank { credentialSource?.appSecret.orEmpty() },
         cano = cano,
         acntPrdtCd = acntPrdtCd,
+        broker = broker,
         centralServerBaseUrl = existing?.centralServerBaseUrl.orEmpty(),
         centralServerApiToken = existing?.centralServerApiToken.orEmpty(),
     )
@@ -196,7 +207,7 @@ fun AccountManagementScreen(
                     AccountManagementCard(
                         index = index,
                         draft = draft,
-                        isPrimary = index == 0,
+                        isPrimary = draft.broker == Broker.KIS && drafts.take(index).none { it.broker == Broker.KIS },
                         isRemovable = drafts.size > 1,
                         isEnabled = !isSaving,
                         onUpdate = { updated ->
@@ -307,10 +318,28 @@ private fun AccountManagementCard(
                 isEnabled = isEnabled,
             )
             Spacer(modifier = Modifier.height(12.dp))
+            ManagementBrokerSelector(
+                broker = draft.broker,
+                isEnabled = isEnabled,
+                onChange = { broker ->
+                    onUpdate(
+                        draft.copy(
+                            broker = broker,
+                            cano = "",
+                            acntPrdtCd = if (broker == Broker.KIS) "01" else "",
+                            appKeyInput = "",
+                            appSecretInput = "",
+                            hasStoredKey = false,
+                            hasStoredSecret = false,
+                        ),
+                    )
+                },
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             ManagementField(
                 value = draft.appKeyInput,
                 onValueChange = { onUpdate(draft.copy(appKeyInput = it)) },
-                label = stringResource(R.string.app_key),
+                label = stringResource(if (draft.broker == Broker.TOSS) R.string.client_id else R.string.app_key),
                 isSecret = true,
                 isEnabled = isEnabled,
                 supportingText = if (draft.hasStoredKey) stringResource(R.string.keep_existing_value) else null,
@@ -319,7 +348,7 @@ private fun AccountManagementCard(
             ManagementField(
                 value = draft.appSecretInput,
                 onValueChange = { onUpdate(draft.copy(appSecretInput = it)) },
-                label = stringResource(R.string.app_secret),
+                label = stringResource(if (draft.broker == Broker.TOSS) R.string.client_secret else R.string.app_secret),
                 isSecret = true,
                 isEnabled = isEnabled,
                 supportingText = if (draft.hasStoredSecret) stringResource(R.string.keep_existing_value) else null,
@@ -328,22 +357,50 @@ private fun AccountManagementCard(
             ManagementField(
                 value = draft.cano,
                 onValueChange = {
-                    onUpdate(draft.copy(cano = it.filter(Char::isDigit).take(ACCOUNT_NUMBER_LENGTH)))
+                    val maxLength = if (draft.broker == Broker.TOSS) 19 else ACCOUNT_NUMBER_LENGTH
+                    onUpdate(draft.copy(cano = it.filter(Char::isDigit).take(maxLength)))
                 },
-                label = stringResource(R.string.account_number),
+                label = stringResource(if (draft.broker == Broker.TOSS) R.string.toss_account_seq else R.string.account_number),
                 keyboardType = KeyboardType.Number,
                 isEnabled = isEnabled,
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            ManagementField(
-                value = draft.acntPrdtCd,
-                onValueChange = {
-                    onUpdate(draft.copy(acntPrdtCd = it.filter(Char::isDigit).take(ACCOUNT_PRODUCT_CODE_LENGTH)))
-                },
-                label = stringResource(R.string.account_product_code),
-                keyboardType = KeyboardType.Number,
-                isEnabled = isEnabled,
-            )
+            if (draft.broker == Broker.KIS) {
+                Spacer(modifier = Modifier.height(12.dp))
+                ManagementField(
+                    value = draft.acntPrdtCd,
+                    onValueChange = {
+                        onUpdate(draft.copy(acntPrdtCd = it.filter(Char::isDigit).take(ACCOUNT_PRODUCT_CODE_LENGTH)))
+                    },
+                    label = stringResource(R.string.account_product_code),
+                    keyboardType = KeyboardType.Number,
+                    isEnabled = isEnabled,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagementBrokerSelector(
+    broker: String,
+    isEnabled: Boolean,
+    onChange: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = stringResource(R.string.broker), color = TextSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(Broker.KIS to R.string.broker_kis, Broker.TOSS to R.string.broker_toss).forEach { (value, label) ->
+                OutlinedButton(
+                    onClick = { onChange(value) },
+                    enabled = isEnabled,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (broker == value) TextGold.copy(alpha = 0.15f) else Color.Transparent,
+                    ),
+                ) {
+                    Text(text = stringResource(label), color = if (broker == value) TextGold else TextSecondary)
+                }
+            }
         }
     }
 }

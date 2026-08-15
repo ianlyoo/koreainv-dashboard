@@ -198,7 +198,7 @@ function activateView(viewId) {
     }
 }
 
-let accountCards = [{ label: '', appKey: '', appSecret: '', account: '' }];
+let accountCards = [{ broker: 'kis', label: '', appKey: '', appSecret: '', account: '' }];
 
 function escapeAttributeValue(value) {
     return String(value == null ? '' : value)
@@ -213,6 +213,8 @@ function accountCardTemplate(card, index) {
     const removeAttrs = isLast
         ? 'disabled aria-disabled="true"'
         : '';
+    const broker = card.broker === 'toss' ? 'toss' : 'kis';
+    const isToss = broker === 'toss';
     return `
         <div class="account-card" role="listitem" data-account-index="${index}">
             <div class="account-card-header">
@@ -227,24 +229,31 @@ function accountCardTemplate(card, index) {
                 </button>
             </div>
             <div class="form-group">
+                <label for="account_${index}_broker">증권사</label>
+                <select id="account_${index}_broker" name="broker" onchange="changeAccountBroker(${index}, this.value)">
+                    <option value="kis" ${broker === 'kis' ? 'selected' : ''}>한국투자증권 (KIS)</option>
+                    <option value="toss" ${broker === 'toss' ? 'selected' : ''}>토스증권</option>
+                </select>
+            </div>
+            <div class="form-group">
                 <label for="account_${index}_label">계좌 이름</label>
                 <input type="text" id="account_${index}_label" name="label" required autocomplete="off"
                     placeholder="예: 주식 계좌" value="${escapeAttributeValue(card.label)}">
             </div>
             <div class="form-group">
-                <label for="account_${index}_app_key">APP KEY</label>
+                <label for="account_${index}_app_key">${isToss ? 'CLIENT ID' : 'APP KEY'}</label>
                 <input type="text" id="account_${index}_app_key" name="app_key" required autocomplete="off"
-                    placeholder="한국투자증권 APP KEY" value="${escapeAttributeValue(card.appKey)}">
+                    placeholder="${isToss ? '토스증권 CLIENT ID' : '한국투자증권 APP KEY'}" value="${escapeAttributeValue(card.appKey)}">
             </div>
             <div class="form-group">
-                <label for="account_${index}_app_secret">APP SECRET</label>
+                <label for="account_${index}_app_secret">${isToss ? 'CLIENT SECRET' : 'APP SECRET'}</label>
                 <input type="password" id="account_${index}_app_secret" name="app_secret" required
-                    autocomplete="new-password" placeholder="한국투자증권 APP SECRET" value="${escapeAttributeValue(card.appSecret)}">
+                    autocomplete="new-password" placeholder="${isToss ? '토스증권 CLIENT SECRET' : '한국투자증권 APP SECRET'}" value="${escapeAttributeValue(card.appSecret)}">
             </div>
             <div class="form-group">
-                <label for="account_${index}_cano">계좌번호 (8자리 + 상품코드 2자리)</label>
+                <label for="account_${index}_cano">${isToss ? '계좌 순번 (accountSeq)' : '계좌번호 (8자리 + 상품코드 2자리)'}</label>
                 <input type="text" id="account_${index}_cano" name="cano" required autocomplete="off"
-                    inputmode="numeric" maxlength="10" placeholder="예: 1234567801"
+                    inputmode="numeric" maxlength="${isToss ? '19' : '10'}" placeholder="${isToss ? '예: 1' : '예: 1234567801'}"
                     oninput="sanitizeAccountInput(this)" value="${escapeAttributeValue(card.account)}">
             </div>
         </div>
@@ -268,6 +277,7 @@ function syncAccountCardState() {
         };
         if (accountCards[index]) {
             accountCards[index] = {
+                broker: read('broker') || 'kis',
                 label: read('label'),
                 appKey: read('app_key'),
                 appSecret: read('app_secret'),
@@ -279,7 +289,7 @@ function syncAccountCardState() {
 
 function addAccountCard() {
     syncAccountCardState();
-    accountCards.push({ label: '', appKey: '', appSecret: '', account: '' });
+    accountCards.push({ broker: 'kis', label: '', appKey: '', appSecret: '', account: '' });
     renderAccountCards();
     const newIndex = accountCards.length - 1;
     const firstInput = document.getElementById(`account_${newIndex}_label`);
@@ -296,10 +306,21 @@ function removeAccountCard(index) {
 }
 
 function sanitizeAccountInput(input) {
-    const digits = input.value.replace(/\D/g, '').slice(0, 10);
+    const maxLength = Number(input.maxLength) > 0 ? Number(input.maxLength) : 19;
+    const digits = input.value.replace(/\D/g, '').slice(0, maxLength);
     if (input.value !== digits) {
         input.value = digits;
     }
+}
+
+function changeAccountBroker(index, broker) {
+    syncAccountCardState();
+    if (accountCards[index]) {
+        accountCards[index].broker = broker === 'toss' ? 'toss' : 'kis';
+        accountCards[index].account = '';
+    }
+    renderAccountCards();
+    document.getElementById(`account_${index}_cano`)?.focus();
 }
 
 function parseAccountNumber(raw) {
@@ -311,6 +332,16 @@ function parseAccountNumber(raw) {
     };
 }
 
+function parseBrokerAccount(raw, broker) {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (broker === 'toss') {
+        return digits && Number(digits) > 0
+            ? { cano: digits, acnt_prdt_cd: '' }
+            : null;
+    }
+    return parseAccountNumber(digits);
+}
+
 function validateSetupForm() {
     const errors = [];
     const accounts = [];
@@ -318,28 +349,30 @@ function validateSetupForm() {
 
     accountCards.forEach((card, index) => {
         const label = card.label.trim();
+        const broker = card.broker === 'toss' ? 'toss' : 'kis';
         const appKey = card.appKey.trim();
         const appSecret = card.appSecret;
-        const parsed = parseAccountNumber(card.account);
+        const parsed = parseBrokerAccount(card.account, broker);
 
         if (!label) {
             errors.push(`계좌 ${index + 1}: 계좌 이름을 입력하세요.`);
             invalidFields.push(`account_${index}_label`);
         }
         if (!appKey) {
-            errors.push(`계좌 ${index + 1}: APP KEY를 입력하세요.`);
+            errors.push(`계좌 ${index + 1}: ${broker === 'toss' ? 'CLIENT ID' : 'APP KEY'}를 입력하세요.`);
             invalidFields.push(`account_${index}_app_key`);
         }
         if (!appSecret) {
-            errors.push(`계좌 ${index + 1}: APP SECRET을 입력하세요.`);
+            errors.push(`계좌 ${index + 1}: ${broker === 'toss' ? 'CLIENT SECRET' : 'APP SECRET'}을 입력하세요.`);
             invalidFields.push(`account_${index}_app_secret`);
         }
         if (!parsed) {
-            errors.push(`계좌 ${index + 1}: 계좌번호는 숫자 8자리 또는 10자리로 입력하세요.`);
+            errors.push(`계좌 ${index + 1}: ${broker === 'toss' ? '토스 계좌 순번을 입력하세요.' : '계좌번호는 숫자 8자리 또는 10자리로 입력하세요.'}`);
             invalidFields.push(`account_${index}_cano`);
         } else {
             accounts.push({
                 label,
+                broker,
                 app_key: appKey,
                 app_secret: appSecret,
                 cano: parsed.cano,

@@ -610,22 +610,29 @@
                     <form class="scheduled-order-form account-add-form" id="accountAddForm" onsubmit="submitAddAccount(event)" novalidate>
                         <div class="scheduled-order-form-grid">
                             <label class="scheduled-order-field">
+                                <span>증권사</span>
+                                <select id="new_account_broker" name="broker" onchange="handleAccountBrokerChange('new')">
+                                    <option value="kis">한국투자증권 (KIS)</option>
+                                    <option value="toss">토스증권</option>
+                                </select>
+                            </label>
+                            <label class="scheduled-order-field">
                                 <span>계좌 이름</span>
                                 <input type="text" id="new_account_label" name="label" required autocomplete="off"
                                     placeholder="예: 주식 계좌">
                             </label>
                             <label class="scheduled-order-field">
-                                <span>APP KEY</span>
+                                <span id="new_account_key_label">APP KEY</span>
                                 <input type="text" id="new_account_app_key" name="app_key" required autocomplete="off"
                                     placeholder="한국투자증권 APP KEY">
                             </label>
                             <label class="scheduled-order-field">
-                                <span>APP SECRET</span>
+                                <span id="new_account_secret_label">APP SECRET</span>
                                 <input type="password" id="new_account_app_secret" name="app_secret" required
                                     autocomplete="new-password" placeholder="한국투자증권 APP SECRET">
                             </label>
                             <label class="scheduled-order-field">
-                                <span>계좌번호 (8자리 + 상품코드 2자리)</span>
+                                <span id="new_account_ref_label">계좌번호 (8자리 + 상품코드 2자리)</span>
                                 <input type="text" id="new_account_cano" name="cano" required autocomplete="off"
                                     inputmode="numeric" maxlength="10" placeholder="예: 1234567801"
                                     oninput="sanitizeAccountNumberInput(this)">
@@ -691,27 +698,34 @@
             <div class="profit-detail-body account-edit-body">
                 <form class="scheduled-order-form account-edit-form" id="accountEditForm"
                     onsubmit="submitEditAccount(event)" novalidate>
-                    <div class="scheduled-order-form-grid">
+                        <div class="scheduled-order-form-grid">
+                        <label class="scheduled-order-field">
+                            <span>증권사</span>
+                            <select id="edit_account_broker" name="broker" onchange="handleAccountBrokerChange('edit')">
+                                <option value="kis">한국투자증권 (KIS)</option>
+                                <option value="toss">토스증권</option>
+                            </select>
+                        </label>
                         <label class="scheduled-order-field">
                             <span>계좌 이름</span>
                             <input type="text" id="edit_account_label" name="label" required autocomplete="off"
                                 placeholder="예: 주식 계좌">
                         </label>
                         <label class="scheduled-order-field">
-                            <span>계좌번호 (8자리 + 상품코드 2자리)</span>
+                            <span id="edit_account_ref_label">계좌번호 (8자리 + 상품코드 2자리)</span>
                             <input type="text" id="edit_account_cano" name="cano" autocomplete="off"
                                 inputmode="numeric" maxlength="10" placeholder="변경 시에만 새 계좌번호 입력"
                                 oninput="sanitizeAccountNumberInput(this)">
                             <span class="account-field-hint" id="edit_account_cano_hint"></span>
                         </label>
                         <label class="scheduled-order-field">
-                            <span>APP KEY</span>
+                            <span id="edit_account_key_label">APP KEY</span>
                             <input type="text" id="edit_account_app_key" name="app_key" autocomplete="off"
                                 placeholder="변경 시에만 입력">
                             <span class="account-field-hint">빈 값이면 기존 키 유지</span>
                         </label>
                         <label class="scheduled-order-field">
-                            <span>APP SECRET</span>
+                            <span id="edit_account_secret_label">APP SECRET</span>
                             <input type="password" id="edit_account_app_secret" name="app_secret"
                                 autocomplete="new-password" placeholder="변경 시에만 입력">
                             <span class="account-field-hint">빈 값이면 기존 키 유지</span>

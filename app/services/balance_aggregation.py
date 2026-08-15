@@ -4,7 +4,7 @@ import logging
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 
-from app import api_client
+from app import api_client, toss_api_client
 from app.session_store import AccountCredential
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ def _annotate_items(
         entry = dict(item)
         entry["account_id"] = account.account_id
         entry["account_label"] = account.label
+        entry["broker"] = account.broker
         annotated.append(entry)
     return annotated
 
@@ -131,6 +132,13 @@ def fetch_aggregated_balances(
 
     def fetch_one(account: AccountCredential):
         try:
+            if account.broker == "toss":
+                domestic, overseas = toss_api_client.get_balances(
+                    account.app_key,
+                    account.app_secret,
+                    account.cano,
+                )
+                return account, domestic, overseas, None
             token = api_client.get_access_token(account.app_key, account.app_secret)
             if not token:
                 raise RuntimeError("Failed to get access token")
@@ -175,6 +183,7 @@ def fetch_aggregated_balances(
         {
             "account_id": account.account_id,
             "account_label": account.label,
+            "broker": account.broker,
             "error": error,
         }
         for account, _domestic, _overseas, error in results

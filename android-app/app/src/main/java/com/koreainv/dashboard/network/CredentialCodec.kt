@@ -4,7 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonParser
 import java.security.MessageDigest
 
-internal const val ACCOUNT_PROFILE_VERSION = 2
+internal const val ACCOUNT_PROFILE_VERSION = 3
 
 internal data class AccountProfileEnvelope(
     val version: Int,
@@ -33,7 +33,26 @@ internal object AccountProfileCodec {
                 gson.fromJson(payload, AccountProfileEnvelope::class.java)
             }.getOrNull() ?: return null
             if (envelope.accounts.isEmpty()) return null
-            return envelope.accounts
+            return envelope.accounts.map { account ->
+                val broker = Broker.normalize(account.broker)
+                val cano = account.cano.orEmpty()
+                val productCode = if (broker == Broker.KIS) {
+                    account.acntPrdtCd.orEmpty().ifBlank { "01" }
+                } else {
+                    ""
+                }
+                account.copy(
+                    id = account.id.orEmpty().ifBlank { stableAccountId(cano, productCode, broker) },
+                    label = account.label.orEmpty().ifBlank { defaultAccountLabel(cano, broker) },
+                    appKey = account.appKey.orEmpty(),
+                    appSecret = account.appSecret.orEmpty(),
+                    cano = cano,
+                    broker = broker,
+                    acntPrdtCd = productCode,
+                    centralServerBaseUrl = account.centralServerBaseUrl.orEmpty(),
+                    centralServerApiToken = account.centralServerApiToken.orEmpty(),
+                )
+            }
         }
         if (json.has("appKey") || json.has("appkey")) {
             val legacy = runCatching {
@@ -74,11 +93,17 @@ internal fun AppCredentials.toAccountCredential(): AccountCredential {
         // absent from legacy JSON, so normalize platform-null strings here.
         centralServerBaseUrl = centralServerBaseUrl.orEmpty(),
         centralServerApiToken = centralServerApiToken.orEmpty(),
+        broker = Broker.KIS,
     )
 }
 
-internal fun stableAccountId(cano: String, acntPrdtCd: String): String {
-    val raw = "${cano.trim()}:${acntPrdtCd.trim().ifBlank { "01" }}"
+internal fun stableAccountId(cano: String, acntPrdtCd: String, broker: String = Broker.KIS): String {
+    val normalizedBroker = Broker.normalize(broker)
+    val raw = if (normalizedBroker == Broker.KIS) {
+        "${cano.trim()}:${acntPrdtCd.trim().ifBlank { "01" }}"
+    } else {
+        "$normalizedBroker:${cano.trim()}"
+    }
     val digest = MessageDigest.getInstance("SHA-256")
         .digest(raw.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
@@ -86,8 +111,12 @@ internal fun stableAccountId(cano: String, acntPrdtCd: String): String {
     return "acct_$digest"
 }
 
-internal fun defaultAccountLabel(cano: String): String =
-    if (cano.isNotBlank()) "계좌 ${cano.takeLast(4)}" else "메인 계좌"
+internal fun defaultAccountLabel(cano: String, broker: String = Broker.KIS): String =
+    when {
+        Broker.normalize(broker) == Broker.TOSS && cano.isNotBlank() -> "토스 계좌 #$cano"
+        cano.isNotBlank() -> "계좌 ${cano.takeLast(4)}"
+        else -> "메인 계좌"
+    }
 
 internal fun normalizeUpdatedAccounts(
     existing: List<AccountCredential>,
@@ -100,13 +129,20 @@ internal fun normalizeUpdatedAccounts(
     val usedIds = explicitIds.toMutableSet()
     val normalized = updates.map { account ->
         val previous = existingById[account.id]
+        val broker = Broker.normalize(account.broker)
         val cano = account.cano.trim()
-        val productCode = account.acntPrdtCd.trim()
-        require(cano.length == 8 && cano.all(Char::isDigit)) {
-            "ACCOUNT_NUMBER_INVALID"
-        }
-        require(productCode.length == 2 && productCode.all(Char::isDigit)) {
-            "ACCOUNT_PRODUCT_CODE_INVALID"
+        val productCode = if (broker == Broker.KIS) account.acntPrdtCd.trim() else ""
+        if (broker == Broker.KIS) {
+            require(cano.length == 8 && cano.all(Char::isDigit)) {
+                "ACCOUNT_NUMBER_INVALID"
+            }
+            require(productCode.length == 2 && productCode.all(Char::isDigit)) {
+                "ACCOUNT_PRODUCT_CODE_INVALID"
+            }
+        } else {
+            require(cano.isNotBlank() && cano.all(Char::isDigit) && cano.toLongOrNull()?.let { it > 0 } == true) {
+                "TOSS_ACCOUNT_SEQUENCE_INVALID"
+            }
         }
         val appKey = account.appKey.trim().ifBlank { previous?.appKey.orEmpty() }
         val appSecret = account.appSecret.trim().ifBlank { previous?.appSecret.orEmpty() }
@@ -116,7 +152,7 @@ internal fun normalizeUpdatedAccounts(
         val accountId = if (account.id.isNotBlank()) {
             account.id
         } else {
-            val baseId = stableAccountId(cano, productCode)
+            val baseId = stableAccountId(cano, productCode, broker)
             var candidate = baseId
             var suffix = 2
             while (!usedIds.add(candidate)) {
@@ -127,11 +163,12 @@ internal fun normalizeUpdatedAccounts(
         }
         account.copy(
             id = accountId,
-            label = account.label.trim().ifBlank { defaultAccountLabel(cano) },
+            label = account.label.trim().ifBlank { defaultAccountLabel(cano, broker) },
             appKey = appKey,
             appSecret = appSecret,
             cano = cano,
             acntPrdtCd = productCode,
+            broker = broker,
             centralServerBaseUrl = account.centralServerBaseUrl.trim()
                 .ifBlank { previous?.centralServerBaseUrl.orEmpty() },
             centralServerApiToken = account.centralServerApiToken.trim()
@@ -139,7 +176,7 @@ internal fun normalizeUpdatedAccounts(
         )
     }
     require(
-        normalized.map { "${it.cano}:${it.acntPrdtCd}" }.distinct().size == normalized.size,
+        normalized.map { "${Broker.normalize(it.broker)}:${it.cano}:${it.acntPrdtCd}" }.distinct().size == normalized.size,
     ) { "ACCOUNT_PROFILE_DUPLICATE" }
     return normalized
 }

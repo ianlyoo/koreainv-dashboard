@@ -50,6 +50,53 @@ class AccountProfileCodecTest {
     }
 
     @Test
+    fun versionTwoProfileWithoutBrokerMigratesAccountsToKis() {
+        val legacy = """{"version":2,"accounts":[{"id":"a","label":"기존","appKey":"k","appSecret":"s","cano":"12345678","acntPrdtCd":"01"}]}"""
+
+        val parsed = AccountProfileCodec.parse(legacy)
+
+        assertEquals(Broker.KIS, parsed!![0].broker)
+        assertEquals("01", parsed[0].acntPrdtCd)
+    }
+
+    @Test
+    fun tossAccountRoundTripsAndUsesBrokerScopedIdentity() {
+        val toss = AccountCredential(
+            id = stableAccountId("1", "", Broker.TOSS),
+            label = "토스",
+            appKey = "client",
+            appSecret = "secret",
+            cano = "1",
+            acntPrdtCd = "",
+            broker = Broker.TOSS,
+        )
+
+        val parsed = AccountProfileCodec.parse(AccountProfileCodec.serialize(listOf(toss)))!!
+
+        assertEquals(toss, parsed.single())
+        assertNotEquals(stableAccountId("1", "01", Broker.KIS), toss.id)
+    }
+
+    @Test
+    fun normalizeUpdatedAccountsAcceptsTossSequenceWithoutProductCode() {
+        val toss = AccountCredential("", "토스", "client", "secret", "1", "", broker = Broker.TOSS)
+
+        val normalized = normalizeUpdatedAccounts(emptyList(), listOf(toss)).single()
+
+        assertEquals(Broker.TOSS, normalized.broker)
+        assertEquals("", normalized.acntPrdtCd)
+        assertEquals(stableAccountId("1", "", Broker.TOSS), normalized.id)
+    }
+
+    @Test
+    fun accountProfileChoosesFirstKisForKisOnlyFeatures() {
+        val toss = AccountCredential("t", "토스", "c", "s", "1", "", broker = Broker.TOSS)
+        val kis = AccountCredential("k", "KIS", "k", "s", "12345678", "01")
+
+        assertEquals(kis, AccountProfile(listOf(toss, kis)).primary)
+    }
+
+    @Test
     fun malformedPayloadReturnsNull() {
         assertNull(AccountProfileCodec.parse("not json"))
         assertNull(AccountProfileCodec.parse("""{"version":2,"accounts":[]}"""))

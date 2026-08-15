@@ -221,12 +221,15 @@ async def sync_data(request: Request, manual_refresh: bool = False):
         overseas = aggregated["overseas"]
 
         quote_service = getattr(request.app.state, "us_quote_service", None)
-        if quote_service is not None:
+        quote_account = session.primary_kis_account
+        if quote_service is not None and quote_account is None:
+            quote_service.remove_session(session_id)
+        if quote_service is not None and quote_account is not None:
             us_items = list(overseas.get("us_items") or [])
             quote_service.sync_session_holdings(
                 session_id,
-                session.app_key,
-                session.app_secret,
+                quote_account.app_key,
+                quote_account.app_secret,
                 us_items,
                 force_retry=manual_refresh,
             )
@@ -297,10 +300,13 @@ async def get_us_quotes(request: Request):
 @router.get("/api/realized-profit/summary")
 async def get_realized_profit_summary(request: Request, month: Optional[str] = None, force_refresh: bool = False):
     session = require_session(request)
+    account = session.primary_kis_account
+    if account is None:
+        raise HTTPException(status_code=400, detail="KIS account required for trade history")
     start_day, end_day = _parse_month_value(month)
     try:
         token = await asyncio.to_thread(
-            api_client.get_access_token, session.app_key, session.app_secret
+            api_client.get_access_token, account.app_key, account.app_secret
         )
         if not token:
             raise HTTPException(
@@ -310,10 +316,10 @@ async def get_realized_profit_summary(request: Request, month: Optional[str] = N
         payload = await asyncio.to_thread(
             api_client.get_realized_profit_summary,
             token,
-            session.app_key,
-            session.app_secret,
-            session.cano,
-            session.acnt_prdt_cd,
+            account.app_key,
+            account.app_secret,
+            account.cano,
+            account.acnt_prdt_cd,
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
             force_refresh=force_refresh,
@@ -343,6 +349,9 @@ async def get_realized_profit_detail(
     force_refresh: bool = False,
 ):
     session = require_session(request)
+    account = session.primary_kis_account
+    if account is None:
+        raise HTTPException(status_code=400, detail="KIS account required for trade history")
     start_day = _parse_date_value(start, "start")
     end_day = _parse_date_value(end, "end")
     normalized_side = _parse_trade_history_side(side)
@@ -358,7 +367,7 @@ async def get_realized_profit_detail(
 
     try:
         token = await asyncio.to_thread(
-            api_client.get_access_token, session.app_key, session.app_secret
+            api_client.get_access_token, account.app_key, account.app_secret
         )
         if not token:
             raise HTTPException(
@@ -369,10 +378,10 @@ async def get_realized_profit_detail(
             trade_payload = await asyncio.to_thread(
                 api_client.get_trade_history,
                 token,
-                session.app_key,
-                session.app_secret,
-                session.cano,
-                session.acnt_prdt_cd,
+                account.app_key,
+                account.app_secret,
+                account.cano,
+                account.acnt_prdt_cd,
                 start_day.strftime("%Y%m%d"),
                 end_day.strftime("%Y%m%d"),
                 side_filter=normalized_side,
@@ -385,10 +394,10 @@ async def get_realized_profit_detail(
             summary_payload = await asyncio.to_thread(
                 api_client.get_realized_profit_summary,
                 token,
-                session.app_key,
-                session.app_secret,
-                session.cano,
-                session.acnt_prdt_cd,
+                account.app_key,
+                account.app_secret,
+                account.cano,
+                account.acnt_prdt_cd,
                 start_day.strftime("%Y%m%d"),
                 end_day.strftime("%Y%m%d"),
                 force_refresh=force_refresh,

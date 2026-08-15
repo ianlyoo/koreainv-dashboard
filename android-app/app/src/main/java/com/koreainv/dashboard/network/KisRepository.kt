@@ -7,6 +7,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -42,6 +43,7 @@ class KisRepository(
 
     companion object {
         private const val BASE_URL = "https://openapi.koreainvestment.com:9443"
+        private const val TOSS_BASE_URL = "https://openapi.tossinvest.com"
         private const val TOKEN_BUFFER_SECONDS = 60L
         private const val DASHBOARD_CACHE_TTL_MILLIS = 15_000L
         private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 10_000L
@@ -87,10 +89,14 @@ class KisRepository(
      * Trade history, scheduled orders, and US quote enrichment intentionally stay
      * on the primary account (first in the profile) so their behavior is unchanged.
      */
-    private val primaryAccount: AccountCredential
-        get() = accounts.getOrNull(primaryIndex) ?: accounts.first()
+    private val primaryKisAccount: AccountCredential?
+        get() = accounts.drop(primaryIndex).firstOrNull { Broker.normalize(it.broker) == Broker.KIS }
+            ?: accounts.firstOrNull { Broker.normalize(it.broker) == Broker.KIS }
 
-    private val usQuoteService = KisUsQuoteService(primaryAccount.toAppCredentials(), client)
+    private val primaryAccount: AccountCredential
+        get() = primaryKisAccount ?: throw IllegalStateException("KIS_ACCOUNT_REQUIRED")
+
+    private val usQuoteService = primaryKisAccount?.let { KisUsQuoteService(it.toAppCredentials(), client) }
 
     fun peekDashboard(): DashboardResponse? = cachedDashboard?.second
     fun peekTradeHistory(range: String = "this_month"): TradeHistoryResponse? {
@@ -142,7 +148,7 @@ class KisRepository(
     }
 
     fun close() {
-        usQuoteService.close()
+        usQuoteService?.close()
     }
 
     suspend fun submitScheduledDomesticOrder(
@@ -153,6 +159,9 @@ class KisRepository(
     }
 
     private suspend fun loadAccountDashboard(account: AccountCredential): AccountDashboardPayload = coroutineScope {
+        if (Broker.normalize(account.broker) == Broker.TOSS) {
+            return@coroutineScope loadTossAccountDashboard(account)
+        }
         val domesticDeferred = async { getDomesticBalance(account) }
         val overseasDeferred = async { getOverseasBalance(account) }
         AccountDashboardPayload(
@@ -160,6 +169,122 @@ class KisRepository(
             domestic = domesticDeferred.await(),
             overseas = overseasDeferred.await(),
         )
+    }
+
+    private suspend fun loadTossAccountDashboard(account: AccountCredential): AccountDashboardPayload = coroutineScope {
+        val token = requireToken(account) ?: throw IllegalStateException("TOSS_TOKEN_FAILURE[dashboard]")
+        val holdingsDeferred = async {
+            getTossJson(
+                account = account,
+                path = "/api/v1/holdings",
+                query = emptyMap(),
+                token = token,
+                includeAccount = true,
+            )
+        }
+        val exchangeDeferred = async {
+            runCatching {
+                getTossJson(
+                    account = account,
+                    path = "/api/v1/exchange-rate",
+                    query = mapOf("baseCurrency" to "USD", "quoteCurrency" to "KRW"),
+                    token = token,
+                    includeAccount = false,
+                )
+            }.getOrNull()
+        }
+        val response = holdingsDeferred.await()
+            ?: throw IllegalStateException("TOSS_HOLDINGS_EMPTY")
+        val result = jsonObject(response, "result") ?: JsonObject()
+        val exchangeResult = exchangeDeferred.await()?.let { jsonObject(it, "result") }
+        val usdRate = exchangeResult?.let { number(it, "rate").takeIf { value -> value > 0.0 } }
+            ?: exchangeResult?.let { number(it, "midRate").takeIf { value -> value > 0.0 } }
+            ?: 1350.0
+
+        val domesticHoldings = mutableListOf<DomesticHoldingRaw>()
+        val usHoldings = mutableListOf<OverseasHoldingRaw>()
+        normalizeRows(result.get("items")).forEach { element ->
+            val row = element.asJsonObject
+            val quantity = number(row, "quantity")
+            if (quantity <= 0.0) return@forEach
+            val country = string(row, "marketCountry").uppercase()
+            val currency = string(row, "currency").uppercase()
+            if (country == "KR" || currency == "KRW") {
+                domesticHoldings += DomesticHoldingRaw(
+                    symbol = string(row, "symbol"),
+                    name = string(row, "name").ifBlank { string(row, "symbol") },
+                    quantity = quantity,
+                    averageCost = number(row, "averagePurchasePrice"),
+                    currentPrice = number(row, "lastPrice"),
+                )
+            } else if (country == "US" || currency == "USD") {
+                usHoldings += OverseasHoldingRaw(
+                    symbol = string(row, "symbol"),
+                    name = string(row, "name").ifBlank { string(row, "symbol") },
+                    exchangeCode = "NASD",
+                    quantity = quantity,
+                    averageCost = number(row, "averagePurchasePrice"),
+                    currentPrice = number(row, "lastPrice"),
+                    exchangeRate = usdRate,
+                    currency = "USD",
+                )
+            }
+        }
+        val totalPurchase = jsonObject(result, "totalPurchaseAmount")
+        val marketValue = jsonObject(result, "marketValue")
+        val marketAmount = marketValue?.let { jsonObject(it, "amount") }
+        val profitLoss = jsonObject(result, "profitLoss")
+        val profitAmount = profitLoss?.let { jsonObject(it, "amount") }
+
+        AccountDashboardPayload(
+            account = account,
+            domestic = DomesticBalancePayload(
+                totalPurchaseKrw = totalPurchase?.let { number(it, "krw") } ?: 0.0,
+                totalEvalKrw = marketAmount?.let { number(it, "krw") } ?: 0.0,
+                totalProfitKrw = profitAmount?.let { number(it, "krw") } ?: 0.0,
+                holdings = domesticHoldings,
+            ),
+            overseas = OverseasBalancePayload(
+                usdExchangeRate = usdRate,
+                usHoldings = usHoldings,
+            ),
+        )
+    }
+
+    private suspend fun getTossJson(
+        account: AccountCredential,
+        path: String,
+        query: Map<String, String>,
+        token: String,
+        includeAccount: Boolean,
+        retryOnTokenError: Boolean = true,
+    ): JsonObject? {
+        val urlBuilder = "$TOSS_BASE_URL$path".toHttpUrlOrNull()?.newBuilder()
+            ?: throw IllegalStateException("TOSS_INVALID_URL path=$path")
+        query.forEach { (key, value) -> urlBuilder.addQueryParameter(key, value) }
+        val builder = Request.Builder()
+            .url(urlBuilder.build())
+            .get()
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer $token")
+        if (includeAccount) builder.header("X-Tossinvest-Account", account.cano)
+        client.newCall(builder.build()).execute().use { response ->
+            val payload = parseObject(response.body?.string().orEmpty()) ?: JsonObject()
+            if (response.code == 401 && retryOnTokenError) {
+                authTokens.remove(account.id)
+                settingsManager.clearAuthToken()
+                val refreshed = requireToken(account)
+                    ?: throw IllegalStateException("TOSS_TOKEN_REFRESH_FAILED path=$path")
+                return getTossJson(account, path, query, refreshed, includeAccount, false)
+            }
+            if (!response.isSuccessful) {
+                val error = jsonObject(payload, "error")
+                throw IllegalStateException(
+                    "TOSS_HTTP_ERROR path=$path code=${response.code} error=${error?.let { string(it, "code") }} message=${error?.let { string(it, "message") }}",
+                )
+            }
+            return payload
+        }
     }
 
     suspend fun fetchTradeHistory(
@@ -730,13 +855,13 @@ class KisRepository(
                 val accountLabel = payload.account.label.takeIf { it.isNotBlank() }
                 val accountId = payload.account.id
                 payload.domestic.holdings.forEach { holding ->
-                    add(domesticHoldingToUi(holding, accountLabel, accountId))
+                    add(domesticHoldingToUi(holding, accountLabel, accountId, payload.account.broker))
                 }
                 payload.overseas.usHoldings.forEach { holding ->
-                    add(overseasHoldingToUi(holding, "USD", accountLabel, accountId))
+                    add(overseasHoldingToUi(holding, "USD", accountLabel, accountId, payload.account.broker))
                 }
                 payload.overseas.jpHoldings.forEach { holding ->
-                    add(overseasHoldingToUi(holding, "JPY", accountLabel, accountId))
+                    add(overseasHoldingToUi(holding, "JPY", accountLabel, accountId, payload.account.broker))
                 }
             }
         }.sortedByDescending { it.totalValueKrw }
@@ -788,6 +913,7 @@ class KisRepository(
         holding: DomesticHoldingRaw,
         accountLabel: String?,
         accountId: String?,
+        broker: String,
     ): Holding = Holding(
         symbol = holding.symbol,
         name = holding.name,
@@ -807,6 +933,7 @@ class KisRepository(
         exchangeRate = 1.0,
         accountLabel = accountLabel,
         accountId = accountId,
+        broker = Broker.normalize(broker),
     )
 
     private fun overseasHoldingToUi(
@@ -814,6 +941,7 @@ class KisRepository(
         currency: String,
         accountLabel: String?,
         accountId: String?,
+        broker: String,
     ): Holding {
         val rate = if (currency == "JPY") max(holding.exchangeRate, 0.0) / 100.0 else max(holding.exchangeRate, 0.0)
         val currentValue = holding.quantity * holding.currentPrice * rate
@@ -835,6 +963,7 @@ class KisRepository(
             exchangeCode = holding.exchangeCode,
             accountLabel = accountLabel,
             accountId = accountId,
+            broker = Broker.normalize(broker),
         )
     }
 
@@ -843,11 +972,17 @@ class KisRepository(
         forceRetry: Boolean,
     ): DashboardResponse {
         val usHoldings = baseDashboard.holdings.filter { it.market == "USA" }
-        usQuoteService.syncHoldings(usHoldings, forceRetry = forceRetry)
+        val quoteService = usQuoteService ?: return baseDashboard
+        quoteService.syncHoldings(usHoldings, forceRetry = forceRetry)
 
-        val enrichedUsHoldings = usQuoteService.enrichHoldings(usHoldings).associateBy { it.symbol }
+        val enrichedUsHoldings = quoteService.enrichHoldings(usHoldings)
+            .associateBy { "${it.accountId.orEmpty()}:${it.symbol}" }
         val mergedHoldings = baseDashboard.holdings.map { holding ->
-            if (holding.market == "USA") enrichedUsHoldings[holding.symbol] ?: holding else holding
+            if (holding.market == "USA") {
+                enrichedUsHoldings["${holding.accountId.orEmpty()}:${holding.symbol}"] ?: holding
+            } else {
+                holding
+            }
         }.sortedByDescending { it.totalValueKrw }
 
         val totalCashKrw = baseDashboard.summary.totalCashKrw
@@ -865,7 +1000,7 @@ class KisRepository(
             ),
             holdings = mergedHoldings,
             assetDistribution = buildAssetDistribution(mergedHoldings),
-            usMarketStatus = usQuoteService.getMarketStatus(mergedHoldings.filter { it.market == "USA" }),
+            usMarketStatus = quoteService.getMarketStatus(mergedHoldings.filter { it.market == "USA" }),
         )
     }
 
@@ -894,40 +1029,54 @@ class KisRepository(
         val accountCredentials = account.toAppCredentials()
         authTokens[account.id]
             ?.takeIf { now < it.expiresAtMillis - TOKEN_BUFFER_SECONDS * 1000 }
-            ?.let { return it.value }
+            ?.let { return@withLock it.value }
         settingsManager.loadAuthToken(accountCredentials)
             ?.takeIf { now < it.expiresAtMillis - TOKEN_BUFFER_SECONDS * 1000 }
             ?.let {
                 authTokens[account.id] = it
-                return it.value
+                return@withLock it.value
             }
 
-        val requestBody = JsonObject().apply {
-            addProperty("grant_type", "client_credentials")
-            addProperty("appkey", account.appKey)
-            addProperty("appsecret", account.appSecret)
-        }.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val isToss = Broker.normalize(account.broker) == Broker.TOSS
+        val request = if (isToss) {
+            Request.Builder()
+                .url("$TOSS_BASE_URL/oauth2/token")
+                .post(
+                    FormBody.Builder()
+                        .add("grant_type", "client_credentials")
+                        .add("client_id", account.appKey)
+                        .add("client_secret", account.appSecret)
+                        .build(),
+                )
+                .build()
+        } else {
+            val requestBody = JsonObject().apply {
+                addProperty("grant_type", "client_credentials")
+                addProperty("appkey", account.appKey)
+                addProperty("appsecret", account.appSecret)
+            }.toString().toRequestBody(JSON_MEDIA_TYPE)
+            Request.Builder()
+                .url("$BASE_URL/oauth2/tokenP")
+                .post(requestBody)
+                .header("content-type", "application/json")
+                .build()
+        }
 
-        val request = Request.Builder()
-            .url("$BASE_URL/oauth2/tokenP")
-            .post(requestBody)
-            .header("content-type", "application/json")
-            .build()
-
-        client.newCall(request).execute().use { response: okhttp3.Response ->
+        return@withLock client.newCall(request).execute().use { response: okhttp3.Response ->
             if (!response.isSuccessful) {
                 authTokens.remove(account.id)
-                return null
+                return@use null
             }
             val bodyString = response.body?.string().orEmpty()
-            val json = parseObject(bodyString) ?: return null
+            val json = parseObject(bodyString) ?: return@use null
             val accessToken = string(json, "access_token")
-            if (accessToken.isBlank()) return null
-            val expiresIn = number(json, "expires_in").takeIf { it > 0.0 }?.toLong() ?: 43200L
+            if (accessToken.isBlank()) return@use null
+            val expiresIn = number(json, "expires_in").takeIf { it > 0.0 }?.toLong()
+                ?: if (isToss) 86400L else 43200L
             val token = AuthToken(accessToken, now, now + expiresIn * 1000)
             authTokens[account.id] = token
             settingsManager.saveAuthToken(accountCredentials, token)
-            return accessToken
+            accessToken
         }
     }
 

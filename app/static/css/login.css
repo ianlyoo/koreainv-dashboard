@@ -500,7 +500,8 @@ label {
     text-transform: uppercase;
 }
 
-input {
+input,
+select {
     width: 100%;
     background: var(--input-bg);
     border: 1px solid var(--input-border);
@@ -518,7 +519,12 @@ input::placeholder {
     color: var(--text-muted);
 }
 
-input:focus {
+select {
+    color-scheme: dark;
+}
+
+input:focus,
+select:focus {
     border-color: var(--accent-gold);
     box-shadow: 0 0 0 1px var(--accent-gold), 0 0 20px var(--input-focus), inset 0 2px 4px rgba(0,0,0,0.2);
     background: rgba(0, 0, 0, 0.6);

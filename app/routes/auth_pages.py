@@ -29,6 +29,10 @@ from app.template_utils import render_template_html
 router = APIRouter()
 
 
+def _is_valid_toss_account_seq(value: str) -> bool:
+    return value.isdigit() and 0 < int(value) <= 9_223_372_036_854_775_807
+
+
 def _remove_quote_session(request: Request) -> None:
     service = getattr(request.app.state, "us_quote_service", None)
     if service is not None:
@@ -130,6 +134,7 @@ def decrypt_accounts_for_session(
                 acnt_prdt_cd=str(record.get("acnt_prdt_cd") or "01").strip() or "01",
                 label=str(record.get("label") or "계좌").strip() or "계좌",
                 account_id=str(record.get("account_id") or "").strip() or None,
+                broker=str(record.get("broker") or "kis").strip().lower(),
             )
         )
     return accounts
@@ -168,10 +173,17 @@ def _parse_accounts_json(accounts_json: str) -> list[dict[str, object]] | None:
         app_key = str(entry.get("app_key") or "").strip()
         app_secret = str(entry.get("app_secret") or "").strip()
         cano = str(entry.get("cano") or "").strip()
+        broker = str(entry.get("broker") or "kis").strip().lower()
+        if broker not in {"kis", "toss"}:
+            raise HTTPException(status_code=400, detail="Unsupported broker")
         if not (app_key and app_secret and cano):
             raise HTTPException(
                 status_code=400,
-                detail="Each account requires app_key, app_secret and cano",
+                detail="Each account requires credentials and an account reference",
+            )
+        if broker == "toss" and not _is_valid_toss_account_seq(cano):
+            raise HTTPException(
+                status_code=400, detail="Toss account_seq must be a positive integer"
             )
         records.append(
             {
@@ -181,6 +193,7 @@ def _parse_accounts_json(accounts_json: str) -> list[dict[str, object]] | None:
                 "acnt_prdt_cd": str(entry.get("acnt_prdt_cd") or "01").strip() or "01",
                 "label": str(entry.get("label") or "계좌").strip() or "계좌",
                 "account_id": str(entry.get("account_id") or "").strip() or None,
+                "broker": broker,
             }
         )
     if not records:
@@ -203,9 +216,11 @@ def _normalize_account_records(
             acnt_prdt_cd=str(record.get("acnt_prdt_cd") or "01"),
             label=str(record.get("label") or "계좌"),
             account_id=str(record.get("account_id") or "").strip() or None,
+            broker=str(record.get("broker") or "kis").strip().lower(),
         )
         if any(
-            existing.cano == candidate.cano
+            existing.broker == candidate.broker
+            and existing.cano == candidate.cano
             and existing.acnt_prdt_cd == candidate.acnt_prdt_cd
             for existing in normalized
         ):
@@ -228,6 +243,7 @@ def _serialize_accounts_for_storage(
             "app_secret": account.app_secret,
             "cano": account.cano,
             "acnt_prdt_cd": account.acnt_prdt_cd,
+            "broker": account.broker,
         }
         for account in accounts
     ]
@@ -249,7 +265,9 @@ def _persist_accounts(
     settings["accounts_enc"] = auth.encrypt_data_v2(
         json.dumps(records), pin, kdf_salt
     )
-    primary = accounts[0]
+    primary = next(
+        (account for account in accounts if account.broker == "kis"), accounts[0]
+    )
     settings["api_key_enc"] = auth.encrypt_data_v2(primary.app_key, pin, kdf_salt)
     settings["api_secret_enc"] = auth.encrypt_data_v2(
         primary.app_secret, pin, kdf_salt
@@ -283,6 +301,7 @@ class AccountCreateRequest(BaseModel):
     app_secret: str
     cano: str
     acnt_prdt_cd: str = "01"
+    broker: str = "kis"
 
 
 class AccountDeleteRequest(BaseModel):
@@ -296,6 +315,7 @@ class AccountUpdateRequest(BaseModel):
     acnt_prdt_cd: str = ""
     app_key: str = ""
     app_secret: str = ""
+    broker: str = ""
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -378,7 +398,9 @@ async def setup_api(
             raise HTTPException(
                 status_code=500, detail="Credential validation failed after setup"
             )
-        primary = decrypted[0]
+        primary = next(
+            (account for account in decrypted if account.broker == "kis"), decrypted[0]
+        )
         session_id = create_session(
             SessionData(
                 app_key=primary.app_key,
@@ -420,7 +442,9 @@ async def login(pin: str = Form(...)):
             status_code=401,
             detail="Failed to decrypt credentials. Invalid PIN or corrupted settings.",
         )
-    primary = accounts[0]
+    primary = next(
+        (account for account in accounts if account.broker == "kis"), accounts[0]
+    )
 
     session_id = create_session(
         SessionData(
@@ -452,13 +476,20 @@ async def add_or_update_account(request: Request, payload: AccountCreateRequest)
     settings = auth.load_settings()
     if not _verify_settings_pin(settings, payload.pin):
         raise HTTPException(status_code=401, detail="Invalid PIN")
+    broker = payload.broker.strip().lower() or "kis"
+    if broker not in {"kis", "toss"}:
+        raise HTTPException(status_code=400, detail="Unsupported broker")
     if not (
         payload.app_key.strip()
         and payload.app_secret.strip()
         and payload.cano.strip()
     ):
         raise HTTPException(
-            status_code=400, detail="app_key, app_secret and cano are required"
+            status_code=400, detail="credentials and account reference are required"
+        )
+    if broker == "toss" and not _is_valid_toss_account_seq(payload.cano.strip()):
+        raise HTTPException(
+            status_code=400, detail="Toss account_seq must be a positive integer"
         )
 
     current = decrypt_accounts_for_session(settings, payload.pin)
@@ -473,12 +504,14 @@ async def add_or_update_account(request: Request, payload: AccountCreateRequest)
         cano=payload.cano.strip(),
         acnt_prdt_cd=(payload.acnt_prdt_cd or "01").strip() or "01",
         label=payload.label.strip() or "계좌",
+        broker=broker,
     )
     matched = next(
         (
             account
             for account in current
-            if account.cano == candidate.cano
+            if account.broker == candidate.broker
+            and account.cano == candidate.cano
             and account.acnt_prdt_cd == candidate.acnt_prdt_cd
         ),
         None,
@@ -529,7 +562,10 @@ async def update_account(
     acnt_prdt_cd = payload.acnt_prdt_cd.strip()
     app_key = payload.app_key.strip()
     app_secret = payload.app_secret.strip()
-    if not (label or cano or acnt_prdt_cd or app_key or app_secret):
+    broker = payload.broker.strip().lower()
+    if broker and broker not in {"kis", "toss"}:
+        raise HTTPException(status_code=400, detail="Unsupported broker")
+    if not (label or cano or acnt_prdt_cd or app_key or app_secret or broker):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -538,10 +574,21 @@ async def update_account(
             ),
         )
 
+    new_broker = broker or target.broker
+    if broker and broker != target.broker and not (cano and app_key and app_secret):
+        raise HTTPException(
+            status_code=400,
+            detail="Changing broker requires new credentials and account reference",
+        )
     new_cano = cano or target.cano
-    new_product = acnt_prdt_cd or target.acnt_prdt_cd
+    new_product = (acnt_prdt_cd or target.acnt_prdt_cd) if new_broker == "kis" else ""
+    if new_broker == "toss" and not _is_valid_toss_account_seq(new_cano):
+        raise HTTPException(
+            status_code=400, detail="Toss account_seq must be a positive integer"
+        )
     if any(
         account.account_id != account_id
+        and account.broker == new_broker
         and account.cano == new_cano
         and account.acnt_prdt_cd == new_product
         for account in current
@@ -558,6 +605,7 @@ async def update_account(
         acnt_prdt_cd=new_product,
         label=label or target.label,
         account_id=account_id,
+        broker=new_broker,
     )
     updated = [
         updated_account if account.account_id == account_id else account
@@ -601,7 +649,10 @@ async def delete_account(request: Request, account_id: str, payload: AccountDele
         "status": "success",
         "message": "Account deleted",
         "accounts": _accounts_metadata(remaining),
-        "primary_account_id": remaining[0].account_id,
+        "primary_account_id": next(
+            (account.account_id for account in remaining if account.broker == "kis"),
+            remaining[0].account_id,
+        ),
     }
 
 

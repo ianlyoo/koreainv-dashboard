@@ -1,10 +1,11 @@
-# Korea Investment Dashboard
+# Multi-Broker Investment Dashboard
 
-> 한국투자증권(KIS) API 기반 개인 계좌 대시보드 — 데스크톱·웹·Android
+> 한국투자증권(KIS)·토스증권 Open API 기반 개인 계좌 대시보드 — 데스크톱·웹·Android
 
 [English](README.en.md) · [MIT License](LICENSE) · Python · Android · ![Release](https://github.com/ianlyoo/koreainv-dashboard/actions/workflows/release.yml/badge.svg)
 
-한국투자증권 계좌의 포트폴리오·자산·거래내역을 한 화면에서 보는 개인용 대시보드다.
+KIS와 토스증권 계좌의 포트폴리오·자산을 한 화면에서 보는 개인용 대시보드다.
+KIS 계좌는 기존 거래내역·실현손익·예약주문 기능도 그대로 제공한다.
 데스크톱/웹 앱과 Android 앱, 그리고 GitHub Releases 기반 업데이트 파이프라인을 함께 담고 있다.
 
 **이 프로젝트는 조회 전용이 아니다.** 소규모(1~2인) 운영을 위한 중앙 예약주문 서버
@@ -20,6 +21,8 @@ flowchart LR
     C -- "CENTRAL_ORDER_EXECUTION_ENABLED=true<br/>일 때만" --> D[KIS Open API]
     A --> D
     B --> D
+    A --> E[토스증권 Open API<br/>자산 조회]
+    B --> E
 ```
 
 ## 빠른 시작
@@ -32,7 +35,7 @@ flowchart LR
 | Windows | `KISDashboard-win64.zip` |
 | macOS | `KISDashboard-mac-arm64.zip` |
 
-최초 실행 시 KIS Open API 키/계좌 정보를 입력하고, Android는 PIN을 설정한 뒤 이후 PIN으로 잠금 해제한다.
+최초 실행 시 증권사를 선택하고 API 자격증명과 계좌 정보를 입력한다. Android는 PIN을 설정한 뒤 이후 PIN으로 잠금 해제한다.
 
 ## 기능
 
@@ -40,10 +43,25 @@ flowchart LR
 |------|------|
 | 포트폴리오 요약 | 총 평가금액, 평가손익, 수익률, 자산 현황 |
 | 자산 상세 | 보유종목·수량·평가금액·손익·자산 분포 |
+| 멀티 브로커·계좌 | KIS와 토스증권 계좌를 원하는 수만큼 등록하고 병렬 조회·합산 |
 | 거래내역 | 국내/해외 거래내역 및 실현손익 |
 | 통화 전환 | Android에서 주요 금액 KRW/USD 표시 전환 |
 | 보안 | Android PIN 잠금 및 로컬 자격정보 저장 |
 | 업데이트 | GitHub Releases 기반 최신 버전 확인, 권장/필수 업데이트 처리 |
+
+## 증권사별 지원 범위
+
+| 기능 | KIS | 토스증권 |
+|---|---:|---:|
+| 국내·미국 보유주식 조회 및 합산 | O | O |
+| 현금·주문가능금액 | O | - |
+| 거래내역·실현손익 | O (첫 KIS 계좌) | - |
+| 예약주문 | O (첫 KIS 계좌) | - |
+
+- 기존 저장 데이터에는 `broker=kis`가 자동 적용되어 별도 재설정이 필요 없다.
+- 토스증권은 WTS의 Open API 메뉴에서 발급한 `client_id`, `client_secret`, 그리고 `GET /api/v1/accounts`에서 확인되는 `accountSeq`를 입력한다.
+- 토스증권의 현재 보유자산 API는 주식 잔고를 제공하지만 현금 예수금은 제공하지 않으므로 토스 현금은 합계에 포함하지 않는다.
+- 계좌 목록에서 가장 먼저 등록된 KIS 계좌가 거래내역·예약주문·KIS 실시간 시세용 대표 계좌가 된다. 토스 계좌가 목록 앞에 있어도 KIS 주문 경로로 사용되지 않는다.
 
 ## 중앙 예약주문 서버 (선택)
 

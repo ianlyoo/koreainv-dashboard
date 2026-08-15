@@ -336,7 +336,9 @@ async def mobile_login(payload: MobileLoginRequest):
                 app_key, app_secret, cano, acnt_prdt_cd or "01"
             )
         ]
-    primary = accounts[0]
+    primary = next(
+        (account for account in accounts if account.broker == "kis"), accounts[0]
+    )
     session_id = create_session(
         SessionData(
             app_key=primary.app_key,
@@ -384,10 +386,13 @@ async def get_mobile_dashboard(request: Request):
 @router.get("/api/mobile/trade-history")
 async def get_mobile_trade_history(request: Request, range: str | None = None):
     session = require_session(request)
+    account = session.primary_kis_account
+    if account is None:
+        raise HTTPException(status_code=400, detail="KIS account required for trade history")
     start_day, end_day, label = _resolve_trade_history_range(range)
 
     token = await asyncio.to_thread(
-        api_client.get_access_token, session.app_key, session.app_secret
+        api_client.get_access_token, account.app_key, account.app_secret
     )
     if not token:
         raise HTTPException(status_code=500, detail="Failed to get access token from API")
@@ -395,10 +400,10 @@ async def get_mobile_trade_history(request: Request, range: str | None = None):
     detail_payload = await asyncio.to_thread(
         api_client.get_trade_history,
         token,
-        session.app_key,
-        session.app_secret,
-        session.cano,
-        session.acnt_prdt_cd,
+        account.app_key,
+        account.app_secret,
+        account.cano,
+        account.acnt_prdt_cd,
         start_day.strftime("%Y%m%d"),
         end_day.strftime("%Y%m%d"),
     )

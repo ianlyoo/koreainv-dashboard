@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.AccountProfile
+import com.koreainv.dashboard.network.Broker
 import com.koreainv.dashboard.network.SettingsManager
 import com.koreainv.dashboard.network.SetupInput
 import com.koreainv.dashboard.ui.theme.SurfaceBorder
@@ -41,6 +42,7 @@ import com.koreainv.dashboard.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
 
 private data class AccountDraft(
+    val broker: String = Broker.KIS,
     val label: String = "",
     val appKey: String = "",
     val appSecret: String = "",
@@ -67,7 +69,11 @@ fun SetupScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     fun submit() {
-        if (accounts.any { it.appKey.isBlank() || it.appSecret.isBlank() || it.cano.isBlank() || it.acntPrdtCd.isBlank() }) {
+        if (accounts.any {
+                it.appKey.isBlank() || it.appSecret.isBlank() || it.cano.isBlank() ||
+                    (it.broker == Broker.KIS && it.acntPrdtCd.isBlank())
+            }
+        ) {
             errorMessage = accountsRequiredError
             return
         }
@@ -90,6 +96,7 @@ fun SetupScreen(
                         acntPrdtCd = account.acntPrdtCd,
                         pin = pin,
                         label = account.label,
+                        broker = account.broker,
                     )
                 },
                 pin = pin,
@@ -109,7 +116,7 @@ fun SetupScreen(
             AccountSection(
                 index = index,
                 account = account,
-                isPrimary = index == 0,
+                isPrimary = account.broker == Broker.KIS && accounts.take(index).none { it.broker == Broker.KIS },
                 isRemovable = accounts.size > 1,
                 onUpdate = { updated ->
                     accounts = accounts.mapIndexed { i, current -> if (i == index) updated else current }
@@ -200,36 +207,72 @@ private fun AccountSection(
                 label = stringResource(R.string.account_label),
             )
             Spacer(modifier = Modifier.height(12.dp))
+            BrokerSelector(
+                broker = account.broker,
+                onChange = { broker ->
+                    onUpdate(
+                        account.copy(
+                            broker = broker,
+                            cano = "",
+                            acntPrdtCd = if (broker == Broker.KIS) "01" else "",
+                        ),
+                    )
+                },
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             SetupField(
                 value = account.appKey,
                 onValueChange = { onUpdate(account.copy(appKey = it)) },
-                label = stringResource(R.string.app_key),
+                label = stringResource(if (account.broker == Broker.TOSS) R.string.client_id else R.string.app_key),
             )
             Spacer(modifier = Modifier.height(12.dp))
             SetupField(
                 value = account.appSecret,
                 onValueChange = { onUpdate(account.copy(appSecret = it)) },
-                label = stringResource(R.string.app_secret),
+                label = stringResource(if (account.broker == Broker.TOSS) R.string.client_secret else R.string.app_secret),
                 isSecret = true,
             )
             Spacer(modifier = Modifier.height(12.dp))
             SetupField(
                 value = account.cano,
                 onValueChange = {
-                    onUpdate(account.copy(cano = it.filter(Char::isDigit).take(SETUP_ACCOUNT_NUMBER_LENGTH)))
+                    val maxLength = if (account.broker == Broker.TOSS) 19 else SETUP_ACCOUNT_NUMBER_LENGTH
+                    onUpdate(account.copy(cano = it.filter(Char::isDigit).take(maxLength)))
                 },
-                label = stringResource(R.string.account_number),
+                label = stringResource(if (account.broker == Broker.TOSS) R.string.toss_account_seq else R.string.account_number),
                 keyboardType = KeyboardType.Number,
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            SetupField(
-                value = account.acntPrdtCd,
-                onValueChange = {
-                    onUpdate(account.copy(acntPrdtCd = it.filter(Char::isDigit).take(SETUP_PRODUCT_CODE_LENGTH)))
-                },
-                label = stringResource(R.string.account_product_code),
-                keyboardType = KeyboardType.Number,
-            )
+            if (account.broker == Broker.KIS) {
+                Spacer(modifier = Modifier.height(12.dp))
+                SetupField(
+                    value = account.acntPrdtCd,
+                    onValueChange = {
+                        onUpdate(account.copy(acntPrdtCd = it.filter(Char::isDigit).take(SETUP_PRODUCT_CODE_LENGTH)))
+                    },
+                    label = stringResource(R.string.account_product_code),
+                    keyboardType = KeyboardType.Number,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrokerSelector(broker: String, onChange: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = stringResource(R.string.broker), color = TextSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(Broker.KIS to R.string.broker_kis, Broker.TOSS to R.string.broker_toss).forEach { (value, label) ->
+                OutlinedButton(
+                    onClick = { onChange(value) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (broker == value) TextGold.copy(alpha = 0.15f) else Color.Transparent,
+                    ),
+                ) {
+                    Text(text = stringResource(label), color = if (broker == value) TextGold else TextSecondary)
+                }
+            }
         }
     }
 }

@@ -278,12 +278,22 @@ def _require_server_token(authorization: str | None) -> None:
 
 
 def _session_credentials(session: SessionData) -> dict[str, str]:
+    account = session.primary_kis_account
+    if account is None:
+        raise HTTPException(status_code=400, detail="KIS account required for orders")
     return {
-        "app_key": session.app_key,
-        "app_secret": session.app_secret,
-        "cano": session.cano,
-        "acnt_prdt_cd": session.acnt_prdt_cd,
+        "app_key": account.app_key,
+        "app_secret": account.app_secret,
+        "cano": account.cano,
+        "acnt_prdt_cd": account.acnt_prdt_cd,
     }
+
+
+def _session_account_ref(session: SessionData) -> str:
+    credentials = _session_credentials(session)
+    return build_account_ref(
+        credentials["app_key"], credentials["cano"], credentials["acnt_prdt_cd"]
+    )
 
 
 async def _forward_to_remote(
@@ -365,7 +375,7 @@ async def create_scheduled_order(request: Request, payload: ScheduledDomesticOrd
 @router.get("/api/scheduled-orders")
 async def list_scheduled_orders(request: Request):
     session = require_session(request)
-    account_ref = build_account_ref(session.app_key, session.cano, session.acnt_prdt_cd)
+    account_ref = _session_account_ref(session)
     if config.CENTRAL_ORDER_REMOTE_URL and not config.CENTRAL_ORDER_SERVER_MODE:
         url = f"{config.CENTRAL_ORDER_REMOTE_URL}/api/central-server/scheduled-orders?account_ref={account_ref}"
         headers = {"Authorization": f"Bearer {config.CENTRAL_ORDER_REMOTE_TOKEN}"}
@@ -384,7 +394,7 @@ async def list_scheduled_orders(request: Request):
 @router.post("/api/scheduled-orders/sync")
 async def sync_scheduled_orders(request: Request):
     session = require_session(request)
-    account_ref = build_account_ref(session.app_key, session.cano, session.acnt_prdt_cd)
+    account_ref = _session_account_ref(session)
     worker = getattr(request.app.state, "scheduled_order_worker", None)
     if worker is not None:
         worker.reconcile_submitted_orders_once()
@@ -401,7 +411,7 @@ async def get_scheduled_order_availability(request: Request):
 @router.delete("/api/scheduled-orders/{order_id}")
 async def cancel_scheduled_order(request: Request, order_id: str):
     session = require_session(request)
-    account_ref = build_account_ref(session.app_key, session.cano, session.acnt_prdt_cd)
+    account_ref = _session_account_ref(session)
     if config.CENTRAL_ORDER_REMOTE_URL and not config.CENTRAL_ORDER_SERVER_MODE:
         url = f"{config.CENTRAL_ORDER_REMOTE_URL}/api/central-server/scheduled-orders/{order_id}"
         headers = {"Authorization": f"Bearer {config.CENTRAL_ORDER_REMOTE_TOKEN}"}
@@ -438,7 +448,7 @@ async def update_scheduled_order(
 ):
     session = require_session(request)
     credentials = _session_credentials(session)
-    account_ref = build_account_ref(session.app_key, session.cano, session.acnt_prdt_cd)
+    account_ref = _session_account_ref(session)
     remote_payload = RemoteScheduledOrderCreateRequest(
         **payload.model_dump(),
         execution_credentials=ExecutionCredentialsModel(**credentials),

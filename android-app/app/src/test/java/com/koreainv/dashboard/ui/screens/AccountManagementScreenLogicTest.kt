@@ -2,6 +2,7 @@ package com.koreainv.dashboard.ui.screens
 
 import com.koreainv.dashboard.network.AccountCredential
 import com.koreainv.dashboard.network.AccountProfile
+import com.koreainv.dashboard.network.Broker
 import com.koreainv.dashboard.network.defaultAccountLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -146,6 +147,37 @@ class AccountManagementScreenLogicTest {
         assertFalse(isAccountDraftComplete(complete.copy(cano = "5555abcd")))
         assertFalse(isAccountDraftComplete(complete.copy(acntPrdtCd = "1")))
         assertFalse(isAccountDraftComplete(complete.copy(acntPrdtCd = "011")))
+    }
+
+    @Test
+    fun tossDraftUsesAccountSequenceAndDoesNotRequireProductCode() {
+        val toss = ManagedAccountDraft(
+            broker = Broker.TOSS,
+            cano = "1",
+            acntPrdtCd = "",
+            appKeyInput = "client",
+            appSecretInput = "secret",
+        )
+
+        assertTrue(isAccountDraftComplete(toss))
+        assertFalse(isAccountDraftComplete(toss.copy(cano = "0")))
+    }
+
+    @Test
+    fun changingBrokerNeverReusesStoredCredentials() {
+        val draft = accountDraftsFrom(AccountProfile(accounts = existing))[0].copy(
+            broker = Broker.TOSS,
+            cano = "1",
+            acntPrdtCd = "",
+            hasStoredKey = false,
+            hasStoredSecret = false,
+        )
+
+        val resolved = resolveAccountDrafts(existing, listOf(draft)).single()
+
+        assertEquals(Broker.TOSS, resolved.broker)
+        assertEquals("", resolved.appKey)
+        assertEquals("", resolved.appSecret)
     }
 
     @Test
