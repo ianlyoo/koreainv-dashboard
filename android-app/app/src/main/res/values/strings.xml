@@ -76,6 +76,7 @@
     <string name="sort_by_value">평가금액</string>
     <string name="sort_by_return">수익률</string>
     <string name="sort_by_profit">수익금</string>
+    <string name="all_accounts">전체 계좌</string>
     <string name="asset_detail">자산 상세</string>
     <string name="refresh">새로고침</string>
     <string name="last_synced">마지막 동기화: %s</string>

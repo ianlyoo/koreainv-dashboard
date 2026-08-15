@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -72,10 +73,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun PortfolioScreen(
     repository: KisRepository,
+    accountFilters: List<HoldingAccountFilter>,
     onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onLogoutClick: () -> Unit,
-    onHoldingClick: (String) -> Unit,
+    onHoldingClick: (String, String?) -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
 
@@ -85,6 +87,8 @@ fun PortfolioScreen(
     var currencyMode by remember { mutableStateOf(CurrencyDisplayMode.KRW) }
     var sortMode by remember { mutableStateOf(HoldingSortMode.VALUE) }
     var sortExpanded by remember { mutableStateOf(false) }
+    var selectedAccountId by remember { mutableStateOf<String?>(null) }
+    var accountExpanded by remember { mutableStateOf(false) }
 
     fun loadDashboard(forceRefresh: Boolean = false) {
         isLoading = true
@@ -184,12 +188,15 @@ fun PortfolioScreen(
 
                 dashboardData != null -> {
                     val data = dashboardData!!
-                    val sortedHoldings = remember(data.holdings, sortMode) {
-                        when (sortMode) {
-                            HoldingSortMode.VALUE -> data.holdings.sortedByDescending { it.totalValueKrw }
-                            HoldingSortMode.RETURN -> data.holdings.sortedByDescending { it.profitLossRate }
-                            HoldingSortMode.PROFIT -> data.holdings.sortedByDescending { it.profitLossKrw }
-                        }
+                    val activeAccountId = selectedAccountId?.takeIf { selected ->
+                        accountFilters.any { it.accountId == selected }
+                    }
+                    val selectedAccountLabel = accountFilters
+                        .firstOrNull { it.accountId == activeAccountId }
+                        ?.label
+                        ?: stringResource(R.string.all_accounts)
+                    val sortedHoldings = remember(data.holdings, sortMode, activeAccountId) {
+                        filterAndSortHoldings(data.holdings, activeAccountId, sortMode)
                     }
 
                     LazyColumn(
@@ -206,30 +213,59 @@ fun PortfolioScreen(
                                 title = stringResource(R.string.holdings),
                                 modifier = Modifier.padding(top = 8.dp),
                                 action = {
-                                    Box {
-                                        DashboardPillButton(
-                                            label = sortMode.label(),
-                                            onClick = { sortExpanded = true },
-                                            tone = AccentTone.Neutral,
-                                            trailingIcon = Icons.Default.ArrowDropDown,
-                                        )
-                                        DropdownMenu(
-                                            expanded = sortExpanded,
-                                            onDismissRequest = { sortExpanded = false },
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(24.dp))
-                                                .background(SurfaceGlassLight)
-                                                .border(1.dp, SurfaceBorder, RoundedCornerShape(24.dp)),
-                                        ) {
-                                            HoldingSortMode.entries.forEach { mode ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box {
+                                            DashboardPillButton(
+                                                label = sortMode.label(),
+                                                onClick = { sortExpanded = true },
+                                                tone = AccentTone.Neutral,
+                                                trailingIcon = Icons.Default.ArrowDropDown,
+                                            )
+                                            PortfolioDropdownMenu(
+                                                expanded = sortExpanded,
+                                                onDismissRequest = { sortExpanded = false },
+                                            ) {
+                                                HoldingSortMode.entries.forEach { mode ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(mode.label(), color = TextPrimary) },
+                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                        onClick = {
+                                                            sortMode = mode
+                                                            sortExpanded = false
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Box {
+                                            DashboardPillButton(
+                                                label = compactAccountFilterLabel(selectedAccountLabel),
+                                                onClick = { accountExpanded = true },
+                                                tone = AccentTone.Neutral,
+                                                trailingIcon = Icons.Default.ArrowDropDown,
+                                            )
+                                            PortfolioDropdownMenu(
+                                                expanded = accountExpanded,
+                                                onDismissRequest = { accountExpanded = false },
+                                            ) {
                                                 DropdownMenuItem(
-                                                    text = { Text(mode.label(), color = TextPrimary) },
+                                                    text = { Text(stringResource(R.string.all_accounts), color = TextPrimary) },
                                                     colors = MenuDefaults.itemColors(textColor = TextPrimary),
                                                     onClick = {
-                                                        sortMode = mode
-                                                        sortExpanded = false
+                                                        selectedAccountId = null
+                                                        accountExpanded = false
                                                     },
                                                 )
+                                                accountFilters.forEach { account ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(account.label, color = TextPrimary) },
+                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                        onClick = {
+                                                            selectedAccountId = account.accountId
+                                                            accountExpanded = false
+                                                        },
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -237,7 +273,7 @@ fun PortfolioScreen(
                             )
                         }
 
-                        if (data.holdings.isEmpty()) {
+                        if (sortedHoldings.isEmpty()) {
                             item {
                                 Text(
                                     text = stringResource(R.string.no_holdings_found),
@@ -255,7 +291,7 @@ fun PortfolioScreen(
                                     holding = holding,
                                     currencyMode = currencyMode,
                                     usdRate = data.summary.usdExchangeRate,
-                                    onClick = { onHoldingClick(holding.symbol) },
+                                    onClick = { onHoldingClick(holding.symbol, holding.accountId) },
                                 )
                             }
                         }
@@ -266,10 +302,60 @@ fun PortfolioScreen(
     }
 }
 
-private enum class HoldingSortMode {
+internal enum class HoldingSortMode {
     VALUE,
     RETURN,
     PROFIT,
+}
+
+data class HoldingAccountFilter(
+    val accountId: String,
+    val label: String,
+)
+
+internal fun holdingAccountFilters(holdings: List<Holding>): List<HoldingAccountFilter> =
+    holdings
+        .filter { !it.accountId.isNullOrBlank() }
+        .distinctBy { it.accountId }
+        .map { holding ->
+            HoldingAccountFilter(
+                accountId = holding.accountId.orEmpty(),
+                label = holding.accountLabel?.takeIf(String::isNotBlank)
+                    ?: holding.accountId.orEmpty().takeLast(6),
+            )
+        }
+
+internal fun filterAndSortHoldings(
+    holdings: List<Holding>,
+    accountId: String?,
+    sortMode: HoldingSortMode,
+): List<Holding> {
+    val filtered = accountId?.let { selected -> holdings.filter { it.accountId == selected } } ?: holdings
+    return when (sortMode) {
+        HoldingSortMode.VALUE -> filtered.sortedByDescending { it.totalValueKrw }
+        HoldingSortMode.RETURN -> filtered.sortedByDescending { it.profitLossRate }
+        HoldingSortMode.PROFIT -> filtered.sortedByDescending { it.profitLossKrw }
+    }
+}
+
+internal fun compactAccountFilterLabel(label: String): String =
+    if (label.length <= 8) label else "${label.take(7)}…"
+
+@Composable
+private fun PortfolioDropdownMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        modifier = Modifier
+            .clip(RoundedCornerShape(24.dp))
+            .background(SurfaceGlassLight)
+            .border(1.dp, SurfaceBorder, RoundedCornerShape(24.dp)),
+        content = content,
+    )
 }
 
 @Composable
@@ -343,9 +429,6 @@ fun HoldingItem(
                     market = holding.market,
                     modifier = Modifier.offset(x = (-6).dp),
                 )
-                holding.accountLabel?.takeIf { it.isNotBlank() }?.let { label ->
-                    SurfaceBadge(label = label, tone = AccentTone.Neutral)
-                }
                 Text(
                     text = holding.name,
                     modifier = Modifier.weight(1f),

@@ -1,5 +1,6 @@
 package com.koreainv.dashboard.ui
 
+import android.net.Uri
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
@@ -40,6 +41,7 @@ import com.koreainv.dashboard.ui.screens.AccountManagementScreen
 import com.koreainv.dashboard.ui.screens.DashboardBottomTabBar
 import com.koreainv.dashboard.ui.screens.DashboardTabItem
 import com.koreainv.dashboard.ui.screens.HoldingDetailScreen
+import com.koreainv.dashboard.ui.screens.HoldingAccountFilter
 import com.koreainv.dashboard.ui.screens.PinUnlockScreen
 import com.koreainv.dashboard.ui.screens.PortfolioScreen
 import com.koreainv.dashboard.ui.screens.SetupScreen
@@ -66,8 +68,9 @@ sealed class Screen(val route: String) {
     data object TradeDetail : Screen("trade_detail")
     data object AssetStatus : Screen("asset_status")
     data object AccountManagement : Screen("account_management")
-    data object HoldingDetail : Screen("holding_detail/{symbol}") {
-        fun createRoute(symbol: String): String = "holding_detail/$symbol"
+    data object HoldingDetail : Screen("holding_detail/{symbol}?accountId={accountId}") {
+        fun createRoute(symbol: String, accountId: String?): String =
+            "holding_detail/${Uri.encode(symbol)}?accountId=${Uri.encode(accountId.orEmpty())}"
     }
 }
 
@@ -255,13 +258,16 @@ fun KoreaInvApp() {
                     } else {
                         PortfolioScreen(
                             repository = activeRepository,
+                            accountFilters = unlockedProfile.orEmptyAccountFilters(),
                             onManageAccountsClick = {
                                 accountManagementError = null
                                 navController.navigate(Screen.AccountManagement.route)
                             },
                             onCheckUpdatesClick = ::checkForUpdates,
                             onLogoutClick = ::logout,
-                            onHoldingClick = { symbol -> navController.navigate(Screen.HoldingDetail.createRoute(symbol)) },
+                            onHoldingClick = { symbol, accountId ->
+                                navController.navigate(Screen.HoldingDetail.createRoute(symbol, accountId))
+                            },
                         )
                     }
                 }
@@ -364,16 +370,25 @@ fun KoreaInvApp() {
 
                 composable(
                     route = Screen.HoldingDetail.route,
-                    arguments = listOf(navArgument("symbol") { type = NavType.StringType }),
+                    arguments = listOf(
+                        navArgument("symbol") { type = NavType.StringType },
+                        navArgument("accountId") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
+                    ),
                 ) { backStackEntry ->
                     val activeRepository = repository
                     val symbol = backStackEntry.arguments?.getString("symbol")
+                    val accountId = backStackEntry.arguments?.getString("accountId")?.takeIf(String::isNotBlank)
                     if (activeRepository == null || symbol.isNullOrBlank()) {
                         LaunchedEffect(Unit) { navController.navigate(Screen.Unlock.route) }
                     } else {
                         HoldingDetailScreen(
                             repository = activeRepository,
                             symbol = symbol,
+                            accountId = accountId,
                             onBackClick = { navController.popBackStack() },
                         )
                     }
@@ -476,6 +491,11 @@ fun KoreaInvApp() {
         }
     }
 }
+
+private fun AccountProfile?.orEmptyAccountFilters(): List<HoldingAccountFilter> =
+    this?.accounts?.map { account ->
+        HoldingAccountFilter(accountId = account.id, label = account.label)
+    }.orEmpty()
 
 internal fun shouldCloseUpdateDialog(policy: ReleasePolicy, launchedInstaller: Boolean): Boolean {
     return launchedInstaller || policy != ReleasePolicy.MANDATORY

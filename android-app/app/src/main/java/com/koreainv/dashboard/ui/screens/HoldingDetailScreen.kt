@@ -54,6 +54,7 @@ import kotlin.math.abs
 fun HoldingDetailScreen(
     repository: KisRepository,
     symbol: String,
+    accountId: String?,
     onBackClick: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -65,7 +66,7 @@ fun HoldingDetailScreen(
 
     fun applyDashboard(dashboard: DashboardResponse) {
         usdRate = dashboard.summary.usdExchangeRate
-        holding = dashboard.holdings.find { it.symbol == symbol }
+        holding = findHolding(dashboard.holdings, symbol, accountId)
         if (holding == null) {
             errorMessage = "종목 정보를 찾을 수 없습니다. [$symbol]"
         }
@@ -87,7 +88,7 @@ fun HoldingDetailScreen(
         }
     }
 
-    LaunchedEffect(symbol) {
+    LaunchedEffect(symbol, accountId) {
         val cached = repository.peekDashboard()
         if (cached != null) {
             applyDashboard(cached)
@@ -100,7 +101,7 @@ fun HoldingDetailScreen(
         }
     }
 
-    LaunchedEffect(symbol, holding?.quoteSession) {
+    LaunchedEffect(symbol, accountId, holding?.quoteSession) {
         val current = holding ?: return@LaunchedEffect
         if (current.market != "USA" || current.quoteSession != "day_market") return@LaunchedEffect
 
@@ -261,6 +262,11 @@ fun HoldingDetailScreen(
         }
     }
 }
+
+internal fun findHolding(holdings: List<Holding>, symbol: String, accountId: String?): Holding? =
+    holdings.find { holding ->
+        holding.symbol == symbol && (accountId == null || holding.accountId == accountId)
+    }
 
 private fun formatHoldingUnitPrice(
     price: Double,
