@@ -222,27 +222,49 @@ private fun AccountSection(
             Spacer(modifier = Modifier.height(12.dp))
             SetupField(
                 value = account.appKey,
-                onValueChange = { onUpdate(account.copy(appKey = it)) },
+                onValueChange = {
+                    onUpdate(
+                        account.copy(
+                            appKey = it,
+                            cano = if (account.broker == Broker.TOSS) "" else account.cano,
+                        ),
+                    )
+                },
                 label = stringResource(if (account.broker == Broker.TOSS) R.string.client_id else R.string.app_key),
             )
             Spacer(modifier = Modifier.height(12.dp))
             SetupField(
                 value = account.appSecret,
-                onValueChange = { onUpdate(account.copy(appSecret = it)) },
+                onValueChange = {
+                    onUpdate(
+                        account.copy(
+                            appSecret = it,
+                            cano = if (account.broker == Broker.TOSS) "" else account.cano,
+                        ),
+                    )
+                },
                 label = stringResource(if (account.broker == Broker.TOSS) R.string.client_secret else R.string.app_secret),
                 isSecret = true,
             )
             Spacer(modifier = Modifier.height(12.dp))
-            SetupField(
-                value = account.cano,
-                onValueChange = {
-                    val maxLength = if (account.broker == Broker.TOSS) 19 else SETUP_ACCOUNT_NUMBER_LENGTH
-                    onUpdate(account.copy(cano = it.filter(Char::isDigit).take(maxLength)))
-                },
-                label = stringResource(if (account.broker == Broker.TOSS) R.string.toss_account_seq else R.string.account_number),
-                keyboardType = KeyboardType.Number,
-            )
-            if (account.broker == Broker.KIS) {
+            if (account.broker == Broker.TOSS) {
+                TossAccountPicker(
+                    clientId = account.appKey,
+                    clientSecret = account.appSecret,
+                    selectedAccountSeq = account.cano,
+                    onAccountSelected = { accountSeq ->
+                        onUpdate(account.copy(cano = accountSeq))
+                    },
+                )
+            } else {
+                SetupField(
+                    value = account.cano,
+                    onValueChange = {
+                        onUpdate(account.copy(cano = it.filter(Char::isDigit).take(SETUP_ACCOUNT_NUMBER_LENGTH)))
+                    },
+                    label = stringResource(R.string.account_number),
+                    keyboardType = KeyboardType.Number,
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 SetupField(
                     value = account.acntPrdtCd,

@@ -59,7 +59,7 @@ flowchart LR
 | 예약주문 | O (첫 KIS 계좌) | - |
 
 - 기존 저장 데이터에는 `broker=kis`가 자동 적용되어 별도 재설정이 필요 없다.
-- 토스증권은 WTS의 Open API 메뉴에서 발급한 `client_id`, `client_secret`, 그리고 `GET /api/v1/accounts`에서 확인되는 `accountSeq`를 입력한다.
+- 토스증권은 WTS의 Open API 메뉴에서 발급한 `client_id`, `client_secret`을 입력하면 웹과 Android 앱이 `GET /api/v1/accounts`로 계좌를 자동 조회한다. 계좌가 하나면 자동 선택하고 여러 개면 선택 목록을 표시하며, 내부적으로 선택된 `accountSeq`를 저장한다.
 - 토스증권의 현재 보유자산 API는 주식 잔고를 제공하지만 현금 예수금은 제공하지 않으므로 토스 현금은 합계에 포함하지 않는다.
 - 계좌 목록에서 가장 먼저 등록된 KIS 계좌가 거래내역·예약주문·KIS 실시간 시세용 대표 계좌가 된다. 토스 계좌가 목록 앞에 있어도 KIS 주문 경로로 사용되지 않는다.
 

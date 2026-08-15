@@ -2074,6 +2074,32 @@
             line-height: 1.5;
         }
 
+        .toss-account-picker {
+            display: none;
+            gap: 8px;
+        }
+
+        .toss-account-picker.active {
+            display: grid;
+        }
+
+        .btn-toss-account-lookup {
+            padding: 10px 12px;
+            border: 1px solid rgba(251, 191, 36, 0.42);
+            border-radius: 9px;
+            background: rgba(251, 191, 36, 0.08);
+            color: var(--accent-gold);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .btn-toss-account-lookup:disabled {
+            cursor: wait;
+            opacity: 0.6;
+        }
+
         .account-field-pin {
             max-width: 260px;
         }

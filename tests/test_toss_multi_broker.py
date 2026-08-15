@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from app import toss_api_client
+from app.routes.auth_pages import _toss_account_options, router as auth_router
 from app.services.balance_aggregation import fetch_aggregated_balances
 from app.session_store import AccountCredential, SessionData, accounts_metadata
 
@@ -52,6 +56,58 @@ class TossClientNormalizationTests(unittest.TestCase):
         self.assertEqual(overseas["us_items"][0]["bass_exrt"], 1400.0)
         self.assertEqual(domestic["summary"]["cash_balance"], 0)
         self.assertEqual(overseas["us_summary"]["usd_cash_balance"], 0)
+
+
+class TossAccountDiscoveryTests(unittest.TestCase):
+    def test_account_options_mask_number_and_ignore_invalid_sequence(self):
+        options = _toss_account_options(
+            [
+                {
+                    "accountNo": "12345678901",
+                    "accountSeq": 7,
+                    "accountType": "BROKERAGE",
+                },
+                {"accountNo": "9999", "accountSeq": 0},
+            ]
+        )
+
+        self.assertEqual(
+            options,
+            [
+                {
+                    "account_seq": "7",
+                    "account_no_masked": "••••8901",
+                    "account_type": "BROKERAGE",
+                    "display_name": "토스증권 계좌 ••••8901",
+                }
+            ],
+        )
+
+    @patch("app.routes.auth_pages.toss_api_client.get_accounts")
+    def test_discovery_endpoint_uses_credentials_without_exposing_account_number(
+        self, get_accounts
+    ):
+        get_accounts.return_value = [
+            {
+                "accountNo": "12345678901",
+                "accountSeq": 3,
+                "accountType": "BROKERAGE",
+            }
+        ]
+        app = FastAPI()
+        app.include_router(auth_router)
+
+        response = TestClient(app).post(
+            "/api/toss/accounts/discover",
+            json={"client_id": "client", "client_secret": "secret"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["accounts"][0]["account_seq"], "3")
+        self.assertEqual(payload["accounts"][0]["account_no_masked"], "••••8901")
+        self.assertNotIn("12345678901", response.text)
+        get_accounts.assert_called_once_with("client", "secret")
 
 
 class MultiBrokerAggregationTests(unittest.TestCase):

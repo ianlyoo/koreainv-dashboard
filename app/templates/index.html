@@ -624,18 +624,27 @@
                             <label class="scheduled-order-field">
                                 <span id="new_account_key_label">APP KEY</span>
                                 <input type="text" id="new_account_app_key" name="app_key" required autocomplete="off"
-                                    placeholder="한국투자증권 APP KEY">
+                                    placeholder="한국투자증권 APP KEY" oninput="scheduleDashboardTossLookup('new')">
                             </label>
                             <label class="scheduled-order-field">
                                 <span id="new_account_secret_label">APP SECRET</span>
                                 <input type="password" id="new_account_app_secret" name="app_secret" required
-                                    autocomplete="new-password" placeholder="한국투자증권 APP SECRET">
+                                    autocomplete="new-password" placeholder="한국투자증권 APP SECRET"
+                                    oninput="scheduleDashboardTossLookup('new')" onblur="scheduleDashboardTossLookup('new', 0)">
                             </label>
                             <label class="scheduled-order-field">
                                 <span id="new_account_ref_label">계좌번호 (8자리 + 상품코드 2자리)</span>
                                 <input type="text" id="new_account_cano" name="cano" required autocomplete="off"
                                     inputmode="numeric" maxlength="10" placeholder="예: 1234567801"
                                     oninput="sanitizeAccountNumberInput(this)">
+                                <div class="toss-account-picker" id="new_toss_account_picker">
+                                    <button type="button" class="btn-toss-account-lookup"
+                                        id="new_toss_account_lookup" onclick="discoverDashboardTossAccounts('new')">토스 계좌 불러오기</button>
+                                    <select id="new_toss_account_select" onchange="selectDashboardTossAccount('new', this.value)" disabled>
+                                        <option value="">CLIENT ID와 SECRET을 입력하세요</option>
+                                    </select>
+                                    <span class="account-field-hint" id="new_toss_account_status" aria-live="polite"></span>
+                                </div>
                             </label>
                         </div>
                         <label class="scheduled-order-field account-field-pin">
@@ -717,17 +726,26 @@
                                 inputmode="numeric" maxlength="10" placeholder="변경 시에만 새 계좌번호 입력"
                                 oninput="sanitizeAccountNumberInput(this)">
                             <span class="account-field-hint" id="edit_account_cano_hint"></span>
+                            <div class="toss-account-picker" id="edit_toss_account_picker">
+                                <button type="button" class="btn-toss-account-lookup"
+                                    id="edit_toss_account_lookup" onclick="discoverDashboardTossAccounts('edit')">토스 계좌 불러오기</button>
+                                <select id="edit_toss_account_select" onchange="selectDashboardTossAccount('edit', this.value)" disabled>
+                                    <option value="">현재 계좌를 유지합니다</option>
+                                </select>
+                                <span class="account-field-hint" id="edit_toss_account_status" aria-live="polite"></span>
+                            </div>
                         </label>
                         <label class="scheduled-order-field">
                             <span id="edit_account_key_label">APP KEY</span>
                             <input type="text" id="edit_account_app_key" name="app_key" autocomplete="off"
-                                placeholder="변경 시에만 입력">
+                                placeholder="변경 시에만 입력" oninput="scheduleDashboardTossLookup('edit')">
                             <span class="account-field-hint">빈 값이면 기존 키 유지</span>
                         </label>
                         <label class="scheduled-order-field">
                             <span id="edit_account_secret_label">APP SECRET</span>
                             <input type="password" id="edit_account_app_secret" name="app_secret"
-                                autocomplete="new-password" placeholder="변경 시에만 입력">
+                                autocomplete="new-password" placeholder="변경 시에만 입력"
+                                oninput="scheduleDashboardTossLookup('edit')" onblur="scheduleDashboardTossLookup('edit', 0)">
                             <span class="account-field-hint">빈 값이면 기존 키 유지</span>
                         </label>
                     </div>

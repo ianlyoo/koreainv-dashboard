@@ -3056,6 +3056,7 @@
         let accountList = [];
         let accountDeleteTarget = null;
         let accountEditTarget = null;
+        const dashboardTossLookupTimers = new Map();
 
         function sanitizeAccountNumberInput(input) {
             const digits = input.value.replace(/\D/g, '').slice(0, 19);
@@ -3097,20 +3098,127 @@
             const secretLabel = document.getElementById(`${prefix}_account_secret_label`);
             const refLabel = document.getElementById(`${prefix}_account_ref_label`);
             const refInput = document.getElementById(`${prefix}_account_cano`);
+            const tossPicker = document.getElementById(`${prefix}_toss_account_picker`);
             if (keyLabel) keyLabel.textContent = isToss ? 'CLIENT ID' : 'APP KEY';
             if (secretLabel) secretLabel.textContent = isToss ? 'CLIENT SECRET' : 'APP SECRET';
-            if (refLabel) refLabel.textContent = isToss ? '계좌 순번 (accountSeq)' : '계좌번호 (8자리 + 상품코드 2자리)';
+            if (refLabel) refLabel.textContent = isToss ? '토스 계좌' : '계좌번호 (8자리 + 상품코드 2자리)';
             if (refInput) {
                 refInput.maxLength = isToss ? 19 : 10;
-                refInput.placeholder = isToss ? '예: 1' : '예: 1234567801';
+                refInput.placeholder = isToss ? '' : '예: 1234567801';
+                refInput.style.display = isToss ? 'none' : '';
             }
+            if (tossPicker) tossPicker.classList.toggle('active', isToss);
         }
 
         function handleAccountBrokerChange(prefix) {
             document.getElementById(`${prefix}_account_app_key`).value = '';
             document.getElementById(`${prefix}_account_app_secret`).value = '';
             document.getElementById(`${prefix}_account_cano`).value = '';
+            resetDashboardTossPicker(prefix);
             updateAccountFormFields(prefix);
+        }
+
+        function resetDashboardTossPicker(prefix, message = '') {
+            const select = document.getElementById(`${prefix}_toss_account_select`);
+            const status = document.getElementById(`${prefix}_toss_account_status`);
+            if (select) {
+                select.innerHTML = `<option value="">${prefix === 'edit' ? '현재 계좌를 유지합니다' : 'CLIENT ID와 SECRET을 입력하세요'}</option>`;
+                select.disabled = true;
+            }
+            if (status) status.textContent = message;
+        }
+
+        function selectDashboardTossAccount(prefix, accountSeq) {
+            const input = document.getElementById(`${prefix}_account_cano`);
+            if (input) input.value = String(accountSeq || '');
+        }
+
+        function scheduleDashboardTossLookup(prefix, delay = 700) {
+            const broker = document.getElementById(`${prefix}_account_broker`)?.value;
+            if (broker !== 'toss') return;
+            const input = document.getElementById(`${prefix}_account_cano`);
+            if (input) input.value = '';
+            resetDashboardTossPicker(prefix);
+            const previous = dashboardTossLookupTimers.get(prefix);
+            if (previous) window.clearTimeout(previous);
+            const clientId = document.getElementById(`${prefix}_account_app_key`)?.value.trim();
+            const clientSecret = document.getElementById(`${prefix}_account_app_secret`)?.value;
+            if (!clientId || !clientSecret) return;
+            dashboardTossLookupTimers.set(
+                prefix,
+                window.setTimeout(() => discoverDashboardTossAccounts(prefix), delay)
+            );
+        }
+
+        async function discoverDashboardTossAccounts(prefix) {
+            const broker = document.getElementById(`${prefix}_account_broker`)?.value;
+            if (broker !== 'toss') return;
+            const clientId = document.getElementById(`${prefix}_account_app_key`)?.value.trim() || '';
+            const clientSecret = document.getElementById(`${prefix}_account_app_secret`)?.value || '';
+            const pin = document.getElementById(`${prefix}_account_pin`)?.value || '';
+            const currentSeq = document.getElementById(`${prefix}_account_cano`)?.value || '';
+            const button = document.getElementById(`${prefix}_toss_account_lookup`);
+            const status = document.getElementById(`${prefix}_toss_account_status`);
+            const select = document.getElementById(`${prefix}_toss_account_select`);
+            const payload = clientId && clientSecret
+                ? { client_id: clientId, client_secret: clientSecret }
+                : prefix === 'edit' && accountEditTarget?.accountId && pin
+                    ? { account_id: accountEditTarget.accountId, pin }
+                    : null;
+            if (!payload) {
+                if (status) {
+                    status.textContent = prefix === 'edit'
+                        ? '새 자격증명 또는 PIN을 입력한 뒤 계좌를 불러오세요.'
+                        : 'CLIENT ID와 CLIENT SECRET을 먼저 입력하세요.';
+                }
+                return;
+            }
+
+            if (button) {
+                button.disabled = true;
+                button.textContent = '계좌 조회 중...';
+            }
+            if (status) status.textContent = '토스증권에서 계좌 목록을 조회하고 있습니다.';
+            try {
+                const response = await fetch('/api/toss/accounts/discover', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.detail || '토스 계좌 조회에 실패했습니다.');
+                const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+                if (select) {
+                    select.innerHTML = '<option value="">계좌를 선택하세요</option>';
+                    accounts.forEach((account) => {
+                        const option = document.createElement('option');
+                        option.value = String(account.account_seq || '');
+                        option.textContent = String(account.display_name || `토스증권 계좌 #${account.account_seq}`);
+                        select.appendChild(option);
+                    });
+                    select.disabled = accounts.length === 0;
+                }
+                const retained = accounts.some((account) => String(account.account_seq) === currentSeq)
+                    ? currentSeq
+                    : '';
+                const selected = accounts.length === 1 ? String(accounts[0].account_seq) : retained;
+                if (select) select.value = selected;
+                selectDashboardTossAccount(prefix, selected);
+                if (status) {
+                    status.textContent = accounts.length === 1
+                        ? `${accounts[0].display_name} 계좌가 자동 선택됐습니다.`
+                        : accounts.length > 1
+                            ? '사용할 토스 계좌를 선택하세요.'
+                            : '사용 가능한 토스증권 계좌가 없습니다.';
+                }
+            } catch (error) {
+                resetDashboardTossPicker(prefix, error.message || '토스 계좌 조회에 실패했습니다.');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = '토스 계좌 불러오기';
+                }
+            }
         }
 
         function openAccountModal() {
@@ -3128,6 +3236,7 @@
             document.removeEventListener('keydown', handleAccountModalKeydown);
             clearAccountNotice();
             document.getElementById('accountAddForm').reset();
+            resetDashboardTossPicker('new');
             updateAccountFormFields('new');
         }
 
@@ -3270,7 +3379,7 @@
             if (!label) errors.push('계좌 이름을 입력하세요.');
             if (!appKey) errors.push(broker === 'toss' ? 'CLIENT ID를 입력하세요.' : 'APP KEY를 입력하세요.');
             if (!appSecret) errors.push(broker === 'toss' ? 'CLIENT SECRET을 입력하세요.' : 'APP SECRET을 입력하세요.');
-            if (!parsed) errors.push(broker === 'toss' ? '토스 계좌 순번을 입력하세요.' : '계좌번호는 숫자 8자리 또는 10자리로 입력하세요.');
+            if (!parsed) errors.push(broker === 'toss' ? '토스 계좌를 불러와 선택하세요.' : '계좌번호는 숫자 8자리 또는 10자리로 입력하세요.');
             if (!/^\d{4,6}$/.test(pin)) errors.push('PIN은 4~6자리 숫자로 입력하세요.');
             if (errors.length) {
                 showAccountNotice(errors.join(' '), true);
@@ -3299,6 +3408,7 @@
                 if (res.ok && data.status === 'success') {
                     showAccountNotice(data.message || '계좌가 추가되었습니다.', false);
                     document.getElementById('accountAddForm').reset();
+                    resetDashboardTossPicker('new');
                     updateAccountFormFields('new');
                     await loadAccountList(true);
                     syncData(true);
@@ -3396,7 +3506,7 @@
             const account = accountList.find(
                 (acc) => String(acc.account_id || '') === accountId
             ) || {};
-            accountEditTarget = { accountId };
+            accountEditTarget = { accountId, broker: String(account.broker || 'kis') };
 
             const label = String(
                 account.label || btn.getAttribute('data-account-label') || '계좌'
@@ -3424,7 +3534,10 @@
             const canoInput = document.getElementById('edit_account_cano');
             if (fullCano) {
                 canoInput.value = fullCano + product;
-                if (broker === 'toss') canoInput.value = fullCano;
+                if (broker === 'toss') {
+                    canoInput.value = fullCano;
+                    resetDashboardTossPicker('edit', '현재 토스 계좌를 유지합니다. 변경하려면 계좌를 불러오세요.');
+                }
                 setAccountEditCanoHint('');
             } else {
                 canoInput.value = '';
@@ -3448,6 +3561,7 @@
             accountEditTarget = null;
             clearAccountEditError();
             document.getElementById('accountEditForm').reset();
+            resetDashboardTossPicker('edit');
             setAccountEditCanoHint('');
         }
 
@@ -3488,12 +3602,23 @@
             const appKey = document.getElementById('edit_account_app_key').value.trim();
             const appSecret = document.getElementById('edit_account_app_secret').value;
             const accountNumber = document.getElementById('edit_account_cano').value.trim();
-            const parsed = accountNumber ? parseAccountNumberInput(accountNumber) : null;
+            const parsed = accountNumber ? parseBrokerAccountInput(accountNumber, broker) : null;
             const pin = document.getElementById('edit_account_pin').value;
 
             const errors = [];
             if (!label) errors.push('계좌 이름을 입력해 주세요.');
-            if (accountNumber && !parsed) errors.push(broker === 'toss' ? '토스 계좌 순번을 입력해 주세요.' : '계좌번호를 숫자 8자리 또는 10자리로 입력해 주세요.');
+            if (accountNumber && !parsed) errors.push(broker === 'toss' ? '토스 계좌를 다시 불러와 선택해 주세요.' : '계좌번호를 숫자 8자리 또는 10자리로 입력해 주세요.');
+            const brokerChanged = broker !== accountEditTarget.broker;
+            const tossCredentialsChanged = broker === 'toss' && (appKey || appSecret);
+            if (brokerChanged && (!appKey || !appSecret)) {
+                errors.push('증권사를 변경할 때는 새 API 자격증명을 모두 입력해 주세요.');
+            }
+            if (tossCredentialsChanged && (!appKey || !appSecret)) {
+                errors.push('토스 자격증명을 변경할 때는 CLIENT ID와 CLIENT SECRET을 모두 입력해 주세요.');
+            }
+            if (broker === 'toss' && (brokerChanged || tossCredentialsChanged) && !parsed) {
+                errors.push('새 자격증명으로 토스 계좌를 불러와 선택해 주세요.');
+            }
             if (!/^\d{4,6}$/.test(pin)) errors.push('PIN은 4~6자리 숫자로 입력해 주세요.');
             if (errors.length) {
                 showAccountEditError(errors.join(' '));

@@ -6,8 +6,9 @@ from collections.abc import Mapping
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
-from app import api_client, auth
+from app import api_client, auth, toss_api_client
 from app.session_store import (
     AccountCredential,
     SessionData,
@@ -318,6 +319,42 @@ class AccountUpdateRequest(BaseModel):
     broker: str = ""
 
 
+class TossAccountDiscoveryRequest(BaseModel):
+    client_id: str = ""
+    client_secret: str = ""
+    account_id: str = ""
+    pin: str = ""
+
+
+def _mask_toss_account_no(value: object) -> str:
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    if not digits:
+        return ""
+    return f"••••{digits[-4:]}" if len(digits) > 4 else digits
+
+
+def _toss_account_options(rows: list[dict[str, object]]) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    for row in rows:
+        account_seq = str(row.get("accountSeq") or "").strip()
+        if not _is_valid_toss_account_seq(account_seq):
+            continue
+        masked_number = _mask_toss_account_no(row.get("accountNo"))
+        account_type = str(row.get("accountType") or "").strip()
+        display_name = "토스증권 계좌"
+        if masked_number:
+            display_name += f" {masked_number}"
+        options.append(
+            {
+                "account_seq": account_seq,
+                "account_no_masked": masked_number,
+                "account_type": account_type,
+                "display_name": display_name,
+            }
+        )
+    return options
+
+
 @router.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     if not auth.is_setup_complete():
@@ -467,6 +504,57 @@ async def list_accounts(request: Request):
         "status": "success",
         "accounts": _accounts_metadata(session.accounts),
         "primary_account_id": session.primary_account.account_id,
+    }
+
+
+@router.post("/api/toss/accounts/discover")
+async def discover_toss_accounts(
+    request: Request, payload: TossAccountDiscoveryRequest
+):
+    client_id = payload.client_id.strip()
+    client_secret = payload.client_secret.strip()
+    if bool(client_id) != bool(client_secret):
+        raise HTTPException(
+            status_code=400, detail="CLIENT ID and CLIENT SECRET are both required"
+        )
+
+    if not client_id:
+        require_session(request)
+        settings = auth.load_settings()
+        if not payload.account_id.strip() or not _verify_settings_pin(
+            settings, payload.pin
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="PIN is required to load accounts with stored credentials",
+            )
+        stored_accounts = decrypt_accounts_for_session(settings, payload.pin)
+        target = next(
+            (
+                account
+                for account in stored_accounts
+                if account.account_id == payload.account_id.strip()
+                and account.broker == "toss"
+            ),
+            None,
+        )
+        if target is None:
+            raise HTTPException(status_code=404, detail="Toss account not found")
+        client_id = target.app_key
+        client_secret = target.app_secret
+
+    try:
+        rows = await run_in_threadpool(
+            toss_api_client.get_accounts, client_id, client_secret
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Failed to load Toss accounts: {exc}"
+        ) from exc
+
+    return {
+        "status": "success",
+        "accounts": _toss_account_options(rows),
     }
 
 

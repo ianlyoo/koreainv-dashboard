@@ -63,13 +63,20 @@ class AccountEditFrontendTests(unittest.TestCase):
 
     def test_account_number_can_be_left_blank_to_keep_existing_value(self):
         self.assertIn(
-            "const parsed = accountNumber ? parseAccountNumberInput(accountNumber) : null;",
+            "const parsed = accountNumber ? parseBrokerAccountInput(accountNumber, broker) : null;",
             self.dashboard_js,
         )
         self.assertIn("if (accountNumber && !parsed)", self.dashboard_js)
         self.assertNotIn(
             'id="edit_account_cano" name="cano" required', self.index_html
         )
+
+    def test_toss_accounts_are_discovered_instead_of_manually_entered(self):
+        self.assertIn('id="new_toss_account_select"', self.index_html)
+        self.assertIn('id="edit_toss_account_select"', self.index_html)
+        self.assertIn("function discoverDashboardTossAccounts(prefix)", self.dashboard_js)
+        self.assertIn("function selectDashboardTossAccount(prefix, accountSeq)", self.dashboard_js)
+        self.assertIn("토스 계좌를 불러와 선택하세요.", self.dashboard_js)
 
     def test_edit_secrets_are_never_prefilled(self):
         self.assertIn(

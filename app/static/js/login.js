@@ -198,7 +198,11 @@ function activateView(viewId) {
     }
 }
 
-let accountCards = [{ broker: 'kis', label: '', appKey: '', appSecret: '', account: '' }];
+let accountCards = [{
+    broker: 'kis', label: '', appKey: '', appSecret: '', account: '',
+    tossAccounts: [], lookupMessage: '', lookupLoading: false
+}];
+const tossLookupTimers = new Map();
 
 function escapeAttributeValue(value) {
     return String(value == null ? '' : value)
@@ -215,6 +219,36 @@ function accountCardTemplate(card, index) {
         : '';
     const broker = card.broker === 'toss' ? 'toss' : 'kis';
     const isToss = broker === 'toss';
+    const tossAccounts = Array.isArray(card.tossAccounts) ? card.tossAccounts : [];
+    const tossOptions = tossAccounts.map((account) => {
+        const value = escapeAttributeValue(account.account_seq);
+        const label = escapeAttributeValue(account.display_name || `토스증권 계좌 #${account.account_seq}`);
+        return `<option value="${value}" ${String(card.account) === String(account.account_seq) ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+    const accountField = isToss
+        ? `
+            <div class="form-group">
+                <label for="account_${index}_cano">토스 계좌</label>
+                <div class="toss-account-discovery">
+                    <button type="button" class="btn-account-lookup"
+                        onclick="discoverTossAccounts(${index})" ${card.lookupLoading ? 'disabled' : ''}>
+                        ${card.lookupLoading ? '계좌 조회 중...' : '토스 계좌 불러오기'}
+                    </button>
+                    <select id="account_${index}_cano" name="cano" required
+                        onchange="selectTossAccount(${index}, this.value)" ${tossAccounts.length ? '' : 'disabled'}>
+                        <option value="">${tossAccounts.length ? '계좌를 선택하세요' : 'CLIENT ID와 SECRET을 입력하세요'}</option>
+                        ${tossOptions}
+                    </select>
+                </div>
+                <div class="account-lookup-status" aria-live="polite">${escapeAttributeValue(card.lookupMessage || '')}</div>
+            </div>`
+        : `
+            <div class="form-group">
+                <label for="account_${index}_cano">계좌번호 (8자리 + 상품코드 2자리)</label>
+                <input type="text" id="account_${index}_cano" name="cano" required autocomplete="off"
+                    inputmode="numeric" maxlength="10" placeholder="예: 1234567801"
+                    oninput="sanitizeAccountInput(this)" value="${escapeAttributeValue(card.account)}">
+            </div>`;
     return `
         <div class="account-card" role="listitem" data-account-index="${index}">
             <div class="account-card-header">
@@ -243,24 +277,23 @@ function accountCardTemplate(card, index) {
             <div class="form-group">
                 <label for="account_${index}_app_key">${isToss ? 'CLIENT ID' : 'APP KEY'}</label>
                 <input type="text" id="account_${index}_app_key" name="app_key" required autocomplete="off"
-                    placeholder="${isToss ? '토스증권 CLIENT ID' : '한국투자증권 APP KEY'}" value="${escapeAttributeValue(card.appKey)}">
+                    placeholder="${isToss ? '토스증권 CLIENT ID' : '한국투자증권 APP KEY'}" value="${escapeAttributeValue(card.appKey)}"
+                    ${isToss ? `oninput="handleTossCredentialInput(${index})"` : ''}>
             </div>
             <div class="form-group">
                 <label for="account_${index}_app_secret">${isToss ? 'CLIENT SECRET' : 'APP SECRET'}</label>
                 <input type="password" id="account_${index}_app_secret" name="app_secret" required
-                    autocomplete="new-password" placeholder="${isToss ? '토스증권 CLIENT SECRET' : '한국투자증권 APP SECRET'}" value="${escapeAttributeValue(card.appSecret)}">
+                    autocomplete="new-password" placeholder="${isToss ? '토스증권 CLIENT SECRET' : '한국투자증권 APP SECRET'}" value="${escapeAttributeValue(card.appSecret)}"
+                    ${isToss ? `oninput="handleTossCredentialInput(${index})" onblur="scheduleTossAccountLookup(${index}, 0)"` : ''}>
             </div>
-            <div class="form-group">
-                <label for="account_${index}_cano">${isToss ? '계좌 순번 (accountSeq)' : '계좌번호 (8자리 + 상품코드 2자리)'}</label>
-                <input type="text" id="account_${index}_cano" name="cano" required autocomplete="off"
-                    inputmode="numeric" maxlength="${isToss ? '19' : '10'}" placeholder="${isToss ? '예: 1' : '예: 1234567801'}"
-                    oninput="sanitizeAccountInput(this)" value="${escapeAttributeValue(card.account)}">
-            </div>
+            ${accountField}
         </div>
     `;
 }
 
 function renderAccountCards() {
+    tossLookupTimers.forEach((timer) => window.clearTimeout(timer));
+    tossLookupTimers.clear();
     const container = document.getElementById('account-cards');
     if (!container) return;
     container.innerHTML = accountCards.map(accountCardTemplate).join('');
@@ -276,12 +309,16 @@ function syncAccountCardState() {
             return el ? el.value : '';
         };
         if (accountCards[index]) {
+            const previous = accountCards[index];
             accountCards[index] = {
                 broker: read('broker') || 'kis',
                 label: read('label'),
                 appKey: read('app_key'),
                 appSecret: read('app_secret'),
-                account: read('cano')
+                account: read('cano'),
+                tossAccounts: previous.tossAccounts || [],
+                lookupMessage: previous.lookupMessage || '',
+                lookupLoading: !!previous.lookupLoading
             };
         }
     });
@@ -289,7 +326,10 @@ function syncAccountCardState() {
 
 function addAccountCard() {
     syncAccountCardState();
-    accountCards.push({ broker: 'kis', label: '', appKey: '', appSecret: '', account: '' });
+    accountCards.push({
+        broker: 'kis', label: '', appKey: '', appSecret: '', account: '',
+        tossAccounts: [], lookupMessage: '', lookupLoading: false
+    });
     renderAccountCards();
     const newIndex = accountCards.length - 1;
     const firstInput = document.getElementById(`account_${newIndex}_label`);
@@ -318,9 +358,81 @@ function changeAccountBroker(index, broker) {
     if (accountCards[index]) {
         accountCards[index].broker = broker === 'toss' ? 'toss' : 'kis';
         accountCards[index].account = '';
+        accountCards[index].tossAccounts = [];
+        accountCards[index].lookupMessage = '';
+        accountCards[index].lookupLoading = false;
     }
     renderAccountCards();
-    document.getElementById(`account_${index}_cano`)?.focus();
+    document.getElementById(`account_${index}_${broker === 'toss' ? 'app_key' : 'cano'}`)?.focus();
+}
+
+function selectTossAccount(index, accountSeq) {
+    if (accountCards[index]) accountCards[index].account = String(accountSeq || '');
+}
+
+function handleTossCredentialInput(index) {
+    const card = accountCards[index];
+    if (!card || card.broker !== 'toss') return;
+    card.appKey = document.getElementById(`account_${index}_app_key`)?.value || '';
+    card.appSecret = document.getElementById(`account_${index}_app_secret`)?.value || '';
+    card.account = '';
+    card.tossAccounts = [];
+    card.lookupMessage = '';
+    const select = document.getElementById(`account_${index}_cano`);
+    if (select) {
+        select.value = '';
+        select.disabled = true;
+    }
+    scheduleTossAccountLookup(index, 700);
+}
+
+function scheduleTossAccountLookup(index, delay = 700) {
+    const existing = tossLookupTimers.get(index);
+    if (existing) window.clearTimeout(existing);
+    const appKey = document.getElementById(`account_${index}_app_key`)?.value.trim();
+    const appSecret = document.getElementById(`account_${index}_app_secret`)?.value;
+    if (!appKey || !appSecret) return;
+    tossLookupTimers.set(index, window.setTimeout(() => discoverTossAccounts(index), delay));
+}
+
+async function discoverTossAccounts(index) {
+    syncAccountCardState();
+    const card = accountCards[index];
+    if (!card || card.broker !== 'toss' || card.lookupLoading) return;
+    if (!card.appKey.trim() || !card.appSecret) {
+        card.lookupMessage = 'CLIENT ID와 CLIENT SECRET을 먼저 입력하세요.';
+        renderAccountCards();
+        return;
+    }
+    card.lookupLoading = true;
+    card.lookupMessage = '토스증권에서 계좌 목록을 조회하고 있습니다.';
+    renderAccountCards();
+    try {
+        const response = await fetch('/api/toss/accounts/discover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: card.appKey.trim(), client_secret: card.appSecret })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || '토스 계좌 조회에 실패했습니다.');
+        if (accountCards[index] !== card) return;
+        const options = Array.isArray(data.accounts) ? data.accounts : [];
+        card.tossAccounts = options;
+        card.account = options.length === 1 ? String(options[0].account_seq) : '';
+        card.lookupMessage = options.length === 1
+            ? `${options[0].display_name} 계좌가 자동 선택됐습니다.`
+            : options.length > 1
+                ? '사용할 토스 계좌를 선택하세요.'
+                : '사용 가능한 토스증권 계좌가 없습니다.';
+    } catch (error) {
+        if (accountCards[index] !== card) return;
+        card.tossAccounts = [];
+        card.account = '';
+        card.lookupMessage = error.message || '토스 계좌 조회에 실패했습니다.';
+    } finally {
+        card.lookupLoading = false;
+        renderAccountCards();
+    }
 }
 
 function parseAccountNumber(raw) {
@@ -367,7 +479,7 @@ function validateSetupForm() {
             invalidFields.push(`account_${index}_app_secret`);
         }
         if (!parsed) {
-            errors.push(`계좌 ${index + 1}: ${broker === 'toss' ? '토스 계좌 순번을 입력하세요.' : '계좌번호는 숫자 8자리 또는 10자리로 입력하세요.'}`);
+            errors.push(`계좌 ${index + 1}: ${broker === 'toss' ? '토스 계좌를 불러와 선택하세요.' : '계좌번호는 숫자 8자리 또는 10자리로 입력하세요.'}`);
             invalidFields.push(`account_${index}_cano`);
         } else {
             accounts.push({

@@ -161,6 +161,7 @@ class AccountManagementScreenLogicTest {
 
         assertTrue(isAccountDraftComplete(toss))
         assertFalse(isAccountDraftComplete(toss.copy(cano = "0")))
+        assertFalse(isAccountDraftComplete(toss.copy(appSecretInput = "")))
     }
 
     @Test

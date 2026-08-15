@@ -91,6 +91,8 @@ internal fun isAccountDraftComplete(draft: ManagedAccountDraft): Boolean {
     val productCode = draft.acntPrdtCd.trim()
     val keyOk = draft.appKeyInput.isNotBlank() || draft.hasStoredKey
     val secretOk = draft.appSecretInput.isNotBlank() || draft.hasStoredSecret
+    val tossCredentialPairOk = draft.broker != Broker.TOSS ||
+        draft.appKeyInput.isBlank() == draft.appSecretInput.isBlank()
     val canoOk = if (draft.broker == Broker.TOSS) {
         cano.isNotBlank() && cano.all(Char::isDigit) && cano.toLongOrNull()?.let { it > 0 } == true
     } else {
@@ -98,7 +100,7 @@ internal fun isAccountDraftComplete(draft: ManagedAccountDraft): Boolean {
     }
     val productOk = draft.broker == Broker.TOSS ||
         (productCode.length == ACCOUNT_PRODUCT_CODE_LENGTH && productCode.all(Char::isDigit))
-    return keyOk && secretOk && canoOk && productOk
+    return keyOk && secretOk && tossCredentialPairOk && canoOk && productOk
 }
 
 internal fun accountManagementValidationError(
@@ -207,6 +209,7 @@ fun AccountManagementScreen(
                     AccountManagementCard(
                         index = index,
                         draft = draft,
+                        storedAccount = profile.accounts.firstOrNull { it.id == draft.id },
                         isPrimary = draft.broker == Broker.KIS && drafts.take(index).none { it.broker == Broker.KIS },
                         isRemovable = drafts.size > 1,
                         isEnabled = !isSaving,
@@ -275,12 +278,17 @@ fun AccountManagementScreen(
 private fun AccountManagementCard(
     index: Int,
     draft: ManagedAccountDraft,
+    storedAccount: AccountCredential?,
     isPrimary: Boolean,
     isRemovable: Boolean,
     isEnabled: Boolean,
     onUpdate: (ManagedAccountDraft) -> Unit,
     onRemove: () -> Unit,
 ) {
+    val hasCredentialEdits = draft.appKeyInput.isNotBlank() || draft.appSecretInput.isNotBlank()
+    val storedTossAccount = storedAccount?.takeIf { Broker.normalize(it.broker) == Broker.TOSS }
+    val tossClientId = if (hasCredentialEdits) draft.appKeyInput else storedTossAccount?.appKey.orEmpty()
+    val tossClientSecret = if (hasCredentialEdits) draft.appSecretInput else storedTossAccount?.appSecret.orEmpty()
     PremiumGlassCard {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
@@ -338,7 +346,14 @@ private fun AccountManagementCard(
             Spacer(modifier = Modifier.height(12.dp))
             ManagementField(
                 value = draft.appKeyInput,
-                onValueChange = { onUpdate(draft.copy(appKeyInput = it)) },
+                onValueChange = {
+                    onUpdate(
+                        draft.copy(
+                            appKeyInput = it,
+                            cano = if (draft.broker == Broker.TOSS) "" else draft.cano,
+                        ),
+                    )
+                },
                 label = stringResource(if (draft.broker == Broker.TOSS) R.string.client_id else R.string.app_key),
                 isSecret = true,
                 isEnabled = isEnabled,
@@ -347,24 +362,40 @@ private fun AccountManagementCard(
             Spacer(modifier = Modifier.height(12.dp))
             ManagementField(
                 value = draft.appSecretInput,
-                onValueChange = { onUpdate(draft.copy(appSecretInput = it)) },
+                onValueChange = {
+                    onUpdate(
+                        draft.copy(
+                            appSecretInput = it,
+                            cano = if (draft.broker == Broker.TOSS) "" else draft.cano,
+                        ),
+                    )
+                },
                 label = stringResource(if (draft.broker == Broker.TOSS) R.string.client_secret else R.string.app_secret),
                 isSecret = true,
                 isEnabled = isEnabled,
                 supportingText = if (draft.hasStoredSecret) stringResource(R.string.keep_existing_value) else null,
             )
             Spacer(modifier = Modifier.height(12.dp))
-            ManagementField(
-                value = draft.cano,
-                onValueChange = {
-                    val maxLength = if (draft.broker == Broker.TOSS) 19 else ACCOUNT_NUMBER_LENGTH
-                    onUpdate(draft.copy(cano = it.filter(Char::isDigit).take(maxLength)))
-                },
-                label = stringResource(if (draft.broker == Broker.TOSS) R.string.toss_account_seq else R.string.account_number),
-                keyboardType = KeyboardType.Number,
-                isEnabled = isEnabled,
-            )
-            if (draft.broker == Broker.KIS) {
+            if (draft.broker == Broker.TOSS) {
+                TossAccountPicker(
+                    clientId = tossClientId,
+                    clientSecret = tossClientSecret,
+                    selectedAccountSeq = draft.cano,
+                    isEnabled = isEnabled,
+                    onAccountSelected = { accountSeq ->
+                        onUpdate(draft.copy(cano = accountSeq))
+                    },
+                )
+            } else {
+                ManagementField(
+                    value = draft.cano,
+                    onValueChange = {
+                        onUpdate(draft.copy(cano = it.filter(Char::isDigit).take(ACCOUNT_NUMBER_LENGTH)))
+                    },
+                    label = stringResource(R.string.account_number),
+                    keyboardType = KeyboardType.Number,
+                    isEnabled = isEnabled,
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 ManagementField(
                     value = draft.acntPrdtCd,
