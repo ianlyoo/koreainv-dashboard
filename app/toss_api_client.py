@@ -289,6 +289,8 @@ def _normalize_order_rows(
             if currency == "KRW"
             else amount_native * max(usd_exchange_rate, 0.0)
         )
+        commission_native = _as_float(execution.get("commission"))
+        tax_native = _as_float(execution.get("tax"))
         symbol = str(row.get("symbol") or "").strip()
         side = str(row.get("side") or "").strip().upper()
         normalized.append(
@@ -306,12 +308,203 @@ def _normalize_order_rows(
                 "amount": amount_native,
                 "amount_native": amount_native,
                 "amount_krw": amount_krw,
+                "commission_native": commission_native,
+                "tax_native": tax_native,
                 "realized_profit_krw": None,
                 "realized_return_rate": None,
+                "realized_profit_estimated": False,
                 "order_no": order_id,
             }
         )
     return normalized
+
+
+def _estimate_realized_profit(
+    rows: list[dict[str, object]],
+    *,
+    usd_exchange_rate: float,
+    start_date: str,
+    end_date: str,
+    history_complete: bool = True,
+) -> dict[str, object]:
+    """Estimate Toss realized P/L with a moving-average native-currency basis.
+
+    The Toss order-history API exposes execution proceeds and costs but not the
+    broker's realized P/L.  We reconstruct cost basis from all available prior
+    BUY executions.  A SELL with insufficient basis is deliberately left
+    unpriced because transfers and corporate actions are not represented by
+    order history.
+    """
+
+    positions: dict[tuple[str, str], dict[str, float]] = {}
+    unknown_basis: set[tuple[str, str]] = set()
+    selected_sell_count = 0
+    estimated_sell_count = 0
+    domestic_profit = 0.0
+    overseas_profit = 0.0
+    total_buy_amount_krw = 0.0
+    daily: dict[str, dict[str, object]] = {}
+
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("date") or ""),
+            str(row.get("time") or ""),
+            str(row.get("order_no") or ""),
+        ),
+    )
+    for row in ordered:
+        symbol = str(row.get("symbol") or row.get("ticker") or "").strip()
+        currency = str(row.get("currency") or "KRW").strip().upper()
+        if not symbol:
+            continue
+        key = (symbol, currency)
+        side = str(row.get("side") or "").strip().upper()
+        quantity = _as_float(row.get("quantity"))
+        amount_native = _as_float(row.get("amount_native") or row.get("amount"))
+        commission = _as_float(row.get("commission_native"))
+        tax = _as_float(row.get("tax_native"))
+        trade_date = str(row.get("date") or "")
+        selected = start_date.replace("-", "") <= trade_date <= end_date.replace("-", "")
+
+        if side in {"BUY", "매수"}:
+            if key in unknown_basis:
+                continue
+            position = positions.setdefault(key, {"quantity": 0.0, "cost": 0.0})
+            position["quantity"] += quantity
+            position["cost"] += amount_native + commission + tax
+            continue
+
+        if side not in {"SELL", "매도"}:
+            continue
+        if selected:
+            selected_sell_count += 1
+        position = positions.get(key)
+        if (
+            key in unknown_basis
+            or position is None
+            or quantity <= 0
+            or position["quantity"] + 1e-9 < quantity
+        ):
+            unknown_basis.add(key)
+            positions.pop(key, None)
+            if selected:
+                row["profit_estimate_reason"] = "매수 원가 이력 부족"
+            continue
+
+        allocated_cost = position["cost"] * (quantity / position["quantity"])
+        proceeds = amount_native - commission - tax
+        profit_native = proceeds - allocated_cost
+        rate = usd_exchange_rate if currency == "USD" else 1.0
+        position["quantity"] -= quantity
+        position["cost"] -= allocated_cost
+        if position["quantity"] <= 1e-9:
+            positions.pop(key, None)
+
+        if not selected:
+            continue
+        if currency != "KRW" and rate <= 0:
+            row["profit_estimate_reason"] = "원화 환산 환율 부족"
+            continue
+        profit_krw = profit_native * rate
+        buy_amount_krw = allocated_cost * rate
+        row["realized_profit_krw"] = round(profit_krw, 2)
+        row["realized_return_rate"] = (
+            round(profit_native / allocated_cost * 100.0, 4)
+            if allocated_cost > 0
+            else None
+        )
+        row["realized_profit_estimated"] = True
+        estimated_sell_count += 1
+        total_buy_amount_krw += buy_amount_krw
+        is_domestic = currency == "KRW"
+        if is_domestic:
+            domestic_profit += profit_krw
+        else:
+            overseas_profit += profit_krw
+        bucket = daily.setdefault(
+            trade_date,
+            {
+                "date": trade_date,
+                "domestic_realized_profit_krw": 0.0,
+                "overseas_realized_profit_krw": 0.0,
+                "total_realized_profit_krw": 0.0,
+            },
+        )
+        bucket_key = (
+            "domestic_realized_profit_krw"
+            if is_domestic
+            else "overseas_realized_profit_krw"
+        )
+        bucket[bucket_key] = _as_float(bucket[bucket_key]) + profit_krw
+        bucket["total_realized_profit_krw"] = (
+            _as_float(bucket["total_realized_profit_krw"]) + profit_krw
+        )
+
+    estimate_complete = history_complete and estimated_sell_count == selected_sell_count
+    profit_available = selected_sell_count == 0 or estimated_sell_count > 0
+    total_profit = domestic_profit + overseas_profit
+    return {
+        "summary": {
+            "domestic_realized_profit_krw": domestic_profit,
+            "overseas_realized_profit_krw": overseas_profit,
+            "total_realized_profit_krw": total_profit,
+            "total_realized_return_rate": (
+                total_profit / total_buy_amount_krw * 100.0
+                if total_buy_amount_krw > 0
+                else 0.0
+            ),
+            "total_buy_amount_krw": total_buy_amount_krw,
+        },
+        "daily": [daily[key] for key in sorted(daily)],
+        "profit_available": profit_available,
+        "profit_complete": estimate_complete,
+        "profit_estimated": True,
+        "estimated_sell_count": estimated_sell_count,
+        "unpriced_sell_count": selected_sell_count - estimated_sell_count,
+    }
+
+
+def _fetch_closed_orders(
+    client_id: str,
+    client_secret: str,
+    account_seq: str,
+    *,
+    end_date: str,
+) -> tuple[list[Mapping[str, object]], bool]:
+    orders: list[Mapping[str, object]] = []
+    cursor = ""
+    seen_cursors: set[str] = set()
+    history_complete = True
+    for _ in range(100):
+        params = {
+            "status": "CLOSED",
+            "to": end_date,
+            "limit": "100",
+        }
+        if cursor:
+            params["cursor"] = cursor
+        payload = _authorized_get(
+            "/api/v1/orders",
+            client_id,
+            client_secret,
+            account_seq=account_seq,
+            params=params,
+        )
+        result = _as_mapping(payload.get("result"))
+        orders.extend(_as_rows(result.get("orders")))
+        has_next = bool(result.get("hasNext"))
+        next_cursor = str(result.get("nextCursor") or "").strip()
+        if not has_next:
+            break
+        if not next_cursor or next_cursor in seen_cursors:
+            history_complete = False
+            break
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    else:
+        history_complete = False
+    return orders, history_complete
 
 
 def get_trade_history(
@@ -329,53 +522,42 @@ def get_trade_history(
     if safe_start > safe_end:
         raise ValueError("Toss trade-history start date must not exceed end date")
 
-    orders: list[Mapping[str, object]] = []
-    cursor = ""
-    seen_cursors: set[str] = set()
-    for _ in range(100):
-        params = {
-            "status": "CLOSED",
-            "from": safe_start,
-            "to": safe_end,
-            "limit": "100",
-        }
-        if cursor:
-            params["cursor"] = cursor
-        payload = _authorized_get(
-            "/api/v1/orders",
-            client_id,
-            client_secret,
-            account_seq=safe_seq,
-            params=params,
-        )
-        result = _as_mapping(payload.get("result"))
-        orders.extend(_as_rows(result.get("orders")))
-        has_next = bool(result.get("hasNext"))
-        next_cursor = str(result.get("nextCursor") or "").strip()
-        if not has_next or not next_cursor or next_cursor in seen_cursors:
-            break
-        seen_cursors.add(next_cursor)
-        cursor = next_cursor
-
+    orders, history_complete = _fetch_closed_orders(
+        client_id,
+        client_secret,
+        safe_seq,
+        end_date=safe_end,
+    )
     usd_rate = _get_usd_exchange_rate(client_id, client_secret)
-    items = _normalize_order_rows(
+    all_items = _normalize_order_rows(
         orders,
+        usd_exchange_rate=usd_rate,
+        start_date="0001-01-01",
+        end_date=safe_end,
+    )
+    estimate = _estimate_realized_profit(
+        all_items,
         usd_exchange_rate=usd_rate,
         start_date=safe_start,
         end_date=safe_end,
+        history_complete=history_complete,
     )
+    items = [
+        row
+        for row in all_items
+        if safe_start.replace("-", "") <= str(row.get("date") or "") <= safe_end.replace("-", "")
+    ]
     items.sort(key=lambda row: (str(row.get("date", "")), str(row.get("time", ""))), reverse=True)
+    summary = dict(_as_mapping(estimate.get("summary")))
+    summary["trade_days"] = len({str(row.get("date", "")) for row in items})
     return {
         "items": items,
-        "summary": {
-            "domestic_realized_profit_krw": 0.0,
-            "overseas_realized_profit_krw": 0.0,
-            "total_realized_profit_krw": 0.0,
-            "total_realized_return_rate": 0.0,
-            "total_buy_amount_krw": 0.0,
-            "trade_days": len({str(row.get("date", "")) for row in items}),
-        },
-        "daily": [],
+        "summary": summary,
+        "daily": estimate["daily"],
         "usd_exchange_rate": usd_rate,
-        "profit_available": False,
+        "profit_available": estimate["profit_available"],
+        "profit_complete": estimate["profit_complete"],
+        "profit_estimated": True,
+        "estimated_sell_count": estimate["estimated_sell_count"],
+        "unpriced_sell_count": estimate["unpriced_sell_count"],
     }

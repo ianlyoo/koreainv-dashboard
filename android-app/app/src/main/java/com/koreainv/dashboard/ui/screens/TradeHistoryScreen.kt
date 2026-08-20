@@ -283,128 +283,128 @@ fun TradeHistoryScreen(
                         }
 
                         item {
-                            SectionHeader(
-                                title = "",
-                                modifier = Modifier.padding(top = 8.dp),
-                                titleContent = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Box(modifier = Modifier.weight(1.08f)) {
+                                    DashboardPillButton(
+                                        label = selectedRangeLabel,
+                                        onClick = { rangeExpanded = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        trailingIcon = Icons.Default.ArrowDropDown,
+                                        compact = true,
+                                    )
+                                    DropdownMenu(
+                                        expanded = rangeExpanded,
+                                        onDismissRequest = { rangeExpanded = false },
+                                        modifier = Modifier
+                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                                            .background(SurfaceGlassLight)
+                                            .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
                                     ) {
-                                        SectionTitle(title = stringResource(R.string.trade_list))
-                                        Box {
-                                            DashboardPillButton(
-                                                label = selectedRangeLabel,
-                                                onClick = { rangeExpanded = true },
-                                                trailingIcon = Icons.Default.ArrowDropDown,
+                                        tradeRangeOptions().forEach { option ->
+                                            DropdownMenuItem(
+                                                text = { Text(option.second, color = TextPrimary) },
+                                                colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                onClick = {
+                                                    rangeExpanded = false
+                                                    loadTradeHistory(range = option.first)
+                                                },
                                             )
-                                            DropdownMenu(
-                                                expanded = rangeExpanded,
-                                                onDismissRequest = { rangeExpanded = false },
-                                                modifier = Modifier
-                                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                                                    .background(SurfaceGlassLight)
-                                                    .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
-                                            ) {
-                                                tradeRangeOptions().forEach { option ->
-                                                    DropdownMenuItem(
-                                                        text = { Text(option.second, color = TextPrimary) },
-                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                        onClick = {
-                                                            rangeExpanded = false
-                                                            loadTradeHistory(range = option.first)
-                                                        },
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Box {
-                                            DashboardPillButton(
-                                                label = compactAccountFilterLabel(selectedAccountLabel),
-                                                onClick = { accountExpanded = true },
-                                                trailingIcon = Icons.Default.ArrowDropDown,
-                                            )
-                                            DropdownMenu(
-                                                expanded = accountExpanded,
-                                                onDismissRequest = { accountExpanded = false },
-                                                modifier = Modifier
-                                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                                                    .background(SurfaceGlassLight)
-                                                    .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
-                                            ) {
-                                                DropdownMenuItem(
-                                                    text = { Text(stringResource(R.string.all_accounts), color = TextPrimary) },
-                                                    colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                    onClick = {
-                                                        accountExpanded = false
-                                                        loadTradeHistory(accountId = null)
-                                                    },
-                                                )
-                                                accountFilters.forEach { account ->
-                                                    DropdownMenuItem(
-                                                        text = { Text(account.label, color = TextPrimary) },
-                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                        onClick = {
-                                                            accountExpanded = false
-                                                            loadTradeHistory(accountId = account.accountId)
-                                                        },
-                                                    )
-                                                }
-                                            }
                                         }
                                     }
-                                },
-                                action = {
-                                    Box {
-                                        DashboardPillButton(
-                                            label = when (tradeFilter) {
-                                                "buy" -> stringResource(R.string.buy)
-                                                "sell" -> stringResource(R.string.sell)
-                                                else -> stringResource(R.string.all)
+                                }
+                                Box(modifier = Modifier.weight(1.12f)) {
+                                    DashboardPillButton(
+                                        label = compactAccountFilterLabel(selectedAccountLabel),
+                                        onClick = { accountExpanded = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        trailingIcon = Icons.Default.ArrowDropDown,
+                                        compact = true,
+                                    )
+                                    DropdownMenu(
+                                        expanded = accountExpanded,
+                                        onDismissRequest = { accountExpanded = false },
+                                        modifier = Modifier
+                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                                            .background(SurfaceGlassLight)
+                                            .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.all_accounts), color = TextPrimary) },
+                                            colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                            onClick = {
+                                                accountExpanded = false
+                                                loadTradeHistory(accountId = null)
                                             },
-                                            onClick = { filterExpanded = true },
-                                            trailingIcon = Icons.Default.ArrowDropDown,
-                                            tone = filterTone,
                                         )
-                                        DropdownMenu(
-                                            expanded = filterExpanded,
-                                            onDismissRequest = { filterExpanded = false },
-                                            modifier = Modifier
-                                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                                                .background(SurfaceGlassLight)
-                                                .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
-                                        ) {
+                                        accountFilters.forEach { account ->
                                             DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.all), color = TextPrimary) },
+                                                text = { Text(account.label, color = TextPrimary) },
                                                 colors = MenuDefaults.itemColors(textColor = TextPrimary),
                                                 onClick = {
-                                                    tradeFilter = "all"
-                                                    filterExpanded = false
-                                                    persistSessionState()
-                                                },
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.buy), color = TextPrimary) },
-                                                colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                onClick = {
-                                                    tradeFilter = "buy"
-                                                    filterExpanded = false
-                                                    persistSessionState()
-                                                },
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.sell), color = TextPrimary) },
-                                                colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                onClick = {
-                                                    tradeFilter = "sell"
-                                                    filterExpanded = false
-                                                    persistSessionState()
+                                                    accountExpanded = false
+                                                    loadTradeHistory(accountId = account.accountId)
                                                 },
                                             )
                                         }
                                     }
-                                },
-                            )
+                                }
+                                Box(modifier = Modifier.weight(0.8f)) {
+                                    DashboardPillButton(
+                                        label = when (tradeFilter) {
+                                            "buy" -> stringResource(R.string.buy)
+                                            "sell" -> stringResource(R.string.sell)
+                                            else -> stringResource(R.string.all)
+                                        },
+                                        onClick = { filterExpanded = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        trailingIcon = Icons.Default.ArrowDropDown,
+                                        tone = filterTone,
+                                        compact = true,
+                                    )
+                                    DropdownMenu(
+                                        expanded = filterExpanded,
+                                        onDismissRequest = { filterExpanded = false },
+                                        modifier = Modifier
+                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                                            .background(SurfaceGlassLight)
+                                            .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.all), color = TextPrimary) },
+                                            colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                            onClick = {
+                                                tradeFilter = "all"
+                                                filterExpanded = false
+                                                persistSessionState()
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.buy), color = TextPrimary) },
+                                            colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                            onClick = {
+                                                tradeFilter = "buy"
+                                                filterExpanded = false
+                                                persistSessionState()
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.sell), color = TextPrimary) },
+                                            colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                            onClick = {
+                                                tradeFilter = "sell"
+                                                filterExpanded = false
+                                                persistSessionState()
+                                            },
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         if (isTradeListLoading) {
@@ -545,8 +545,16 @@ fun TradeSummaryCard(
                     append(selectedAccountLabel)
                     append(" · ")
                     append(selectedRangeLabel)
-                    if (!data.profitAvailable) append(" · 토스 실현손익 미제공")
-                    else if (!data.profitComplete) append(" · 토스 손익 미포함")
+                    if (!data.profitAvailable) {
+                        append(" · 토스 추정 불가(원가 이력 부족)")
+                    } else {
+                        if (data.profitEstimated) append(" · 토스 추정 손익 포함")
+                        if (!data.profitComplete) {
+                            append(" · 원가 부족 ")
+                            append(data.unpricedSellCount)
+                            append("건 미산출")
+                        }
+                    }
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
@@ -649,7 +657,10 @@ fun TradeItemCard(
             )
             if (trade.realizedProfitKrw != null && !isBuy) {
                 TradeCardAmountText(
-                    text = formatCurrencyAmount(trade.realizedProfitKrw, currencyMode, usdRate, signed = true),
+                    text = buildString {
+                        append(formatCurrencyAmount(trade.realizedProfitKrw, currencyMode, usdRate, signed = true))
+                        if (trade.realizedProfitEstimated) append(" 추정")
+                    },
                     color = if (trade.realizedProfitKrw >= 0) Success else Error,
                 )
             } else {

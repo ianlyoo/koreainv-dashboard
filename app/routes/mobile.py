@@ -274,6 +274,7 @@ def _normalize_mobile_trade(trade: Mapping[str, object]) -> dict[str, object]:
         "amount_krw": round(amount),
         "realized_profit_krw": round(_as_float(realized_profit), 2) if isinstance(realized_profit, (int, float, str)) else None,
         "return_rate": round(_as_float(return_rate), 2) if isinstance(return_rate, (int, float, str)) else None,
+        "realized_profit_estimated": bool(trade.get("realized_profit_estimated")),
         "account_id": str(trade.get("account_id") or ""),
         "account_label": str(trade.get("account_label") or ""),
         "broker": str(trade.get("broker") or "kis"),
@@ -315,6 +316,8 @@ def _build_mobile_trade_history(
         "account_errors",
         "profit_available",
         "profit_complete",
+        "profit_estimated",
+        "unpriced_sell_count",
     ):
         if key in detail_payload:
             result[key] = detail_payload[key]
@@ -445,6 +448,8 @@ async def get_mobile_trade_history(
             "account_errors",
             "profit_available",
             "profit_complete",
+            "profit_estimated",
+            "unpriced_sell_count",
         ):
             if key in detail_payload:
                 serialized[key] = detail_payload[key]

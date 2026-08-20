@@ -278,26 +278,27 @@
 
             <!-- Holdings Table -->
             <div class="glass-card table-container animate-enter" style="animation-delay: 0.3s;">
-                <div class="table-header" style="justify-content: space-between;">
-                    <div style="display: flex; gap: 12px; align-items: center;">
-                        <span>보유 자산 상세</span>
+                <div class="table-header portfolio-table-header">
+                    <div class="portfolio-table-title">
+                        <span class="portfolio-table-heading">보유 자산 상세</span>
                         <span id="sync-status-badge"
                             style="font-size: 12px; color: var(--text-muted); font-weight: 400; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 20px; transition: all 0.3s ease;">
                             <span id="last-sync-text">마지막 동기화: -</span>
                         </span>
+                    </div>
+                    <div class="portfolio-table-actions">
                         <label class="account-filter-control" for="portfolioAccountFilter">
                             <span>계좌</span>
                             <select id="portfolioAccountFilter" onchange="setPortfolioAccountFilter(this.value)">
                                 <option value="all">통합</option>
                             </select>
                         </label>
-                    </div>
 
-                    <!-- Currency Toggle Moved Here -->
-                    <div class="currency-toggle" id="currencyToggle" onclick="toggleCurrency()">
-                        <div class="currency-slider"></div>
-                        <div class="currency-option active" id="opt-local">$</div>
-                        <div class="currency-option" id="opt-krw">원</div>
+                        <div class="currency-toggle" id="currencyToggle" onclick="toggleCurrency()">
+                            <div class="currency-slider"></div>
+                            <div class="currency-option active" id="opt-local">$</div>
+                            <div class="currency-option" id="opt-krw">원</div>
+                        </div>
                     </div>
                 </div>
                 <div class="table-wrapper">

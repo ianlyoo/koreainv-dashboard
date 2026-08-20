@@ -1181,6 +1181,19 @@
             }
         }
 
+        function realizedProfitCoverageNote(payload) {
+            if (!payload || payload.status !== 'success') return '';
+            const notes = [];
+            if (payload.profit_estimated === true) {
+                notes.push('토스 추정 손익 포함');
+            }
+            if (payload.profit_complete === false) {
+                const missing = Number(payload.unpriced_sell_count || 0);
+                notes.push(missing > 0 ? `원가 부족 ${missing}건 미산출` : '일부 계좌 손익 미완성');
+            }
+            return notes.length ? ` · ${notes.join(' · ')}` : '';
+        }
+
         function renderRealizedProfitSummary(summaryPayload) {
             const valueEl = document.getElementById('val_realized_profit_month');
             const subEl = document.getElementById('val_realized_profit_month_sub');
@@ -1198,14 +1211,14 @@
             if (summaryPayload.profit_available === false) {
                 valueEl.innerText = '-';
                 valueEl.className = 'summary-value';
-                subEl.innerText = '토스증권 Open API는 실현 손익을 제공하지 않습니다';
+                subEl.innerText = '토스 매수 원가 이력이 부족해 추정 손익을 산출하지 못했습니다';
                 return;
             }
 
             const total = Number(summaryPayload.summary?.total_realized_profit_krw || 0);
             valueEl.innerText = formatSignedKrw(total);
             valueEl.className = `summary-value ${profitClassName(total)}`.trim();
-            const coverageNote = summaryPayload.profit_complete === false ? ' · 토스 손익 미포함' : '';
+            const coverageNote = realizedProfitCoverageNote(summaryPayload);
             subEl.innerText = `${formatDisplayDate(summaryPayload.period.start)} ~ ${formatDisplayDate(summaryPayload.period.end)} 누적${coverageNote}`;
         }
 
@@ -1435,9 +1448,9 @@
             valueEl.className = `profit-tax-popover-value ${profitClassName(-Math.abs(realizedProfitTaxEstimate.tax_krw))}`.trim();
 
             if (realizedProfitTaxEstimate.tax_krw > 0) {
-                noteEl.innerText = `${realizedProfitTaxEstimate.year}년 누적 실현 손익 ${formatSignedKrw(realizedProfitTaxEstimate.total_profit_krw)} × 22% 기준 추정치입니다.`;
+                noteEl.innerText = `${realizedProfitTaxEstimate.year}년 누적 실현 손익 ${formatSignedKrw(realizedProfitTaxEstimate.total_profit_krw)} × 22% 기준 추정치입니다.${realizedProfitTaxEstimate.includes_estimate ? ' 토스 거래내역 기반 추정 손익이 포함됐습니다.' : ''}`;
             } else {
-                noteEl.innerText = `${realizedProfitTaxEstimate.year}년 누적 실현 손익이 ${formatPlainKrw(CAPITAL_GAINS_TAX_THRESHOLD_KRW)} 이하라서 양도소득세를 0원으로 표시합니다.`;
+                noteEl.innerText = `${realizedProfitTaxEstimate.year}년 누적 실현 손익이 ${formatPlainKrw(CAPITAL_GAINS_TAX_THRESHOLD_KRW)} 이하라서 양도소득세를 0원으로 표시합니다.${realizedProfitTaxEstimate.includes_estimate ? ' 토스 거래내역 기반 추정 손익이 포함됐습니다.' : ''}`;
             }
         }
 
@@ -1580,7 +1593,7 @@
                 const unavailableValueEl = document.getElementById('realizedProfitTaxPopupValue');
                 const unavailableNoteEl = document.getElementById('realizedProfitTaxPopupNote');
                 if (unavailableValueEl) unavailableValueEl.innerText = '-';
-                if (unavailableNoteEl) unavailableNoteEl.innerText = '토스증권 Open API가 실현손익을 제공하지 않아 정확한 세금 추정이 불가능합니다.';
+                if (unavailableNoteEl) unavailableNoteEl.innerText = '매수 원가 이력이 부족한 거래가 있어 세금 추정에서 제외했습니다.';
                 setCapitalGainsTaxPopover(true);
                 return;
             }
@@ -1612,6 +1625,12 @@
                     }
                     return;
                 }
+                if (yearPayload.profit_available === false || yearPayload.profit_complete === false) {
+                    realizedProfitTaxEstimate = null;
+                    if (valueEl) valueEl.innerText = '-';
+                    if (noteEl) noteEl.innerText = `${year}년 거래 중 매수 원가를 확인할 수 없는 건이 있어 세금을 계산하지 않았습니다.`;
+                    return;
+                }
 
                 const totalProfit = Number(yearPayload.summary?.total_realized_profit_krw || 0);
                 const taxable = totalProfit > CAPITAL_GAINS_TAX_THRESHOLD_KRW;
@@ -1619,6 +1638,7 @@
                     year,
                     total_profit_krw: totalProfit,
                     tax_krw: taxable ? Math.round(totalProfit * CAPITAL_GAINS_TAX_RATE) : 0,
+                    includes_estimate: yearPayload.profit_estimated === true,
                 };
                 renderCapitalGainsTaxEstimate();
             } catch (err) {
@@ -1696,10 +1716,8 @@
                 rateEl.className = `profit-stat-value ${profitClassName(totalRate)}`.trim();
             }
             const coverageNote = detailPayload.profit_available === false
-                ? ' · 토스증권은 체결내역만 표시됩니다'
-                : detailPayload.profit_complete === false
-                    ? ' · 토스 실현손익 미포함'
-                    : '';
+                ? ' · 토스 매수 원가 이력 부족'
+                : realizedProfitCoverageNote(detailPayload);
             captionEl.innerText = `${formatDisplayDate(detailPayload.period.start)} ~ ${formatDisplayDate(detailPayload.period.end)}${coverageNote}`;
 
             const trades = Array.isArray(detailPayload.trades) ? detailPayload.trades : [];
@@ -1747,7 +1765,7 @@
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
-                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : formatSignedKrw(trade.realized_profit_krw)}</td>
+                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : `${formatSignedKrw(trade.realized_profit_krw)}${trade.realized_profit_estimated ? '<span class="profit-estimate-chip">추정</span>' : ''}`}</td>
                         <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '-' : formatSignedPercent(trade.realized_return_rate)}</td>
                     </tr>
                 `).join('');

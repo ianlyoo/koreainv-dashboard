@@ -322,7 +322,7 @@ class KisRepository(
         startDate: String,
         endDate: String,
     ): TradeHistoryLoadData {
-        val trades = if (account.centralServerBaseUrl.isNotBlank() && account.centralServerApiToken.isNotBlank()) {
+        val payload = if (account.centralServerBaseUrl.isNotBlank() && account.centralServerApiToken.isNotBlank()) {
             getTossProxyTradeHistory(account, startDate, endDate)
         } else {
             getTossDirectTradeHistory(account, startDate, endDate)
@@ -332,8 +332,14 @@ class KisRepository(
             domesticTradeProfit = emptyList(),
             overseasTradeProfit = emptyList(),
             overseasSummaryProfitKrw = 0.0,
-            trades = sortTradeRowsNewestFirst(trades),
-            profitAvailable = false,
+            trades = sortTradeRowsNewestFirst(payload.trades),
+            profitAvailable = payload.profitAvailable,
+            profitComplete = payload.profitComplete,
+            profitEstimated = true,
+            estimatedDomesticProfitKrw = payload.domesticProfitKrw,
+            estimatedOverseasProfitKrw = payload.overseasProfitKrw,
+            estimatedBuyAmountKrw = payload.totalBuyAmountKrw,
+            unpricedSellCount = payload.unpricedSellCount,
         )
     }
 
@@ -341,7 +347,7 @@ class KisRepository(
         account: AccountCredential,
         startDate: String,
         endDate: String,
-    ): List<TradeRow> {
+    ): TossTradeHistoryPayload {
         val baseUrl = account.centralServerBaseUrl.trim().trimEnd('/')
         val payload = JsonObject().apply {
             addProperty("client_id", account.appKey)
@@ -365,7 +371,20 @@ class KisRepository(
             }
             val result = jsonObject(body, "result") ?: JsonObject()
             number(result, "usd_exchange_rate").takeIf { it > 0.0 }?.let { lastKnownUsdRate = it }
-            return normalizeTossTradeRows(normalizeRows(result.get("items")), lastKnownUsdRate)
+            val summary = jsonObject(result, "summary") ?: JsonObject()
+            return TossTradeHistoryPayload(
+                trades = normalizeTossTradeRows(normalizeRows(result.get("items")), lastKnownUsdRate),
+                domesticProfitKrw = number(summary, "domestic_realized_profit_krw"),
+                overseasProfitKrw = number(summary, "overseas_realized_profit_krw"),
+                totalBuyAmountKrw = number(summary, "total_buy_amount_krw"),
+                profitAvailable = runCatching {
+                    result.get("profit_available")?.asBoolean ?: true
+                }.getOrDefault(true),
+                profitComplete = runCatching {
+                    result.get("profit_complete")?.asBoolean ?: true
+                }.getOrDefault(true),
+                unpricedSellCount = number(result, "unpriced_sell_count").toInt(),
+            )
         }
     }
 
@@ -373,17 +392,16 @@ class KisRepository(
         account: AccountCredential,
         startDate: String,
         endDate: String,
-    ): List<TradeRow> {
+    ): TossTradeHistoryPayload {
         val token = requireToken(account) ?: throw IllegalStateException("TOSS_TOKEN_FAILURE[trade-history]")
-        val startIso = LocalDate.parse(startDate, JSON_FORMAT).toString()
         val endIso = LocalDate.parse(endDate, JSON_FORMAT).toString()
         val orders = mutableListOf<JsonObject>()
         val seenCursors = mutableSetOf<String>()
         var cursor = ""
+        var historyComplete = true
         for (page in 0 until 100) {
             val query = linkedMapOf(
                 "status" to "CLOSED",
-                "from" to startIso,
                 "to" to endIso,
                 "limit" to "100",
             )
@@ -399,7 +417,11 @@ class KisRepository(
             orders += normalizeRows(result.get("orders"))
             val hasNext = runCatching { result.get("hasNext")?.asBoolean ?: false }.getOrDefault(false)
             val nextCursor = string(result, "nextCursor")
-            if (!hasNext || nextCursor.isBlank() || !seenCursors.add(nextCursor)) {
+            if (!hasNext) {
+                break
+            }
+            if (nextCursor.isBlank() || !seenCursors.add(nextCursor) || page == 99) {
+                historyComplete = false
                 break
             }
             cursor = nextCursor
@@ -420,8 +442,43 @@ class KisRepository(
             ?: exchangeResult?.let { number(it, "midRate").takeIf { value -> value > 0.0 } }
             ?: lastKnownUsdRate
         if (usdRate > 0.0) lastKnownUsdRate = usdRate
-        return normalizeTossTradeRows(orders, usdRate)
-            .filter { it.date >= startDate && it.date <= endDate }
+        val allTrades = normalizeTossTradeRows(orders, usdRate)
+        val estimate = estimateTossRealizedProfit(
+            executions = allTrades.map { trade ->
+                TossExecutionForEstimate(
+                    key = tossTradeEstimateKey(trade),
+                    date = trade.date,
+                    time = trade.time,
+                    symbol = trade.symbol,
+                    side = trade.side,
+                    currency = trade.currency,
+                    quantity = trade.quantity,
+                    amountNative = trade.amountNative,
+                    commissionNative = trade.commissionNative,
+                    taxNative = trade.taxNative,
+                )
+            },
+            startDate = startDate,
+            endDate = endDate,
+            usdExchangeRate = usdRate,
+            historyComplete = historyComplete,
+        )
+        allTrades.forEach { trade ->
+            estimate.profitsByExecutionKey[tossTradeEstimateKey(trade)]?.let { profit ->
+                trade.realizedProfitKrw = profit.realizedProfitKrw
+                trade.realizedReturnRate = profit.returnRate
+                trade.realizedProfitEstimated = true
+            }
+        }
+        return TossTradeHistoryPayload(
+            trades = allTrades.filter { it.date >= startDate && it.date <= endDate },
+            domesticProfitKrw = estimate.domesticProfitKrw,
+            overseasProfitKrw = estimate.overseasProfitKrw,
+            totalBuyAmountKrw = estimate.totalBuyAmountKrw,
+            profitAvailable = estimate.profitAvailable,
+            profitComplete = estimate.profitComplete,
+            unpricedSellCount = estimate.unpricedSellCount,
+        )
     }
 
     private fun normalizeTossTradeRows(rows: List<JsonObject>, usdRate: Double): List<TradeRow> =
@@ -446,6 +503,12 @@ class KisRepository(
                 ?: if (currency == "KRW") amount else amount * usdRate
             val symbol = string(row, "symbol").ifBlank { string(row, "ticker") }
             val rawSide = string(row, "side").uppercase()
+            val realizedProfit = row.get("realized_profit_krw")
+                ?.takeUnless { it.isJsonNull }
+                ?.let { runCatching { it.asDouble }.getOrNull() }
+            val realizedReturn = row.get("realized_return_rate")
+                ?.takeUnless { it.isJsonNull }
+                ?.let { runCatching { it.asDouble }.getOrNull() }
             TradeRow(
                 date = date,
                 market = string(row, "market").ifBlank { if (currency == "KRW") "KOR" else "NASD" },
@@ -465,8 +528,28 @@ class KisRepository(
                     if (filledAt.length >= 19) filledAt.substring(11, 19).replace(":", "") else ""
                 },
                 orderNo = string(row, "order_no").ifBlank { string(row, "orderId") },
+                commissionNative = execution?.let { number(it, "commission") }
+                    ?: number(row, "commission_native"),
+                taxNative = execution?.let { number(it, "tax") }
+                    ?: number(row, "tax_native"),
+                realizedProfitKrw = realizedProfit,
+                realizedReturnRate = realizedReturn,
+                realizedProfitEstimated = runCatching {
+                    row.get("realized_profit_estimated")?.asBoolean ?: false
+                }.getOrDefault(false),
             )
         }.distinctBy { listOf(it.orderNo, it.date, it.symbol, it.side, it.quantity, it.amountNative) }
+
+    private fun tossTradeEstimateKey(trade: TradeRow): String = trade.orderNo.ifBlank {
+        listOf(
+            trade.date,
+            trade.time,
+            trade.symbol,
+            trade.side,
+            trade.quantity,
+            trade.amountNative,
+        ).joinToString("|")
+    }
 
     suspend fun fetchTradeHistory(
         range: String = "this_month",
@@ -575,12 +658,16 @@ class KisRepository(
         selectedAccounts: List<AccountCredential>,
     ): TradeHistoryResponse {
         val domesticProfit = accountPayloads.sumOf { payload ->
-            payload.domesticTradeProfit.sumOf { it.realizedProfitKrw }
+            payload.domesticTradeProfit.sumOf { it.realizedProfitKrw } +
+                payload.estimatedDomesticProfitKrw
         }
-        val overseasProfit = accountPayloads.sumOf { it.overseasSummaryProfitKrw }
+        val overseasProfit = accountPayloads.sumOf {
+            it.overseasSummaryProfitKrw + it.estimatedOverseasProfitKrw
+        }
         val totalBuyAmount = accountPayloads.sumOf { payload ->
             payload.domesticTradeProfit.sumOf { it.buyAmountKrw } +
-                payload.overseasTradeProfit.sumOf { it.buyAmountKrw }
+                payload.overseasTradeProfit.sumOf { it.buyAmountKrw } +
+                payload.estimatedBuyAmountKrw
         }
         val totalReturnRate = if (totalBuyAmount > 0.0) {
             (domesticProfit + overseasProfit) / totalBuyAmount * 100.0
@@ -599,7 +686,10 @@ class KisRepository(
         }
         val profitAvailable = accountPayloads.any { it.profitAvailable }
         val profitComplete = profitAvailable && accountErrors.isEmpty() &&
-            selectedAccounts.all { Broker.normalize(it.broker) == Broker.KIS }
+            accountPayloads.size == selectedAccounts.size &&
+            accountPayloads.all { it.profitAvailable && it.profitComplete }
+        val profitEstimated = accountPayloads.any { it.profitEstimated }
+        val unpricedSellCount = accountPayloads.sumOf { it.unpricedSellCount }
 
         return TradeHistoryResponse(
             period = TradePeriod(
@@ -627,6 +717,7 @@ class KisRepository(
                     amountKrw = trade.amountKrw,
                     realizedProfitKrw = trade.realizedProfitKrw,
                     returnRate = trade.realizedReturnRate,
+                    realizedProfitEstimated = trade.realizedProfitEstimated,
                     accountId = account.id,
                     accountLabel = account.label,
                     broker = Broker.normalize(account.broker),
@@ -636,6 +727,8 @@ class KisRepository(
             usdExchangeRate = lastKnownUsdRate,
             profitAvailable = profitAvailable,
             profitComplete = profitComplete,
+            profitEstimated = profitEstimated,
+            unpricedSellCount = unpricedSellCount,
             accountErrors = accountErrors,
         )
     }
@@ -1767,6 +1860,22 @@ private data class TradeHistoryLoadData(
     val overseasSummaryProfitKrw: Double,
     val trades: List<TradeRow>,
     val profitAvailable: Boolean,
+    val profitComplete: Boolean = true,
+    val profitEstimated: Boolean = false,
+    val estimatedDomesticProfitKrw: Double = 0.0,
+    val estimatedOverseasProfitKrw: Double = 0.0,
+    val estimatedBuyAmountKrw: Double = 0.0,
+    val unpricedSellCount: Int = 0,
+)
+
+private data class TossTradeHistoryPayload(
+    val trades: List<TradeRow>,
+    val domesticProfitKrw: Double,
+    val overseasProfitKrw: Double,
+    val totalBuyAmountKrw: Double,
+    val profitAvailable: Boolean,
+    val profitComplete: Boolean,
+    val unpricedSellCount: Int,
 )
 
 private data class RealizedTradeProfitRow(
@@ -1793,9 +1902,12 @@ private data class RealizedTradeProfitRow(
         val amountKrw: Double,
         val time: String,
         val orderNo: String = "",
+        val commissionNative: Double = 0.0,
+        val taxNative: Double = 0.0,
         var realizedProfitKrw: Double? = null,
-    var realizedReturnRate: Double? = null,
-)
+        var realizedReturnRate: Double? = null,
+        var realizedProfitEstimated: Boolean = false,
+    )
 
 private fun normalizeSide(code: String, label: String): String {
     return when {

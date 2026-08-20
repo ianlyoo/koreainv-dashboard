@@ -117,7 +117,7 @@ fun TradeDetailScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             trade.realizedProfitKrw?.let {
                                 TradeMetricRow(
-                                    stringResource(R.string.realized_profit),
+                                    if (trade.realizedProfitEstimated) "실현 손익(추정)" else stringResource(R.string.realized_profit),
                                     formatCurrencyAmount(it, CurrencyDisplayMode.KRW, usdRate, signed = true),
                                     valueColor = if (it >= 0) Success else Error,
                                 )

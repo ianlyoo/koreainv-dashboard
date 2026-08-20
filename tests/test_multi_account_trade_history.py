@@ -52,8 +52,19 @@ class MultiAccountTradeHistoryTests(unittest.TestCase):
 
         get_kis_history.side_effect = kis_payload
         get_toss_history.return_value = {
-            "summary": {},
-            "daily": [],
+            "summary": {
+                "domestic_realized_profit_krw": 500.0,
+                "overseas_realized_profit_krw": 0.0,
+                "total_buy_amount_krw": 1000.0,
+            },
+            "daily": [
+                {
+                    "date": "20260802",
+                    "domestic_realized_profit_krw": 500.0,
+                    "overseas_realized_profit_krw": 0.0,
+                    "total_realized_profit_krw": 500.0,
+                }
+            ],
             "items": [
                 {
                     "date": "20260802",
@@ -64,7 +75,9 @@ class MultiAccountTradeHistoryTests(unittest.TestCase):
                     "market": "NASD",
                 }
             ],
-            "profit_available": False,
+            "profit_available": True,
+            "profit_complete": True,
+            "profit_estimated": True,
         }
 
         payload = fetch_aggregated_trade_history(
@@ -74,15 +87,16 @@ class MultiAccountTradeHistoryTests(unittest.TestCase):
             page_size=100,
         )
 
-        self.assertEqual(payload["summary"]["total_realized_profit_krw"], 3000.0)
-        self.assertEqual(payload["summary"]["total_realized_return_rate"], 10.0)
+        self.assertEqual(payload["summary"]["total_realized_profit_krw"], 3500.0)
+        self.assertEqual(payload["summary"]["total_realized_return_rate"], 3500 / 31000 * 100)
         self.assertEqual(len(payload["items"]), 3)
         self.assertEqual(
             {row["account_label"] for row in payload["items"]},
             {"KIS 주계좌", "KIS 부계좌", "토스계좌"},
         )
         self.assertTrue(payload["profit_available"])
-        self.assertFalse(payload["profit_complete"])
+        self.assertTrue(payload["profit_complete"])
+        self.assertTrue(payload["profit_estimated"])
 
     @patch("app.services.trade_history_aggregation.toss_proxy_client.is_configured", return_value=False)
     @patch("app.services.trade_history_aggregation.toss_api_client.get_trade_history")
@@ -90,9 +104,16 @@ class MultiAccountTradeHistoryTests(unittest.TestCase):
         self, get_toss_history, _proxy_configured
     ):
         get_toss_history.return_value = {
-            "summary": {},
+            "summary": {
+                "domestic_realized_profit_krw": 300.0,
+                "overseas_realized_profit_krw": 0.0,
+                "total_buy_amount_krw": 1000.0,
+            },
             "daily": [],
             "items": [{"date": "20260802", "side": "매수", "market": "KOR"}],
+            "profit_available": True,
+            "profit_complete": True,
+            "profit_estimated": True,
         }
         toss_account = self.accounts[2]
 
@@ -104,8 +125,10 @@ class MultiAccountTradeHistoryTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["selected_account_ids"], [toss_account.account_id])
-        self.assertFalse(payload["profit_available"])
-        self.assertFalse(payload["profit_complete"])
+        self.assertTrue(payload["profit_available"])
+        self.assertTrue(payload["profit_complete"])
+        self.assertTrue(payload["profit_estimated"])
+        self.assertEqual(payload["summary"]["total_realized_profit_krw"], 300.0)
         self.assertEqual(payload["items"][0]["account_label"], "토스계좌")
 
     def test_unknown_account_filter_is_rejected(self):

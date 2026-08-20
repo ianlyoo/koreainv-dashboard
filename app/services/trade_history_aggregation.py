@@ -98,25 +98,22 @@ def _load_toss_history(
     *,
     include_trades: bool,
 ) -> dict[str, object]:
-    if not include_trades:
-        return {
-            "items": [],
-            "daily": [],
-            "summary": {},
-            "profit_available": False,
-        }
     loader = (
         toss_proxy_client.get_trade_history
         if toss_proxy_client.is_configured()
         else toss_api_client.get_trade_history
     )
-    return loader(
+    result = loader(
         account.app_key,
         account.app_secret,
         account.cano,
         start_date,
         end_date,
     )
+    if not include_trades:
+        result = dict(result)
+        result["items"] = []
+    return result
 
 
 def _annotate_trade(
@@ -197,7 +194,11 @@ def fetch_aggregated_trade_history(
     daily_by_date: dict[str, dict[str, object]] = {}
     trades: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
-    successful_kis = 0
+    successful_accounts = 0
+    successful_profit_accounts = 0
+    all_profit_complete = True
+    profit_estimated = False
+    unpriced_sell_count = 0
 
     for account, payload_value, error in results:
         if error:
@@ -211,14 +212,28 @@ def fetch_aggregated_trade_history(
             )
             continue
         payload = payload_value if isinstance(payload_value, Mapping) else {}
+        successful_accounts += 1
         summary = payload.get("summary", {})
-        if account.broker == "kis" and isinstance(summary, Mapping):
-            successful_kis += 1
+        account_profit_available = bool(
+            payload.get("profit_available", account.broker == "kis")
+        )
+        account_profit_complete = bool(
+            payload.get("profit_complete", account_profit_available)
+        )
+        all_profit_complete = (
+            all_profit_complete
+            and account_profit_available
+            and account_profit_complete
+        )
+        profit_estimated = profit_estimated or bool(payload.get("profit_estimated"))
+        unpriced_sell_count += int(_as_float(payload.get("unpriced_sell_count")))
+        if account_profit_available and isinstance(summary, Mapping):
+            successful_profit_accounts += 1
             domestic_profit += _as_float(summary.get("domestic_realized_profit_krw"))
             overseas_profit += _as_float(summary.get("overseas_realized_profit_krw"))
             total_buy_amount += _as_float(summary.get("total_buy_amount_krw"))
         daily = payload.get("daily", [])
-        if account.broker == "kis" and isinstance(daily, list):
+        if account_profit_available and isinstance(daily, list):
             for value in daily:
                 if not isinstance(value, Mapping):
                     continue
@@ -259,10 +274,13 @@ def fetch_aggregated_trade_history(
     start_index = (safe_page - 1) * page_size
     page_items = filtered[start_index : start_index + page_size]
     total_profit = domestic_profit + overseas_profit
-    profit_available = successful_kis > 0
-    profit_complete = profit_available and all(
-        account.broker == "kis" for account, _payload, error in results if not error
-    ) and not errors
+    profit_available = successful_profit_accounts > 0
+    profit_complete = (
+        profit_available
+        and successful_accounts == len(selected)
+        and all_profit_complete
+        and not errors
+    )
 
     return {
         "summary": {
@@ -294,5 +312,7 @@ def fetch_aggregated_trade_history(
         "selected_account_ids": [account.account_id for account in selected],
         "profit_available": profit_available,
         "profit_complete": profit_complete,
+        "profit_estimated": profit_estimated,
+        "unpriced_sell_count": unpriced_sell_count,
         "account_errors": errors,
     }

@@ -183,6 +183,8 @@ def _serialize_realized_profit_payload(
         "account_errors",
         "profit_available",
         "profit_complete",
+        "profit_estimated",
+        "unpriced_sell_count",
     ):
         if key in payload_dict:
             result[key] = payload_dict[key]

@@ -147,6 +147,8 @@ data class TradeHistoryResponse(
     val usdExchangeRate: Double = 1350.0,
     val profitAvailable: Boolean = true,
     val profitComplete: Boolean = true,
+    val profitEstimated: Boolean = false,
+    val unpricedSellCount: Int = 0,
     val accountErrors: List<String> = emptyList(),
 )
 
@@ -176,6 +178,7 @@ data class Trade(
     val amountKrw: Double,
     val realizedProfitKrw: Double?,
     val returnRate: Double?,
+    val realizedProfitEstimated: Boolean = false,
     val accountId: String = "",
     val accountLabel: String = "",
     val broker: String = Broker.KIS,

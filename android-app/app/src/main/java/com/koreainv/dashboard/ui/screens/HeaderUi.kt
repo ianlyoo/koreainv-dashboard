@@ -531,6 +531,7 @@ fun DashboardPillButton(
     modifier: Modifier = Modifier,
     tone: AccentTone = AccentTone.Neutral,
     trailingIcon: ImageVector? = null,
+    compact: Boolean = false,
 ) {
     val palette = tonePalette(tone)
     Row(
@@ -546,19 +547,23 @@ fun DashboardPillButton(
             )
             .border(1.dp, palette.border, RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = if (compact) Arrangement.SpaceBetween else Arrangement.spacedBy(6.dp),
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
+            modifier = if (compact) Modifier.weight(1f) else Modifier,
+            style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
             color = palette.content,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         trailingIcon?.let {
             Icon(
                 imageVector = it,
                 contentDescription = null,
+                modifier = if (compact) Modifier.size(20.dp) else Modifier,
                 tint = palette.content,
             )
         }

@@ -719,32 +719,85 @@
         }
 
         .account-filter-control {
-            display: inline-flex;
+            position: relative;
+            display: inline-grid;
+            grid-template-columns: auto minmax(92px, 1fr);
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            min-height: 38px;
             color: var(--text-sub);
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
             white-space: nowrap;
         }
 
+        .account-filter-control::after {
+            content: '';
+            position: absolute;
+            right: 13px;
+            top: 50%;
+            width: 7px;
+            height: 7px;
+            border-right: 1.5px solid var(--text-sub);
+            border-bottom: 1.5px solid var(--text-sub);
+            transform: translateY(-68%) rotate(45deg);
+            pointer-events: none;
+        }
+
         .account-filter-control select {
-            min-width: 118px;
-            max-width: 190px;
+            appearance: none;
+            -webkit-appearance: none;
+            min-width: 112px;
+            max-width: 210px;
+            height: 32px;
             border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 999px;
-            padding: 8px 30px 8px 12px;
-            background: rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 0 32px 0 11px;
+            background: rgba(255, 255, 255, 0.075);
             color: #fff;
-            font-size: 12px;
+            font-family: inherit;
+            font-size: 13px;
             font-weight: 700;
+            letter-spacing: -0.01em;
             color-scheme: dark;
             cursor: pointer;
+            transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .account-filter-control select:hover,
+        .account-filter-control select:focus {
+            border-color: rgba(251, 191, 36, 0.34);
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.07);
         }
 
         .account-filter-control select:focus {
-            outline: 2px solid rgba(251, 191, 36, 0.32);
-            outline-offset: 1px;
+            outline: none;
+        }
+
+        .account-filter-control select option {
+            background: #111927;
+            color: #f8fafc;
+        }
+
+        .portfolio-table-header {
+            gap: 18px;
+        }
+
+        .portfolio-table-title,
+        .portfolio-table-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .portfolio-table-title {
+            min-width: 0;
+        }
+
+        .portfolio-table-heading {
+            white-space: nowrap;
         }
 
 
@@ -1607,7 +1660,7 @@
             background: rgba(0, 0, 0, 0.7);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
-            z-index: 2100;
+            z-index: 11000;
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.25s ease;
@@ -2191,22 +2244,22 @@
         }
 
         .profit-detail-toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 14px;
             align-items: center;
-            justify-content: space-between;
             margin-bottom: 18px;
         }
 
         .profit-quick-range {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            justify-content: center;
+            gap: 6px;
         }
 
         .profit-account-filter {
-            margin-right: auto;
+            min-width: 180px;
         }
 
         .trade-account-cell {
@@ -2214,6 +2267,20 @@
             align-items: center;
             gap: 6px;
             min-width: 120px;
+        }
+
+        .profit-estimate-chip {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 6px;
+            padding: 2px 6px;
+            border: 1px solid rgba(251, 191, 36, 0.28);
+            border-radius: 999px;
+            background: rgba(251, 191, 36, 0.09);
+            color: #fbbf24;
+            font-size: 10px;
+            font-weight: 800;
+            vertical-align: middle;
         }
 
         .badge-trade-buy {
@@ -2250,13 +2317,27 @@
             flex-wrap: wrap;
             gap: 8px;
             align-items: center;
+            grid-column: 1 / -1;
+            justify-self: end;
         }
 
         .profit-range-inputs input {
             width: auto;
             min-width: 150px;
             padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 11px;
+            background: rgba(255, 255, 255, 0.065);
+            color: #f8fafc;
+            color-scheme: dark;
+            font-family: inherit;
             font-size: 13px;
+        }
+
+        .profit-range-inputs input:focus {
+            outline: none;
+            border-color: rgba(251, 191, 36, 0.38);
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.07);
         }
 
         .profit-detail-summary-grid {
@@ -2495,6 +2576,15 @@
         }
 
         @media (max-width: 900px) {
+            .profit-detail-toolbar {
+                grid-template-columns: auto minmax(0, 1fr);
+            }
+
+            .profit-range-inputs {
+                grid-column: 1 / -1;
+                justify-self: end;
+            }
+
             .profit-detail-summary-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -2506,6 +2596,28 @@
         }
 
         @media (max-width: 720px) {
+            .profit-detail-toolbar {
+                grid-template-columns: 1fr;
+                align-items: stretch;
+            }
+
+            .profit-account-filter,
+            .profit-range-inputs {
+                width: 100%;
+                min-width: 0;
+                grid-column: auto;
+                justify-self: stretch;
+            }
+
+            .profit-account-filter select {
+                width: 100%;
+                max-width: none;
+            }
+
+            .profit-quick-range {
+                justify-content: flex-start;
+            }
+
             .profit-detail-overlay {
                 padding: 14px;
             }
@@ -2536,6 +2648,16 @@
             .table-header {
                 align-items: flex-start;
                 gap: 12px;
+            }
+
+            .portfolio-table-header,
+            .portfolio-table-actions {
+                flex-wrap: wrap;
+            }
+
+            .portfolio-table-actions {
+                width: 100%;
+                justify-content: space-between;
             }
 
             .table-header > div:first-child {

@@ -9,6 +9,9 @@ class MultiAccountTradeFrontendTests(unittest.TestCase):
     def setUpClass(cls):
         cls.template = Path("app/templates/index.html").read_text(encoding="utf-8")
         cls.javascript = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
+        cls.android_trade_screen = Path(
+            "android-app/app/src/main/java/com/koreainv/dashboard/ui/screens/TradeHistoryScreen.kt"
+        ).read_text(encoding="utf-8")
 
     def test_web_portfolio_and_trade_history_have_account_filters(self):
         self.assertIn('id="portfolioAccountFilter"', self.template)
@@ -32,6 +35,22 @@ class MultiAccountTradeFrontendTests(unittest.TestCase):
             2,
         )
         self.assertIn("activeProfitAccountId}:${start}:${end}", self.javascript)
+
+    def test_estimated_toss_profit_is_clearly_labeled(self):
+        self.assertIn("토스 추정 손익 포함", self.javascript)
+        self.assertIn('class="profit-estimate-chip">추정', self.javascript)
+        self.assertIn("토스 추정 손익 포함", self.android_trade_screen)
+        self.assertIn("trade.realizedProfitEstimated", self.android_trade_screen)
+
+    def test_android_trade_filters_share_one_row_without_trade_list_title(self):
+        self.assertNotIn(
+            "SectionTitle(title = stringResource(R.string.trade_list))",
+            self.android_trade_screen,
+        )
+        self.assertGreaterEqual(self.android_trade_screen.count("compact = true"), 3)
+        self.assertIn("Modifier.weight(1.08f)", self.android_trade_screen)
+        self.assertIn("Modifier.weight(1.12f)", self.android_trade_screen)
+        self.assertIn("Modifier.weight(0.8f)", self.android_trade_screen)
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ unlock with it afterward.
 | Portfolio summary | Total valuation, valuation P/L, return, asset status |
 | Asset detail | Holdings, quantity, valuation, P/L, allocation |
 | Multi-broker accounts | Add multiple KIS and Toss accounts and load them in parallel |
-| Trade history | Integrated/per-account domestic and overseas executions, KIS realized P/L, up to one year |
+| Trade history | Integrated/per-account executions, official KIS and estimated Toss realized P/L, up to one year |
 | Currency toggle | KRW/USD display toggle on Android |
 | Security | Android PIN lock and local credential storage |
 | Updates | GitHub Releases version checks, recommended/mandatory update handling |
@@ -56,10 +56,10 @@ unlock with it afterward.
 | KR/US holdings | Yes | Yes |
 | Cash and buying power | Yes | Not exposed by the API |
 | Trade executions | Yes, for every registered account | Yes, from closed orders |
-| Realized P/L | Yes, for every registered account | Not exposed by the API |
+| Realized P/L | Yes, for every registered account | Estimated from full closed-order history |
 | Scheduled orders | First KIS account | No |
 
-Trade history defaults to the integrated view and can be filtered by account on both web and Android. Toss execution rows are included, but Toss realized P/L is explicitly marked unavailable instead of being reported as zero.
+Trade history defaults to the integrated view and can be filtered by account on both web and Android. Toss realized P/L is explicitly marked as an estimate: the app rebuilds moving-average cost basis from the full closed-order history and includes execution commission and tax. Sells without sufficient purchase history (for example, transferred-in shares or corporate actions) remain unpriced and are counted as incomplete. USD estimates use the exchange rate available at lookup time and may differ from official brokerage or tax records.
 
 ## Private Toss read proxy (optional)
 
