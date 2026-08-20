@@ -43,10 +43,27 @@ unlock with it afterward.
 |---------|-------------|
 | Portfolio summary | Total valuation, valuation P/L, return, asset status |
 | Asset detail | Holdings, quantity, valuation, P/L, allocation |
-| Trade history | Domestic/overseas trades and realized P/L |
+| Multi-broker accounts | Add multiple KIS and Toss accounts and load them in parallel |
+| Trade history | Integrated/per-account domestic and overseas executions, KIS realized P/L, up to one year |
 | Currency toggle | KRW/USD display toggle on Android |
 | Security | Android PIN lock and local credential storage |
 | Updates | GitHub Releases version checks, recommended/mandatory update handling |
+
+## Broker support
+
+| Feature | KIS | Toss Securities |
+|---|---:|---:|
+| KR/US holdings | Yes | Yes |
+| Cash and buying power | Yes | Not exposed by the API |
+| Trade executions | Yes, for every registered account | Yes, from closed orders |
+| Realized P/L | Yes, for every registered account | Not exposed by the API |
+| Scheduled orders | First KIS account | No |
+
+Trade history defaults to the integrated view and can be filtered by account on both web and Android. Toss execution rows are included, but Toss realized P/L is explicitly marked unavailable instead of being reported as zero.
+
+## Private Toss read proxy (optional)
+
+For Android mobile-data networks without a fixed public IP, an Oracle/VPS instance can relay read-only Toss requests. It supports account discovery, holdings, exchange rates, and closed-order execution history. It does not expose order create/modify/cancel operations and does not persist Toss credentials on disk.
 
 ## Central scheduled-order server (optional)
 

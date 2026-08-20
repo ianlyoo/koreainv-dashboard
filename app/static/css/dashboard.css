@@ -718,6 +718,35 @@
             align-items: center;
         }
 
+        .account-filter-control {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-sub);
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .account-filter-control select {
+            min-width: 118px;
+            max-width: 190px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 999px;
+            padding: 8px 30px 8px 12px;
+            background: rgba(255, 255, 255, 0.06);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            color-scheme: dark;
+            cursor: pointer;
+        }
+
+        .account-filter-control select:focus {
+            outline: 2px solid rgba(251, 191, 36, 0.32);
+            outline-offset: 1px;
+        }
+
 
         .table-wrapper {
             flex: 1;
@@ -2176,6 +2205,27 @@
             gap: 8px;
         }
 
+        .profit-account-filter {
+            margin-right: auto;
+        }
+
+        .trade-account-cell {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 120px;
+        }
+
+        .badge-trade-buy {
+            background: rgba(34, 197, 94, 0.14);
+            color: #4ade80;
+        }
+
+        .badge-trade-sell {
+            background: rgba(248, 113, 113, 0.14);
+            color: #fb7185;
+        }
+
         .profit-quick-range button,
         .profit-range-fetch {
             border: 1px solid rgba(255, 255, 255, 0.1);
@@ -2481,6 +2531,20 @@
             .profit-range-inputs input {
                 min-width: 0;
                 flex: 1 1 100%;
+            }
+
+            .table-header {
+                align-items: flex-start;
+                gap: 12px;
+            }
+
+            .table-header > div:first-child {
+                flex-wrap: wrap;
+            }
+
+            .account-filter-control select {
+                min-width: 104px;
+                max-width: 150px;
             }
 
             .scheduled-order-meta-grid,

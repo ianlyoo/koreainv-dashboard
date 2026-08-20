@@ -1822,6 +1822,7 @@ def _build_realized_profit_summary_payload(trade_profit_rows: Mapping[str, objec
             "overseas_realized_profit_krw": overseas_total,
             "total_realized_profit_krw": domestic_total + overseas_total,
             "total_realized_return_rate": total_realized_return_rate,
+            "total_buy_amount_krw": total_buy_amount,
             "trade_days": len(daily_rows),
         },
         "daily": daily_rows,
@@ -2221,6 +2222,7 @@ def get_realized_profit_summary(token, app_key, app_secret, cano, acnt_prdt_cd, 
             "overseas_realized_profit_krw": overseas_total,
             "total_realized_profit_krw": total_profit,
             "total_realized_return_rate": ((total_profit / total_buy_amount) * 100) if total_buy_amount > 0 else 0.0,
+            "total_buy_amount_krw": total_buy_amount,
         }
         logger.warning("realized_summary_payload overseas_summary_rows=%s overseas_total=%s", len(overseas_summary_rows), overseas_total)
     _set_cached_payload(cache_key, result)

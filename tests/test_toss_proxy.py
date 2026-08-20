@@ -76,6 +76,33 @@ class TossProxyRouteTests(unittest.TestCase):
         self.assertEqual(response.json()["exchange_rate"]["result"]["rate"], "1400")
         get_dashboard_source.assert_called_once_with("client", "secret", "9")
 
+    @patch("app.routes.toss_proxy.toss_api_client.get_trade_history")
+    def test_trade_history_relays_read_only_closed_order_data(self, get_trade_history):
+        get_trade_history.return_value = {
+            "items": [{"date": "20260801", "side": "매수"}],
+            "profit_available": False,
+        }
+        with (
+            patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_ENABLED", True),
+            patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_TOKEN", "private-token"),
+        ):
+            response = self.client.post(
+                "/api/toss-proxy/trade-history",
+                headers={"Authorization": "Bearer private-token"},
+                json={
+                    "client_id": "client",
+                    "client_secret": "secret",
+                    "account_seq": "9",
+                    "start_date": "2026-08-01",
+                    "end_date": "2026-08-15",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["result"]["profit_available"])
+        get_trade_history.assert_called_once_with(
+            "client", "secret", "9", "2026-08-01", "2026-08-15"
+        )
+
 
 class TossProxyClientTests(unittest.TestCase):
     def test_partial_remote_configuration_is_rejected(self):
@@ -107,6 +134,29 @@ class TossProxyClientTests(unittest.TestCase):
         self.assertEqual(request.args[0], "https://proxy.example/api/toss-proxy/balances")
         self.assertEqual(request.kwargs["headers"]["Authorization"], "Bearer remote-token")
         self.assertEqual(request.kwargs["json"]["account_seq"], "1")
+
+    @patch("app.toss_proxy_client.requests.post")
+    def test_remote_trade_history_request_uses_read_only_proxy_path(self, post):
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "status": "success",
+            "result": {"items": [], "profit_available": False},
+        }
+        post.return_value = response
+        with (
+            patch.object(toss_proxy_client.config, "TOSS_PROXY_REMOTE_URL", "https://proxy.example"),
+            patch.object(toss_proxy_client.config, "TOSS_PROXY_REMOTE_TOKEN", "remote-token"),
+        ):
+            result = toss_proxy_client.get_trade_history(
+                "client", "secret", "1", "2026-08-01", "2026-08-15"
+            )
+
+        self.assertEqual(result["items"], [])
+        request = post.call_args
+        self.assertEqual(
+            request.args[0], "https://proxy.example/api/toss-proxy/trade-history"
+        )
+        self.assertEqual(request.kwargs["json"]["start_date"], "2026-08-01")
 
 
 if __name__ == "__main__":

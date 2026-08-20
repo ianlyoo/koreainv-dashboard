@@ -69,6 +69,7 @@ import java.util.Locale
 @Composable
 fun TradeHistoryScreen(
     repository: KisRepository,
+    accountFilters: List<HoldingAccountFilter>,
     onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onLogoutClick: () -> Unit,
@@ -78,7 +79,10 @@ fun TradeHistoryScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    val initialTradeData = sessionState.tradeData ?: repository.peekTradeHistory(sessionState.selectedRange)
+    val initialTradeData = sessionState.tradeData ?: repository.peekTradeHistory(
+        sessionState.selectedRange,
+        sessionState.selectedAccountId,
+    )
     var tradeData by remember(sessionState, initialTradeData) { mutableStateOf(initialTradeData) }
     var isLoading by remember(sessionState, initialTradeData) { mutableStateOf(initialTradeData == null) }
     var isTradeListLoading by remember(sessionState) { mutableStateOf(false) }
@@ -88,6 +92,8 @@ fun TradeHistoryScreen(
     var selectedRangeLabel by remember(sessionState) { mutableStateOf(sessionState.selectedRangeLabel) }
     var rangeExpanded by remember { mutableStateOf(false) }
     var filterExpanded by remember { mutableStateOf(false) }
+    var selectedAccountId by remember(sessionState) { mutableStateOf(sessionState.selectedAccountId) }
+    var accountExpanded by remember { mutableStateOf(false) }
     var currencyMode by remember(sessionState) { mutableStateOf(sessionState.currencyMode) }
     var activeLoadRequestId by remember { mutableStateOf(0) }
 
@@ -99,23 +105,32 @@ fun TradeHistoryScreen(
                 selectedRange = selectedRange,
                 selectedRangeLabel = selectedRangeLabel,
                 currencyMode = currencyMode,
+                selectedAccountId = selectedAccountId,
             ),
         )
     }
 
-    fun loadTradeHistory(range: String = selectedRange, forceRefresh: Boolean = false) {
+    fun loadTradeHistory(
+        range: String = selectedRange,
+        accountId: String? = selectedAccountId,
+        forceRefresh: Boolean = false,
+    ) {
         val resolvedLabel = rangeLabel(range)
         val rangeChanged = range != selectedRange
-        val previousFullTradeData = tradeData?.takeIf { current -> current.trades.isNotEmpty() }
+        val accountChanged = accountId != selectedAccountId
+        val previousFullTradeData = tradeData?.takeIf { current ->
+            !rangeChanged && !accountChanged && current.trades.isNotEmpty()
+        }
         val showSummaryPreview = previousFullTradeData == null
         val requestId = activeLoadRequestId + 1
         activeLoadRequestId = requestId
         selectedRange = range
         selectedRangeLabel = resolvedLabel
+        selectedAccountId = accountId
         isLoading = true
         isTradeListLoading = false
         errorMessage = null
-        if (rangeChanged) {
+        if (rangeChanged || accountChanged) {
             tradeData = null
         }
         persistSessionState()
@@ -123,6 +138,7 @@ fun TradeHistoryScreen(
             runCatching {
                 repository.fetchTradeHistory(
                     range = range,
+                    accountId = accountId,
                     forceRefresh = forceRefresh,
                     onSummaryReady = if (showSummaryPreview) {
                         { summary ->
@@ -237,6 +253,10 @@ fun TradeHistoryScreen(
 
                 tradeData != null -> {
                     val data = tradeData!!
+                    val selectedAccountLabel = accountFilters
+                        .firstOrNull { it.accountId == selectedAccountId }
+                        ?.label
+                        ?: stringResource(R.string.all_accounts)
                     val filterTone = when (tradeFilter) {
                         "buy" -> AccentTone.Positive
                         "sell" -> AccentTone.Negative
@@ -258,6 +278,7 @@ fun TradeHistoryScreen(
                                 data = data,
                                 currencyMode = currencyMode,
                                 selectedRangeLabel = selectedRangeLabel,
+                                selectedAccountLabel = selectedAccountLabel,
                             )
                         }
 
@@ -292,6 +313,40 @@ fun TradeHistoryScreen(
                                                         onClick = {
                                                             rangeExpanded = false
                                                             loadTradeHistory(range = option.first)
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Box {
+                                            DashboardPillButton(
+                                                label = compactAccountFilterLabel(selectedAccountLabel),
+                                                onClick = { accountExpanded = true },
+                                                trailingIcon = Icons.Default.ArrowDropDown,
+                                            )
+                                            DropdownMenu(
+                                                expanded = accountExpanded,
+                                                onDismissRequest = { accountExpanded = false },
+                                                modifier = Modifier
+                                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
+                                                    .background(SurfaceGlassLight)
+                                                    .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
+                                            ) {
+                                                DropdownMenuItem(
+                                                    text = { Text(stringResource(R.string.all_accounts), color = TextPrimary) },
+                                                    colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                    onClick = {
+                                                        accountExpanded = false
+                                                        loadTradeHistory(accountId = null)
+                                                    },
+                                                )
+                                                accountFilters.forEach { account ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(account.label, color = TextPrimary) },
+                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
+                                                        onClick = {
+                                                            accountExpanded = false
+                                                            loadTradeHistory(accountId = account.accountId)
                                                         },
                                                     )
                                                 }
@@ -405,6 +460,16 @@ fun TradeHistoryScreen(
                                 )
                             }
                         } else {
+                            if (data.accountErrors.isNotEmpty()) {
+                                item {
+                                    Text(
+                                        text = data.accountErrors.joinToString("\n"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
                             items(filteredTrades) { trade ->
                                 TradeItemCard(
                                     trade = trade,
@@ -439,6 +504,7 @@ data class TradeHistorySessionState(
     val selectedRange: String = "this_month",
     val selectedRangeLabel: String = rangeLabel("this_month"),
     val currencyMode: CurrencyDisplayMode = CurrencyDisplayMode.KRW,
+    val selectedAccountId: String? = null,
 )
 
 @Composable
@@ -446,6 +512,7 @@ fun TradeSummaryCard(
     data: TradeHistoryResponse,
     currencyMode: CurrencyDisplayMode,
     selectedRangeLabel: String,
+    selectedAccountLabel: String,
 ) {
     val profitColor = when {
         data.summary.totalRealizedProfitKrw > 0 -> Success
@@ -461,16 +528,26 @@ fun TradeSummaryCard(
                 color = TextSecondary,
             )
             HeroHeadlineValue(
-                value = formatCurrencyAmount(
-                    data.summary.totalRealizedProfitKrw,
-                    currencyMode,
-                    data.usdExchangeRate,
-                    signed = true,
-                ),
-                color = profitColor,
+                value = if (data.profitAvailable) {
+                    formatCurrencyAmount(
+                        data.summary.totalRealizedProfitKrw,
+                        currencyMode,
+                        data.usdExchangeRate,
+                        signed = true,
+                    )
+                } else {
+                    "-"
+                },
+                color = if (data.profitAvailable) profitColor else TextPrimary,
             )
             Text(
-                text = selectedRangeLabel,
+                text = buildString {
+                    append(selectedAccountLabel)
+                    append(" · ")
+                    append(selectedRangeLabel)
+                    if (!data.profitAvailable) append(" · 토스 실현손익 미제공")
+                    else if (!data.profitComplete) append(" · 토스 손익 미포함")
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
             )
@@ -478,20 +555,20 @@ fun TradeSummaryCard(
         HeroMetricGroup {
             HeroMetricRow(
                 primaryLabel = stringResource(R.string.domestic),
-                primaryValue = formatCurrencyAmount(
+                primaryValue = if (data.profitAvailable) formatCurrencyAmount(
                     data.summary.domesticRealizedProfitKrw,
                     currencyMode,
                     data.usdExchangeRate,
                     signed = true,
-                ),
+                ) else "-",
                 primaryValueColor = profitColorForAmount(data.summary.domesticRealizedProfitKrw),
                 secondaryLabel = stringResource(R.string.overseas),
-                secondaryValue = formatCurrencyAmount(
+                secondaryValue = if (data.profitAvailable) formatCurrencyAmount(
                     data.summary.overseasRealizedProfitKrw,
                     currencyMode,
                     data.usdExchangeRate,
                     signed = true,
-                ),
+                ) else "-",
                 secondaryValueColor = profitColorForAmount(data.summary.overseasRealizedProfitKrw),
                 syncValueSizing = true,
             )
@@ -525,6 +602,12 @@ fun TradeItemCard(
                     tone = sideTone,
                     modifier = Modifier.offset(x = (-6).dp),
                 )
+                if (trade.accountLabel.isNotBlank()) {
+                    SurfaceBadge(
+                        label = compactAccountFilterLabel(trade.accountLabel),
+                        tone = AccentTone.Neutral,
+                    )
+                }
                 Text(
                     text = trade.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -675,12 +758,13 @@ private fun formatUsdNumber(value: Double): String =
         minimumFractionDigits = 2
     }.format(value)
 
-private fun tradeRangeOptions(): List<Pair<String, String>> = listOf(
+internal fun tradeRangeOptions(): List<Pair<String, String>> = listOf(
     "this_month" to "이번 달",
     "last_month" to "지난 달",
     "3m" to "최근 3개월",
     "6m" to "지난 6개월",
+    "1y" to "최근 1년",
 )
 
-private fun rangeLabel(range: String): String =
+internal fun rangeLabel(range: String): String =
     tradeRangeOptions().firstOrNull { it.first == range }?.second ?: "이번 달"

@@ -21,6 +21,11 @@ class TossProxyDashboardRequest(TossProxyCredentialRequest):
     account_seq: str = Field(min_length=1, max_length=19)
 
 
+class TossProxyTradeHistoryRequest(TossProxyDashboardRequest):
+    start_date: str = Field(min_length=8, max_length=10)
+    end_date: str = Field(min_length=8, max_length=10)
+
+
 def _require_proxy_access(request: Request) -> None:
     if not config.TOSS_PROXY_SERVER_ENABLED:
         raise HTTPException(status_code=404, detail="Not found")
@@ -34,7 +39,12 @@ def _require_proxy_access(request: Request) -> None:
 @router.get("/status")
 async def proxy_status(request: Request):
     _require_proxy_access(request)
-    return {"status": "success", "enabled": True, "orders_supported": False}
+    return {
+        "status": "success",
+        "enabled": True,
+        "orders_supported": False,
+        "trade_history_supported": True,
+    }
 
 
 @router.post("/accounts")
@@ -89,3 +99,24 @@ async def load_balances(request: Request, payload: TossProxyDashboardRequest):
             status_code=502, detail=f"Toss balance lookup failed: {exc}"
         ) from exc
     return {"status": "success", "domestic": domestic, "overseas": overseas}
+
+
+@router.post("/trade-history")
+async def load_trade_history(
+    request: Request, payload: TossProxyTradeHistoryRequest
+):
+    _require_proxy_access(request)
+    try:
+        result = await run_in_threadpool(
+            toss_api_client.get_trade_history,
+            payload.client_id.strip(),
+            payload.client_secret.strip(),
+            payload.account_seq.strip(),
+            payload.start_date.strip(),
+            payload.end_date.strip(),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Toss trade-history lookup failed: {exc}"
+        ) from exc
+    return {"status": "success", "result": result}

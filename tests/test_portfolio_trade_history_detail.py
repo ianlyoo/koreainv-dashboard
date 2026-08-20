@@ -22,14 +22,10 @@ class PortfolioTradeHistoryDetailTests(unittest.TestCase):
         self.client.__exit__(None, None, None)
         active_sessions.clear()
 
-    @patch("app.routes.portfolio.api_client.get_realized_profit_summary")
-    @patch("app.routes.portfolio.api_client.get_trade_history")
-    @patch("app.routes.portfolio.api_client.get_access_token", return_value="token")
+    @patch("app.routes.portfolio.fetch_aggregated_trade_history")
     def test_realized_profit_detail_reuses_trade_history_payload(
         self,
-        _get_access_token,
         mock_get_trade_history,
-        mock_get_realized_profit_summary,
     ):
         active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
         self.client.cookies.set("session", "test-session")
@@ -78,13 +74,10 @@ class PortfolioTradeHistoryDetailTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["total_realized_profit_krw"], 120000)
         self.assertEqual(payload["daily"][0]["total_realized_profit_krw"], 120000)
         self.assertEqual(payload["trades"][0]["ticker"], "005930")
-        mock_get_realized_profit_summary.assert_not_called()
 
-    @patch("app.routes.portfolio.api_client.get_trade_history")
-    @patch("app.routes.portfolio.api_client.get_access_token", return_value="token")
+    @patch("app.routes.portfolio.fetch_aggregated_trade_history")
     def test_realized_profit_detail_passes_filters_and_pagination(
         self,
-        _get_access_token,
         mock_get_trade_history,
     ):
         active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
@@ -110,33 +103,21 @@ class PortfolioTradeHistoryDetailTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["pagination"]["page"], 2)
         self.assertEqual(payload["filters"]["side"], "sell")
-        mock_get_trade_history.assert_called_once_with(
-            "token",
-            "key",
-            "secret",
-            "12345678",
-            "01",
-            "20260301",
-            "20260331",
-            side_filter="sell",
-            market_filter="domestic",
-            page=2,
-            page_size=5,
-            force_refresh=False,
-        )
+        call = mock_get_trade_history.call_args
+        self.assertEqual(call.args[1:3], ("20260301", "20260331"))
+        self.assertEqual(call.kwargs["side"], "sell")
+        self.assertEqual(call.kwargs["market"], "domestic")
+        self.assertEqual(call.kwargs["page"], 2)
+        self.assertEqual(call.kwargs["page_size"], 5)
 
-    @patch("app.routes.portfolio.api_client.get_realized_profit_summary")
-    @patch("app.routes.portfolio.api_client.get_trade_history")
-    @patch("app.routes.portfolio.api_client.get_access_token", return_value="token")
+    @patch("app.routes.portfolio.fetch_aggregated_trade_history")
     def test_realized_profit_detail_can_skip_trade_rows_for_summary_only(
         self,
-        _get_access_token,
         mock_get_trade_history,
-        mock_get_realized_profit_summary,
     ):
         active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
         self.client.cookies.set("session", "test-session")
-        mock_get_realized_profit_summary.return_value = {
+        mock_get_trade_history.return_value = {
             "summary": {
                 "total_realized_profit_krw": 55555,
                 "domestic_realized_profit_krw": 55555,
@@ -144,6 +125,7 @@ class PortfolioTradeHistoryDetailTests(unittest.TestCase):
                 "total_realized_return_rate": 3.21,
             },
             "daily": [],
+            "items": [],
         }
 
         response = self.client.get(
@@ -154,8 +136,7 @@ class PortfolioTradeHistoryDetailTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["summary"]["total_realized_profit_krw"], 55555)
         self.assertEqual(payload["trades"], [])
-        mock_get_trade_history.assert_not_called()
-        mock_get_realized_profit_summary.assert_called_once()
+        self.assertFalse(mock_get_trade_history.call_args.kwargs["include_trades"])
 
 
 if __name__ == "__main__":

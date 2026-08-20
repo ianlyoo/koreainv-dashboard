@@ -5,11 +5,17 @@ import com.koreainv.dashboard.network.TradePeriod
 import com.koreainv.dashboard.network.TradeSummary
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TradeHistoryScreenLogicTest {
+    @Test
+    fun tradeRangeOptionsIncludeOneYear() {
+        assertTrue(tradeRangeOptions().contains("1y" to "최근 1년"))
+        assertEquals("최근 1년", rangeLabel("1y"))
+    }
     @Test
     fun isTradeHistorySnapshotStaleReturnsTrueForOldSnapshot() {
         val now = OffsetDateTime.of(2026, 4, 18, 12, 0, 0, 0, ZoneOffset.ofHours(9))

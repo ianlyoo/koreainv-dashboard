@@ -285,6 +285,12 @@
                             style="font-size: 12px; color: var(--text-muted); font-weight: 400; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 20px; transition: all 0.3s ease;">
                             <span id="last-sync-text">마지막 동기화: -</span>
                         </span>
+                        <label class="account-filter-control" for="portfolioAccountFilter">
+                            <span>계좌</span>
+                            <select id="portfolioAccountFilter" onchange="setPortfolioAccountFilter(this.value)">
+                                <option value="all">통합</option>
+                            </select>
+                        </label>
                     </div>
 
                     <!-- Currency Toggle Moved Here -->
@@ -420,11 +426,18 @@
             </div>
             <div class="profit-detail-body">
                 <div class="profit-detail-toolbar">
+                    <label class="account-filter-control profit-account-filter" for="realizedProfitAccountFilter">
+                        <span>계좌</span>
+                        <select id="realizedProfitAccountFilter" onchange="setRealizedProfitAccountFilter(this.value)">
+                            <option value="all">통합</option>
+                        </select>
+                    </label>
                     <div class="profit-quick-range">
                         <button type="button" data-profit-preset="thisMonth" class="active" onclick="setRealizedPreset('thisMonth', true)">이번 달</button>
                         <button type="button" data-profit-preset="lastMonth" onclick="setRealizedPreset('lastMonth', true)">지난 달</button>
                         <button type="button" data-profit-preset="threeMonths" onclick="setRealizedPreset('threeMonths', true)">최근 3개월</button>
                         <button type="button" data-profit-preset="sixMonths" onclick="setRealizedPreset('sixMonths', true)">지난 6개월</button>
+                        <button type="button" data-profit-preset="oneYear" onclick="setRealizedPreset('oneYear', true)">최근 1년</button>
                     </div>
                     <div class="profit-range-inputs">
                         <input type="date" id="realizedProfitStart" onchange="onRealizedRangeInputChange()">
@@ -470,6 +483,7 @@
                             <thead>
                                 <tr>
                                     <th>일자</th>
+                                    <th>구분/계좌</th>
                                     <th>티커</th>
                                     <th>종목</th>
                                     <th>수량</th>
@@ -494,6 +508,7 @@
                             <thead>
                                 <tr>
                                     <th>일자</th>
+                                    <th>구분/계좌</th>
                                     <th>티커</th>
                                     <th>종목</th>
                                     <th>수량</th>

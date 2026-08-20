@@ -84,11 +84,7 @@ class KisRepository(
     private var cachedTradeHistory: MutableMap<String, Pair<Long, TradeHistoryResponse>> = mutableMapOf()
     private var lastKnownUsdRate: Double = 1350.0
 
-    /**
-     * Dashboard balances are aggregated across every account in [accounts].
-     * Trade history, scheduled orders, and US quote enrichment intentionally stay
-     * on the primary account (first in the profile) so their behavior is unchanged.
-     */
+    /** Dashboard balances and trade history are aggregated across [accounts]. */
     private val primaryKisAccount: AccountCredential?
         get() = accounts.drop(primaryIndex).firstOrNull { Broker.normalize(it.broker) == Broker.KIS }
             ?: accounts.firstOrNull { Broker.normalize(it.broker) == Broker.KIS }
@@ -99,11 +95,14 @@ class KisRepository(
     private val usQuoteService = primaryKisAccount?.let { KisUsQuoteService(it.toAppCredentials(), client) }
 
     fun peekDashboard(): DashboardResponse? = cachedDashboard?.second
-    fun peekTradeHistory(range: String = "this_month"): TradeHistoryResponse? {
-        val normalizedRange = range.lowercase(Locale.US)
-        val cached = cachedTradeHistory[normalizedRange] ?: return null
+    fun peekTradeHistory(range: String = "this_month", accountId: String? = null): TradeHistoryResponse? {
+        val cacheKey = tradeHistoryCacheKey(range, accountId)
+        val cached = cachedTradeHistory[cacheKey] ?: return null
         return cached.second.takeIf { System.currentTimeMillis() - cached.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }
     }
+
+    private fun tradeHistoryCacheKey(range: String, accountId: String?): String =
+        "${range.lowercase(Locale.US)}:${accountId?.takeIf(String::isNotBlank) ?: "all"}"
 
     suspend fun fetchDashboard(forceRefresh: Boolean = false): DashboardResponse = withContext(Dispatchers.IO) {
         dashboardLoadMutex.withLock {
@@ -318,16 +317,169 @@ class KisRepository(
         }
     }
 
+    private suspend fun loadTossTradeHistory(
+        account: AccountCredential,
+        startDate: String,
+        endDate: String,
+    ): TradeHistoryLoadData {
+        val trades = if (account.centralServerBaseUrl.isNotBlank() && account.centralServerApiToken.isNotBlank()) {
+            getTossProxyTradeHistory(account, startDate, endDate)
+        } else {
+            getTossDirectTradeHistory(account, startDate, endDate)
+        }
+        return TradeHistoryLoadData(
+            account = account,
+            domesticTradeProfit = emptyList(),
+            overseasTradeProfit = emptyList(),
+            overseasSummaryProfitKrw = 0.0,
+            trades = sortTradeRowsNewestFirst(trades),
+            profitAvailable = false,
+        )
+    }
+
+    private fun getTossProxyTradeHistory(
+        account: AccountCredential,
+        startDate: String,
+        endDate: String,
+    ): List<TradeRow> {
+        val baseUrl = account.centralServerBaseUrl.trim().trimEnd('/')
+        val payload = JsonObject().apply {
+            addProperty("client_id", account.appKey)
+            addProperty("client_secret", account.appSecret)
+            addProperty("account_seq", account.cano)
+            addProperty("start_date", LocalDate.parse(startDate, JSON_FORMAT).toString())
+            addProperty("end_date", LocalDate.parse(endDate, JSON_FORMAT).toString())
+        }
+        val request = Request.Builder()
+            .url("$baseUrl/api/toss-proxy/trade-history")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer ${account.centralServerApiToken.trim()}")
+            .build()
+        client.newCall(request).execute().use { response ->
+            val body = parseObject(response.body?.string().orEmpty()) ?: JsonObject()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(
+                    "TOSS_PROXY_TRADE_HISTORY_ERROR code=${response.code} detail=${string(body, "detail")}",
+                )
+            }
+            val result = jsonObject(body, "result") ?: JsonObject()
+            number(result, "usd_exchange_rate").takeIf { it > 0.0 }?.let { lastKnownUsdRate = it }
+            return normalizeTossTradeRows(normalizeRows(result.get("items")), lastKnownUsdRate)
+        }
+    }
+
+    private suspend fun getTossDirectTradeHistory(
+        account: AccountCredential,
+        startDate: String,
+        endDate: String,
+    ): List<TradeRow> {
+        val token = requireToken(account) ?: throw IllegalStateException("TOSS_TOKEN_FAILURE[trade-history]")
+        val startIso = LocalDate.parse(startDate, JSON_FORMAT).toString()
+        val endIso = LocalDate.parse(endDate, JSON_FORMAT).toString()
+        val orders = mutableListOf<JsonObject>()
+        val seenCursors = mutableSetOf<String>()
+        var cursor = ""
+        for (page in 0 until 100) {
+            val query = linkedMapOf(
+                "status" to "CLOSED",
+                "from" to startIso,
+                "to" to endIso,
+                "limit" to "100",
+            )
+            if (cursor.isNotBlank()) query["cursor"] = cursor
+            val payload = getTossJson(
+                account = account,
+                path = "/api/v1/orders",
+                query = query,
+                token = token,
+                includeAccount = true,
+            ) ?: break
+            val result = jsonObject(payload, "result") ?: break
+            orders += normalizeRows(result.get("orders"))
+            val hasNext = runCatching { result.get("hasNext")?.asBoolean ?: false }.getOrDefault(false)
+            val nextCursor = string(result, "nextCursor")
+            if (!hasNext || nextCursor.isBlank() || !seenCursors.add(nextCursor)) {
+                break
+            }
+            cursor = nextCursor
+        }
+        val exchangePayload = try {
+            getTossJson(
+                account = account,
+                path = "/api/v1/exchange-rate",
+                query = mapOf("baseCurrency" to "USD", "quoteCurrency" to "KRW"),
+                token = token,
+                includeAccount = false,
+            )
+        } catch (_: Exception) {
+            null
+        }
+        val exchangeResult = exchangePayload?.let { jsonObject(it, "result") }
+        val usdRate = exchangeResult?.let { number(it, "rate").takeIf { value -> value > 0.0 } }
+            ?: exchangeResult?.let { number(it, "midRate").takeIf { value -> value > 0.0 } }
+            ?: lastKnownUsdRate
+        if (usdRate > 0.0) lastKnownUsdRate = usdRate
+        return normalizeTossTradeRows(orders, usdRate)
+            .filter { it.date >= startDate && it.date <= endDate }
+    }
+
+    private fun normalizeTossTradeRows(rows: List<JsonObject>, usdRate: Double): List<TradeRow> =
+        rows.mapNotNull { row ->
+            val execution = jsonObject(row, "execution")
+            val quantity = execution?.let { number(it, "filledQuantity") }
+                ?: number(row, "quantity")
+            if (quantity <= 0.0) return@mapNotNull null
+            val filledAt = execution?.let { string(it, "filledAt") }
+                .orEmpty()
+                .ifBlank { string(row, "orderedAt") }
+            val rawDate = string(row, "date").ifBlank { filledAt.take(10) }
+            val date = rawDate.replace("-", "")
+            if (date.length != 8) return@mapNotNull null
+            val currency = string(row, "currency").ifBlank { "KRW" }.uppercase()
+            val unitPrice = execution?.let { number(it, "averageFilledPrice") }
+                ?: number(row, "unit_price")
+            val rawAmount = execution?.let { number(it, "filledAmount") }
+                ?: firstPositiveNumber(row, listOf("amount_native", "amount"))
+            val amount = resolvedTradeAmount(rawAmount, quantity, unitPrice)
+            val amountKrw = number(row, "amount_krw").takeIf { it > 0.0 }
+                ?: if (currency == "KRW") amount else amount * usdRate
+            val symbol = string(row, "symbol").ifBlank { string(row, "ticker") }
+            val rawSide = string(row, "side").uppercase()
+            TradeRow(
+                date = date,
+                market = string(row, "market").ifBlank { if (currency == "KRW") "KOR" else "NASD" },
+                symbol = symbol,
+                name = string(row, "name").ifBlank { symbol },
+                side = when (rawSide) {
+                    "BUY", "매수" -> "매수"
+                    "SELL", "매도" -> "매도"
+                    else -> rawSide
+                },
+                currency = currency,
+                quantity = quantity,
+                unitPrice = unitPrice,
+                amountNative = amount,
+                amountKrw = amountKrw,
+                time = string(row, "time").ifBlank {
+                    if (filledAt.length >= 19) filledAt.substring(11, 19).replace(":", "") else ""
+                },
+                orderNo = string(row, "order_no").ifBlank { string(row, "orderId") },
+            )
+        }.distinctBy { listOf(it.orderNo, it.date, it.symbol, it.side, it.quantity, it.amountNative) }
+
     suspend fun fetchTradeHistory(
         range: String = "this_month",
+        accountId: String? = null,
         forceRefresh: Boolean = false,
         onSummaryReady: (suspend (TradeHistoryResponse) -> Unit)? = null,
     ): TradeHistoryResponse = withContext(Dispatchers.IO) {
         tradeHistoryLoadMutex.withLock {
             val normalizedRange = range.lowercase(Locale.US)
+            val cacheKey = tradeHistoryCacheKey(normalizedRange, accountId)
             if (!forceRefresh) {
                 tradeHistoryCacheMutex.withLock {
-                    cachedTradeHistory[normalizedRange]?.takeIf { System.currentTimeMillis() - it.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }?.let {
+                    cachedTradeHistory[cacheKey]?.takeIf { System.currentTimeMillis() - it.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }?.let {
                         return@withContext it.second
                     }
                 }
@@ -336,69 +488,118 @@ class KisRepository(
             val startDate = resolved.first.format(JSON_FORMAT)
             val endDate = resolved.second.format(JSON_FORMAT)
 
-            val tradeData = coroutineScope {
-                val domesticProfitDeferred = async { getDomesticRealizedTradeProfit(startDate, endDate) }
-                val overseasProfitDeferred = async { getOverseasRealizedTradeProfit(startDate, endDate) }
-                val overseasSummaryDeferred = async { getOverseasRealizedSummaryProfit(startDate, endDate) }
-                val domesticTradesDeferred = async { getDomesticTradeHistory(startDate, endDate) }
-                val overseasTradesDeferred = async { getOverseasTradeHistoryCcnl(startDate, endDate) }
-                val domesticProfit = domesticProfitDeferred.await()
-                val overseasProfit = overseasProfitDeferred.await()
-                val overseasSummaryProfitKrw = overseasSummaryDeferred.await()
-                val summaryOnly = buildTradeHistoryResponse(
-                    resolved = resolved,
-                    domesticTradeProfit = domesticProfit,
-                    overseasTradeProfit = overseasProfit,
-                    overseasSummaryProfitKrw = overseasSummaryProfitKrw,
-                    trades = emptyList(),
-                )
-                onSummaryReady?.let { callback ->
-                    withContext(Dispatchers.Main) {
-                        callback(summaryOnly)
+            val selectedAccounts = accountId?.takeIf(String::isNotBlank)?.let { selected ->
+                accounts.filter { it.id == selected }
+            } ?: accounts
+            require(selectedAccounts.isNotEmpty()) { "UNKNOWN_ACCOUNT_ID" }
+
+            val accountResults = coroutineScope {
+                selectedAccounts.map { account ->
+                    async {
+                        account to runCatching {
+                            if (Broker.normalize(account.broker) == Broker.TOSS) {
+                                loadTossTradeHistory(account, startDate, endDate)
+                            } else {
+                                loadKisTradeHistory(account, startDate, endDate)
+                            }
+                        }
                     }
-                }
-                TradeHistoryLoadData(
-                    domesticTradeProfit = domesticProfit,
-                    overseasTradeProfit = overseasProfit,
-                    overseasSummaryProfitKrw = overseasSummaryProfitKrw,
-                    domesticTrades = domesticTradesDeferred.await(),
-                    overseasTrades = overseasTradesDeferred.await(),
-                )
+                }.awaitAll()
             }
-            val allTrades = dedupeTradeRows(tradeData.domesticTrades + tradeData.overseasTrades)
-            attachRealizedProfitToSellTrades(allTrades, tradeData.domesticTradeProfit, tradeData.overseasTradeProfit)
-            val sortedTrades = sortTradeRowsNewestFirst(allTrades)
+            val loaded = accountResults.mapNotNull { it.second.getOrNull() }
+            val errors = accountResults.mapNotNull { (account, result) ->
+                result.exceptionOrNull()?.let { error ->
+                    "${account.label}: ${error.message?.takeIf(String::isNotBlank) ?: error::class.simpleName.orEmpty()}"
+                }
+            }
+            if (loaded.isEmpty()) {
+                throw accountResults.firstNotNullOfOrNull { it.second.exceptionOrNull() }
+                    ?: IllegalStateException("TRADE_HISTORY_EMPTY")
+            }
+
+            val summaryOnly = buildTradeHistoryResponse(
+                resolved = resolved,
+                accountPayloads = loaded,
+                includeTrades = false,
+                accountErrors = errors,
+                selectedAccounts = selectedAccounts,
+            )
+            onSummaryReady?.let { callback ->
+                withContext(Dispatchers.Main) { callback(summaryOnly) }
+            }
 
             val built = buildTradeHistoryResponse(
                 resolved = resolved,
-                domesticTradeProfit = tradeData.domesticTradeProfit,
-                overseasTradeProfit = tradeData.overseasTradeProfit,
-                overseasSummaryProfitKrw = tradeData.overseasSummaryProfitKrw,
-                trades = sortedTrades,
+                accountPayloads = loaded,
+                includeTrades = true,
+                accountErrors = errors,
+                selectedAccounts = selectedAccounts,
             )
 
             tradeHistoryCacheMutex.withLock {
-                cachedTradeHistory[normalizedRange] = System.currentTimeMillis() to built
+                cachedTradeHistory[cacheKey] = System.currentTimeMillis() to built
             }
             built
         }
     }
 
+    private suspend fun loadKisTradeHistory(
+        account: AccountCredential,
+        startDate: String,
+        endDate: String,
+    ): TradeHistoryLoadData = coroutineScope {
+        val domesticProfitDeferred = async { getDomesticRealizedTradeProfit(account, startDate, endDate) }
+        val overseasProfitDeferred = async { getOverseasRealizedTradeProfit(account, startDate, endDate) }
+        val overseasSummaryDeferred = async { getOverseasRealizedSummaryProfit(account, startDate, endDate) }
+        val domesticTradesDeferred = async { getDomesticTradeHistory(account, startDate, endDate) }
+        val overseasTradesDeferred = async { getOverseasTradeHistoryCcnl(account, startDate, endDate) }
+        val domesticProfit = domesticProfitDeferred.await()
+        val overseasProfit = overseasProfitDeferred.await()
+        val allTrades = dedupeTradeRows(domesticTradesDeferred.await() + overseasTradesDeferred.await())
+        attachRealizedProfitToSellTrades(allTrades, domesticProfit, overseasProfit)
+        TradeHistoryLoadData(
+            account = account,
+            domesticTradeProfit = domesticProfit,
+            overseasTradeProfit = overseasProfit,
+            overseasSummaryProfitKrw = overseasSummaryDeferred.await(),
+            trades = sortTradeRowsNewestFirst(allTrades),
+            profitAvailable = true,
+        )
+    }
+
     private fun buildTradeHistoryResponse(
         resolved: Triple<LocalDate, LocalDate, String>,
-        domesticTradeProfit: List<RealizedTradeProfitRow>,
-        overseasTradeProfit: List<RealizedTradeProfitRow>,
-        overseasSummaryProfitKrw: Double,
-        trades: List<TradeRow>,
+        accountPayloads: List<TradeHistoryLoadData>,
+        includeTrades: Boolean,
+        accountErrors: List<String>,
+        selectedAccounts: List<AccountCredential>,
     ): TradeHistoryResponse {
-        val domesticProfit = domesticTradeProfit.sumOf { it.realizedProfitKrw }
-        val overseasProfit = overseasSummaryProfitKrw
-        val totalBuyAmount = domesticTradeProfit.sumOf { it.buyAmountKrw } + overseasTradeProfit.sumOf { it.buyAmountKrw }
+        val domesticProfit = accountPayloads.sumOf { payload ->
+            payload.domesticTradeProfit.sumOf { it.realizedProfitKrw }
+        }
+        val overseasProfit = accountPayloads.sumOf { it.overseasSummaryProfitKrw }
+        val totalBuyAmount = accountPayloads.sumOf { payload ->
+            payload.domesticTradeProfit.sumOf { it.buyAmountKrw } +
+                payload.overseasTradeProfit.sumOf { it.buyAmountKrw }
+        }
         val totalReturnRate = if (totalBuyAmount > 0.0) {
             (domesticProfit + overseasProfit) / totalBuyAmount * 100.0
         } else {
             0.0
         }
+        val trades = if (includeTrades) {
+            accountPayloads.flatMap { payload ->
+                payload.trades.map { payload.account to it }
+            }.sortedWith(
+                compareByDescending<Pair<AccountCredential, TradeRow>> { it.second.date }
+                    .thenByDescending { it.second.time },
+            )
+        } else {
+            emptyList()
+        }
+        val profitAvailable = accountPayloads.any { it.profitAvailable }
+        val profitComplete = profitAvailable && accountErrors.isEmpty() &&
+            selectedAccounts.all { Broker.normalize(it.broker) == Broker.KIS }
 
         return TradeHistoryResponse(
             period = TradePeriod(
@@ -412,7 +613,7 @@ class KisRepository(
                 overseasRealizedProfitKrw = overseasProfit,
                 totalRealizedReturnRate = totalReturnRate,
             ),
-            trades = trades.map { trade ->
+            trades = trades.map { (account, trade) ->
                 Trade(
                     date = trade.date,
                     side = trade.side,
@@ -426,10 +627,16 @@ class KisRepository(
                     amountKrw = trade.amountKrw,
                     realizedProfitKrw = trade.realizedProfitKrw,
                     returnRate = trade.realizedReturnRate,
+                    accountId = account.id,
+                    accountLabel = account.label,
+                    broker = Broker.normalize(account.broker),
                 )
             },
             lastSynced = OffsetDateTime.now(ZoneOffset.ofHours(9)).format(ISO_FORMAT),
             usdExchangeRate = lastKnownUsdRate,
+            profitAvailable = profitAvailable,
+            profitComplete = profitComplete,
+            accountErrors = accountErrors,
         )
     }
 
@@ -634,8 +841,7 @@ class KisRepository(
         return 0.0
     }
 
-    private suspend fun getDomesticTradeHistory(startDate: String, endDate: String): List<TradeRow> {
-        val account = primaryAccount
+    private suspend fun getDomesticTradeHistory(account: AccountCredential, startDate: String, endDate: String): List<TradeRow> {
         val token = requireToken(account) ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:domestic]")
         val start = LocalDate.parse(startDate, JSON_FORMAT)
         val today = OffsetDateTime.now(ZoneOffset.ofHours(9)).toLocalDate()
@@ -691,12 +897,11 @@ class KisRepository(
         }.filter { it.date.isNotBlank() && it.symbol.isNotBlank() && it.quantity > 0.0 }
     }
 
-    private suspend fun getOverseasTradeHistory(startDate: String, endDate: String): List<TradeRow> {
-        return getOverseasTradeHistoryCcnl(startDate, endDate)
+    private suspend fun getOverseasTradeHistory(account: AccountCredential, startDate: String, endDate: String): List<TradeRow> {
+        return getOverseasTradeHistoryCcnl(account, startDate, endDate)
     }
 
-    private suspend fun getOverseasTradeHistoryCcnl(startDate: String, endDate: String): List<TradeRow> {
-        val account = primaryAccount
+    private suspend fun getOverseasTradeHistoryCcnl(account: AccountCredential, startDate: String, endDate: String): List<TradeRow> {
         val token = requireToken(account) ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:overseas-ccnl]")
         val exchanges = OVERSEAS_MARKET_GROUPS.map { it.exchangeCode }
         return fetchExchangeRows(exchanges) { exchange ->
@@ -736,8 +941,7 @@ class KisRepository(
         }
     }
 
-    private suspend fun getDomesticRealizedTradeProfit(startDate: String, endDate: String): List<RealizedTradeProfitRow> {
-        val account = primaryAccount
+    private suspend fun getDomesticRealizedTradeProfit(account: AccountCredential, startDate: String, endDate: String): List<RealizedTradeProfitRow> {
         val token = requireToken(account) ?: throw IllegalStateException("KIS_TOKEN_FAILURE[realized-profit:domestic]")
         val pages = paginatedJson(
             account = account,
@@ -782,8 +986,7 @@ class KisRepository(
         })
     }
 
-    private suspend fun getOverseasRealizedTradeProfit(startDate: String, endDate: String): List<RealizedTradeProfitRow> {
-        val account = primaryAccount
+    private suspend fun getOverseasRealizedTradeProfit(account: AccountCredential, startDate: String, endDate: String): List<RealizedTradeProfitRow> {
         val token = requireToken(account) ?: throw IllegalStateException("KIS_TOKEN_FAILURE[realized-profit:overseas]")
         return dedupeRealizedRows(fetchExchangeRows(OVERSEAS_MARKET_GROUPS) { group ->
                 val pages = paginatedJson(
@@ -838,8 +1041,7 @@ class KisRepository(
         })
     }
 
-    private suspend fun getOverseasRealizedSummaryProfit(startDate: String, endDate: String): Double {
-        val account = primaryAccount
+    private suspend fun getOverseasRealizedSummaryProfit(account: AccountCredential, startDate: String, endDate: String): Double {
         val token = requireToken(account) ?: throw IllegalStateException("KIS_TOKEN_FAILURE[realized-profit:summary]")
         return OVERSEAS_MARKET_GROUPS.sumOf { group ->
             val response = getJson(
@@ -1398,6 +1600,7 @@ class KisRepository(
             }
             "3m" -> Triple(today.withDayOfMonth(1).minusMonths(2), today, "최근 3개월")
             "6m" -> Triple(today.withDayOfMonth(1).minusMonths(5), today, "지난 6개월")
+            "1y" -> Triple(today.withDayOfMonth(1).minusMonths(11), today, "최근 1년")
             else -> Triple(today.withDayOfMonth(1), today, "이번 달")
         }
     }
@@ -1558,11 +1761,12 @@ private data class OverseasMarketGroup(
 )
 
 private data class TradeHistoryLoadData(
+    val account: AccountCredential,
     val domesticTradeProfit: List<RealizedTradeProfitRow>,
     val overseasTradeProfit: List<RealizedTradeProfitRow>,
     val overseasSummaryProfitKrw: Double,
-    val domesticTrades: List<TradeRow>,
-    val overseasTrades: List<TradeRow>,
+    val trades: List<TradeRow>,
+    val profitAvailable: Boolean,
 )
 
 private data class RealizedTradeProfitRow(

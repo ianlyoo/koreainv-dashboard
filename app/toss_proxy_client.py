@@ -65,3 +65,24 @@ def get_balances(
         dict(domestic) if isinstance(domestic, Mapping) else {},
         dict(overseas) if isinstance(overseas, Mapping) else {},
     )
+
+
+def get_trade_history(
+    client_id: str,
+    client_secret: str,
+    account_seq: str,
+    start_date: str,
+    end_date: str,
+) -> dict[str, object]:
+    body = _post(
+        "/api/toss-proxy/trade-history",
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "account_seq": account_seq,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
+    result = body.get("result")
+    return dict(result) if isinstance(result, Mapping) else {}

@@ -296,6 +296,7 @@ fun KoreaInvApp() {
                     } else {
                         TradeHistoryScreen(
                             repository = activeRepository,
+                            accountFilters = unlockedProfile.orEmptyAccountFilters(),
                             onManageAccountsClick = {
                                 accountManagementError = null
                                 navController.navigate(Screen.AccountManagement.route)

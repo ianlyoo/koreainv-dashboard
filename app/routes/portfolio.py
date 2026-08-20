@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app import api_client
 from app.services.balance_aggregation import fetch_aggregated_balances
+from app.services.trade_history_aggregation import fetch_aggregated_trade_history
 from app.session_store import accounts_metadata, has_active_session, require_session
 
 
@@ -162,6 +163,9 @@ def _serialize_realized_profit_payload(
             "total_realized_return_rate": round(
                 _float_value(summary_dict.get("total_realized_return_rate", 0.0)), 2
             ),
+            "total_buy_amount_krw": round(
+                _float_value(summary_dict.get("total_buy_amount_krw", 0.0))
+            ),
             "trade_days": _int_value(summary_dict.get("trade_days", 0)),
         },
         "daily": daily_rows,
@@ -173,6 +177,15 @@ def _serialize_realized_profit_payload(
     filters = payload_dict.get("filters")
     if isinstance(filters, dict):
         result["filters"] = filters
+    for key in (
+        "accounts",
+        "selected_account_ids",
+        "account_errors",
+        "profit_available",
+        "profit_complete",
+    ):
+        if key in payload_dict:
+            result[key] = payload_dict[key]
     return result
 
 
@@ -298,30 +311,22 @@ async def get_us_quotes(request: Request):
 
 
 @router.get("/api/realized-profit/summary")
-async def get_realized_profit_summary(request: Request, month: Optional[str] = None, force_refresh: bool = False):
+async def get_realized_profit_summary(
+    request: Request,
+    month: Optional[str] = None,
+    account_id: Optional[str] = None,
+    force_refresh: bool = False,
+):
     session = require_session(request)
-    account = session.primary_kis_account
-    if account is None:
-        raise HTTPException(status_code=400, detail="KIS account required for trade history")
     start_day, end_day = _parse_month_value(month)
     try:
-        token = await asyncio.to_thread(
-            api_client.get_access_token, account.app_key, account.app_secret
-        )
-        if not token:
-            raise HTTPException(
-                status_code=500, detail="Failed to get access token from API"
-            )
-
         payload = await asyncio.to_thread(
-            api_client.get_realized_profit_summary,
-            token,
-            account.app_key,
-            account.app_secret,
-            account.cano,
-            account.acnt_prdt_cd,
+            fetch_aggregated_trade_history,
+            session.accounts,
             start_day.strftime("%Y%m%d"),
             end_day.strftime("%Y%m%d"),
+            account_id=account_id,
+            include_trades=False,
             force_refresh=force_refresh,
         )
         return _serialize_realized_profit_payload(
@@ -331,6 +336,8 @@ async def get_realized_profit_summary(request: Request, month: Optional[str] = N
         )
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
         logging.exception("get_realized_profit_summary failed")
         raise HTTPException(status_code=500, detail="realized_profit_summary_failed")
@@ -343,15 +350,13 @@ async def get_realized_profit_detail(
     end: str,
     side: Optional[str] = None,
     market: Optional[str] = None,
+    account_id: Optional[str] = None,
     page: int = 1,
     page_size: int = 10,
     include_trades: bool = True,
     force_refresh: bool = False,
 ):
     session = require_session(request)
-    account = session.primary_kis_account
-    if account is None:
-        raise HTTPException(status_code=400, detail="KIS account required for trade history")
     start_day = _parse_date_value(start, "start")
     end_day = _parse_date_value(end, "end")
     normalized_side = _parse_trade_history_side(side)
@@ -366,43 +371,19 @@ async def get_realized_profit_detail(
         raise HTTPException(status_code=400, detail="Date range is too large")
 
     try:
-        token = await asyncio.to_thread(
-            api_client.get_access_token, account.app_key, account.app_secret
+        trade_payload = await asyncio.to_thread(
+            fetch_aggregated_trade_history,
+            session.accounts,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+            account_id=account_id,
+            side=normalized_side,
+            market=normalized_market,
+            page=safe_page,
+            page_size=safe_page_size,
+            include_trades=include_trades,
+            force_refresh=force_refresh,
         )
-        if not token:
-            raise HTTPException(
-                status_code=500, detail="Failed to get access token from API"
-            )
-
-        if include_trades:
-            trade_payload = await asyncio.to_thread(
-                api_client.get_trade_history,
-                token,
-                account.app_key,
-                account.app_secret,
-                account.cano,
-                account.acnt_prdt_cd,
-                start_day.strftime("%Y%m%d"),
-                end_day.strftime("%Y%m%d"),
-                side_filter=normalized_side,
-                market_filter=normalized_market,
-                page=safe_page,
-                page_size=safe_page_size,
-                force_refresh=force_refresh,
-            )
-        else:
-            summary_payload = await asyncio.to_thread(
-                api_client.get_realized_profit_summary,
-                token,
-                account.app_key,
-                account.app_secret,
-                account.cano,
-                account.acnt_prdt_cd,
-                start_day.strftime("%Y%m%d"),
-                end_day.strftime("%Y%m%d"),
-                force_refresh=force_refresh,
-            )
-            trade_payload = _with_realized_profit_trades(summary_payload, [])
 
         payload_dict = trade_payload if isinstance(trade_payload, dict) else {}
         trades_value = payload_dict.get("items", []) if include_trades else payload_dict.get("trades", [])
@@ -414,6 +395,8 @@ async def get_realized_profit_detail(
         )
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
         logging.exception("get_realized_profit_detail failed")
         raise HTTPException(status_code=500, detail="realized_profit_detail_failed")

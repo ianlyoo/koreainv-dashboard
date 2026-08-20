@@ -177,17 +177,15 @@ class MobileApiTests(unittest.TestCase):
         self.assertEqual(len(payload["asset_distribution"]), 2)
         self.assertIn("last_synced", payload["summary"])
 
-    @patch("app.routes.mobile.api_client.get_trade_history")
-    @patch("app.routes.mobile.api_client.get_access_token", return_value="token")
+    @patch("app.routes.mobile.fetch_aggregated_trade_history")
     def test_mobile_trade_history_returns_realized_summary_and_trades(
         self,
-        _get_access_token,
-        mock_get_trade_history,
+        mock_fetch_trade_history,
     ):
         active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
         self.client.cookies.set("session", "test-session")
 
-        mock_get_trade_history.return_value = {
+        mock_fetch_trade_history.return_value = {
             "items": [
                 {
                     "date": "2026-03-05",
@@ -209,6 +207,9 @@ class MobileApiTests(unittest.TestCase):
                 "overseas_realized_profit_krw": 0,
                 "total_realized_return_rate": 5.4,
             },
+            "accounts": [],
+            "profit_available": True,
+            "profit_complete": True,
         }
 
         response = self.client.get("/api/mobile/trade-history")
@@ -221,6 +222,14 @@ class MobileApiTests(unittest.TestCase):
         self.assertEqual(len(payload["trades"]), 1)
         self.assertEqual(payload["trades"][0]["ticker"], "005930")
         self.assertEqual(payload["trades"][0]["amount_krw"], 213000)
+
+    def test_mobile_trade_history_supports_one_year_range(self):
+        from app.routes.mobile import _resolve_trade_history_range
+
+        start, end, label = _resolve_trade_history_range("1y")
+
+        self.assertEqual(label, "최근 1년")
+        self.assertGreaterEqual((end - start).days, 335)
 
     def test_mobile_logout_clears_session(self):
         active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")

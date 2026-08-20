@@ -1,6 +1,10 @@
         let myChart = null;
         let currentCurrencyMode = 'local'; // 'local' or 'krw'
+        let cachedAllItems = [];
         let cachedItems = [];
+        let cachedAccounts = [];
+        let activePortfolioAccountId = 'all';
+        let activeProfitAccountId = 'all';
         let cachedKrCash = 0;
         let cachedUsdCash = 0;
         let cachedJpyCash = 0;
@@ -515,12 +519,56 @@
             document.getElementById('val_total_rt').innerHTML = formatProfit(totalProfitRt, true);
         }
 
-        function rebuildPortfolioView(combinedItems, usMarketStatus) {
-            lastUsMarketStatus = usMarketStatus || lastUsMarketStatus;
-            renderPortfolioSummary(combinedItems);
-            cachedItems = [...combinedItems].sort((a, b) => b.evalAmtKrw - a.evalAmtKrw);
+        function accountFilterLabel(account) {
+            const label = String(account?.label || '').trim();
+            if (label) return label;
+            return String(account?.broker_name || '계좌');
+        }
+
+        function populateAccountFilterSelect(selectId, selectedValue) {
+            const select = document.getElementById(selectId);
+            if (!select) return 'all';
+            const availableIds = new Set(cachedAccounts.map(account => String(account.account_id || '')));
+            const safeSelected = selectedValue !== 'all' && availableIds.has(selectedValue) ? selectedValue : 'all';
+            select.innerHTML = '';
+            const integrated = document.createElement('option');
+            integrated.value = 'all';
+            integrated.textContent = '통합';
+            select.appendChild(integrated);
+            cachedAccounts.forEach((account) => {
+                const option = document.createElement('option');
+                option.value = String(account.account_id || '');
+                option.textContent = accountFilterLabel(account);
+                select.appendChild(option);
+            });
+            select.value = safeSelected;
+            return safeSelected;
+        }
+
+        function updateAccountFilterOptions(accounts) {
+            cachedAccounts = Array.isArray(accounts) ? accounts : [];
+            activePortfolioAccountId = populateAccountFilterSelect('portfolioAccountFilter', activePortfolioAccountId);
+            activeProfitAccountId = populateAccountFilterSelect('realizedProfitAccountFilter', activeProfitAccountId);
+        }
+
+        function applyPortfolioAccountFilter() {
+            cachedItems = cachedAllItems
+                .filter((item) => activePortfolioAccountId === 'all' || String(item.account_id || '') === activePortfolioAccountId)
+                .sort((a, b) => b.evalAmtKrw - a.evalAmtKrw);
+            renderPortfolioSummary(cachedItems);
             renderTable();
             updateChart(cachedItems, cachedTotalEvalKrw);
+        }
+
+        function setPortfolioAccountFilter(accountId) {
+            activePortfolioAccountId = String(accountId || 'all');
+            applyPortfolioAccountFilter();
+        }
+
+        function rebuildPortfolioView(combinedItems, usMarketStatus) {
+            lastUsMarketStatus = usMarketStatus || lastUsMarketStatus;
+            cachedAllItems = [...combinedItems];
+            applyPortfolioAccountFilter();
         }
 
         function stopUsQuotePolling() {
@@ -661,7 +709,7 @@
 
             const usMap = new Map(usItems.map(item => [normalizeTicker(item.ticker), item]));
             const changedTickers = [];
-            const mergedItems = cachedItems.map(item => {
+            const mergedItems = cachedAllItems.map(item => {
                 if (item.type !== 'USA') {
                     return item;
                 }
@@ -681,11 +729,9 @@
                 return merged;
             });
 
-            cachedItems = mergedItems;
+            cachedAllItems = mergedItems;
             if (changedTickers.length > 0) {
-                renderPortfolioSummary(cachedItems);
-                updateUsRowsInTable(changedTickers);
-                maybeRefreshLiveChart();
+                applyPortfolioAccountFilter();
             }
 
             if (usMarketStatus?.session !== 'day_market') {
@@ -1024,6 +1070,7 @@
                 const data = await res.json();
 
                 if (data.status === "success") {
+                    updateAccountFilterOptions(data.accounts);
                     const accountSyncWarning = document.getElementById('accountSyncWarning');
                     const accountErrors = Array.isArray(data.account_errors) ? data.account_errors : [];
                     if (accountSyncWarning) {
@@ -1148,10 +1195,18 @@
                 return;
             }
 
+            if (summaryPayload.profit_available === false) {
+                valueEl.innerText = '-';
+                valueEl.className = 'summary-value';
+                subEl.innerText = '토스증권 Open API는 실현 손익을 제공하지 않습니다';
+                return;
+            }
+
             const total = Number(summaryPayload.summary?.total_realized_profit_krw || 0);
             valueEl.innerText = formatSignedKrw(total);
             valueEl.className = `summary-value ${profitClassName(total)}`.trim();
-            subEl.innerText = `${formatDisplayDate(summaryPayload.period.start)} ~ ${formatDisplayDate(summaryPayload.period.end)} 누적`;
+            const coverageNote = summaryPayload.profit_complete === false ? ' · 토스 손익 미포함' : '';
+            subEl.innerText = `${formatDisplayDate(summaryPayload.period.start)} ~ ${formatDisplayDate(summaryPayload.period.end)} 누적${coverageNote}`;
         }
 
         function getTodayMonthKey() {
@@ -1196,12 +1251,13 @@
 
         async function fetchRealizedProfitSummary(force = false) {
             const month = activeRealizedSummaryMonth;
-            const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, month);
+            const cacheKey = `${activeProfitAccountId}:${month}`;
+            const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, cacheKey);
             if (cached && !force) {
                 renderRealizedProfitSummary(cached);
                 return cached;
             }
-            const inFlight = realizedProfitSummaryInFlight.get(month);
+            const inFlight = realizedProfitSummaryInFlight.get(cacheKey);
             if (inFlight) {
                 return inFlight;
             }
@@ -1215,6 +1271,7 @@
             const request = (async () => {
                 try {
                     const params = new URLSearchParams({ month });
+                    if (activeProfitAccountId !== 'all') params.set('account_id', activeProfitAccountId);
                     if (force) params.set('force_refresh', '1');
                     const res = await fetch(`/api/realized-profit/summary?${params.toString()}`);
                     if (res.status === 401) {
@@ -1222,21 +1279,21 @@
                         return null;
                     }
                     const data = await res.json();
-                    setRealizedCacheEntry(realizedProfitSummaryCache, month, data);
+                    setRealizedCacheEntry(realizedProfitSummaryCache, cacheKey, data);
                     renderRealizedProfitSummary(data);
                     return data;
                 } catch (err) {
                     console.error('fetchRealizedProfitSummary error', err);
                     const errorPayload = { status: 'error' };
-                    setRealizedCacheEntry(realizedProfitSummaryCache, month, errorPayload);
+                    setRealizedCacheEntry(realizedProfitSummaryCache, cacheKey, errorPayload);
                     renderRealizedProfitSummary(errorPayload);
                     return errorPayload;
                 } finally {
                     realizedProfitSummaryLoading = false;
-                    realizedProfitSummaryInFlight.delete(month);
+                    realizedProfitSummaryInFlight.delete(cacheKey);
                 }
             })();
-            realizedProfitSummaryInFlight.set(month, request);
+            realizedProfitSummaryInFlight.set(cacheKey, request);
             return request;
         }
 
@@ -1246,7 +1303,8 @@
             profitCardShowingRealized = !!showRealized;
             card.classList.toggle('is-flipped', profitCardShowingRealized);
             if (profitCardShowingRealized) {
-                const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, activeRealizedSummaryMonth);
+                const cacheKey = `${activeProfitAccountId}:${activeRealizedSummaryMonth}`;
+                const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, cacheKey);
                 if (!cached) {
                     fetchRealizedProfitSummary();
                 } else if (cached.status === 'error') {
@@ -1350,6 +1408,7 @@
             if (preset === 'lastMonth') range = getLastMonthRange();
             else if (preset === 'threeMonths') range = getRecentMonthsRange(3);
             else if (preset === 'sixMonths') range = getRecentMonthsRange(6);
+            else if (preset === 'oneYear') range = getRecentMonthsRange(12);
             else range = getThisMonthRange();
 
             document.getElementById('realizedProfitStart').value = range.start;
@@ -1461,7 +1520,7 @@
             const page = options.page || getActiveTradeHistoryPage();
             const pageSize = options.pageSize || REALIZED_PROFIT_PAGE_SIZE;
             const includeTrades = options.includeTrades !== false;
-            return `${start}:${end}:${side}:${market}:${page}:${pageSize}:${includeTrades ? '1' : '0'}`;
+            return `${activeProfitAccountId}:${start}:${end}:${side}:${market}:${page}:${pageSize}:${includeTrades ? '1' : '0'}`;
         }
 
         async function getRealizedProfitDetailPayload(start, end, options = {}, force = false) {
@@ -1490,6 +1549,7 @@
                         page_size: String(pageSize),
                         include_trades: includeTrades ? '1' : '0',
                     });
+                    if (activeProfitAccountId !== 'all') params.set('account_id', activeProfitAccountId);
                     if (force) params.set('force_refresh', '1');
                     const res = await fetch(`/api/realized-profit/detail?${params.toString()}`);
                     if (res.status === 401) {
@@ -1511,6 +1571,16 @@
             if (!currentRealizedProfitDetail || currentRealizedProfitDetail.status !== 'success') {
                 realizedProfitTaxEstimate = null;
                 renderCapitalGainsTaxEstimate();
+                setCapitalGainsTaxPopover(true);
+                return;
+            }
+
+            if (currentRealizedProfitDetail.profit_available === false || currentRealizedProfitDetail.profit_complete === false) {
+                realizedProfitTaxEstimate = null;
+                const unavailableValueEl = document.getElementById('realizedProfitTaxPopupValue');
+                const unavailableNoteEl = document.getElementById('realizedProfitTaxPopupNote');
+                if (unavailableValueEl) unavailableValueEl.innerText = '-';
+                if (unavailableNoteEl) unavailableNoteEl.innerText = '토스증권 Open API가 실현손익을 제공하지 않아 정확한 세금 추정이 불가능합니다.';
                 setCapitalGainsTaxPopover(true);
                 return;
             }
@@ -1561,6 +1631,15 @@
             }
         }
 
+        function tradeAccountBadgeHtml(trade, fallbackSide) {
+            const side = String(trade?.side || fallbackSide || '').trim();
+            const isBuy = side === '매수' || side.toUpperCase() === 'BUY';
+            const sideLabel = isBuy ? '매수' : '매도';
+            const sideClass = isBuy ? 'badge-trade-buy' : 'badge-trade-sell';
+            const accountLabel = String(trade?.account_label || '계좌').trim();
+            return `<div class="trade-account-cell"><span class="badge ${sideClass}">${sideLabel}</span><span class="badge badge-account" title="${escapeAttributeValue(accountLabel)}">${escapeHtml(accountLabel)}</span></div>`;
+        }
+
         function renderRealizedProfitDetail(detailPayload) {
             const totalEl = document.getElementById('realizedProfitTotal');
             const domesticEl = document.getElementById('realizedProfitDomestic');
@@ -1601,15 +1680,27 @@
             const overseas = Number(summary.overseas_realized_profit_krw || 0);
             const totalRate = Number(summary.total_realized_return_rate || 0);
 
-            totalEl.innerText = formatSignedKrw(total);
-            totalEl.className = `profit-stat-value ${profitClassName(total)}`.trim();
-            domesticEl.innerText = formatSignedKrw(domestic);
-            domesticEl.className = `profit-stat-value ${profitClassName(domestic)}`.trim();
-            overseasEl.innerText = formatSignedKrw(overseas);
-            overseasEl.className = `profit-stat-value ${profitClassName(overseas)}`.trim();
-            rateEl.innerText = formatSignedPercent(totalRate);
-            rateEl.className = `profit-stat-value ${profitClassName(totalRate)}`.trim();
-            captionEl.innerText = `${formatDisplayDate(detailPayload.period.start)} ~ ${formatDisplayDate(detailPayload.period.end)}`;
+            if (detailPayload.profit_available === false) {
+                [totalEl, domesticEl, overseasEl, rateEl].forEach((element) => {
+                    element.innerText = '-';
+                    element.className = 'profit-stat-value';
+                });
+            } else {
+                totalEl.innerText = formatSignedKrw(total);
+                totalEl.className = `profit-stat-value ${profitClassName(total)}`.trim();
+                domesticEl.innerText = formatSignedKrw(domestic);
+                domesticEl.className = `profit-stat-value ${profitClassName(domestic)}`.trim();
+                overseasEl.innerText = formatSignedKrw(overseas);
+                overseasEl.className = `profit-stat-value ${profitClassName(overseas)}`.trim();
+                rateEl.innerText = formatSignedPercent(totalRate);
+                rateEl.className = `profit-stat-value ${profitClassName(totalRate)}`.trim();
+            }
+            const coverageNote = detailPayload.profit_available === false
+                ? ' · 토스증권은 체결내역만 표시됩니다'
+                : detailPayload.profit_complete === false
+                    ? ' · 토스 실현손익 미포함'
+                    : '';
+            captionEl.innerText = `${formatDisplayDate(detailPayload.period.start)} ~ ${formatDisplayDate(detailPayload.period.end)}${coverageNote}`;
 
             const trades = Array.isArray(detailPayload.trades) ? detailPayload.trades : [];
             const filters = detailPayload.filters || {};
@@ -1628,8 +1719,9 @@
                     buyRowsEl.innerHTML = trades.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
-                        <td>${trade.ticker || trade.symbol || '-'}</td>
-                        <td>${trade.name || trade.symbol || '-'}</td>
+                        <td>${tradeAccountBadgeHtml(trade, '매수')}</td>
+                        <td>${escapeHtml(trade.ticker || trade.symbol || '-')}</td>
+                        <td>${escapeHtml(trade.name || trade.symbol || '-')}</td>
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
@@ -1649,8 +1741,9 @@
                     sellRowsEl.innerHTML = trades.map((trade) => `
                     <tr>
                         <td>${formatDisplayDate(trade.date)}</td>
-                        <td>${trade.ticker || trade.symbol || '-'}</td>
-                        <td>${trade.name || trade.symbol || '-'}</td>
+                        <td>${tradeAccountBadgeHtml(trade, '매도')}</td>
+                        <td>${escapeHtml(trade.ticker || trade.symbol || '-')}</td>
+                        <td>${escapeHtml(trade.name || trade.symbol || '-')}</td>
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
@@ -1760,6 +1853,25 @@
             const end = document.getElementById('realizedProfitEnd').value;
             if (!start || !end) return;
             if (shouldFetch) {
+                loadRealizedProfitDetail(start, end);
+            }
+        }
+
+        function setRealizedProfitAccountFilter(accountId, shouldFetch = true) {
+            const requested = String(accountId || 'all');
+            const exists = requested === 'all' || cachedAccounts.some(account => String(account.account_id || '') === requested);
+            activeProfitAccountId = exists ? requested : 'all';
+            const select = document.getElementById('realizedProfitAccountFilter');
+            if (select) select.value = activeProfitAccountId;
+            realizedProfitBuyPage = 1;
+            realizedProfitSellPage = 1;
+            realizedProfitTaxEstimate = null;
+            renderCapitalGainsTaxEstimate();
+            if (!shouldFetch) return;
+            fetchRealizedProfitSummary();
+            const start = document.getElementById('realizedProfitStart')?.value;
+            const end = document.getElementById('realizedProfitEnd')?.value;
+            if (start && end) {
                 loadRealizedProfitDetail(start, end);
             }
         }

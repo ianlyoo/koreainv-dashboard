@@ -4,6 +4,7 @@ import hashlib
 import threading
 import time
 from collections.abc import Mapping
+import datetime
 
 import requests
 
@@ -243,3 +244,138 @@ def get_balances(
         "jp_items": [],
     }
     return domestic, overseas
+
+
+def _iso_date(value: object) -> str:
+    text = str(value or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    try:
+        return datetime.date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise ValueError("Toss trade-history dates must use YYYY-MM-DD") from exc
+
+
+def _normalize_order_rows(
+    orders: object,
+    *,
+    usd_exchange_rate: float,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for row in _as_rows(orders):
+        execution = _as_mapping(row.get("execution"))
+        quantity = _as_float(execution.get("filledQuantity"))
+        if quantity <= 0:
+            continue
+        order_id = str(row.get("orderId") or "").strip()
+        if order_id and order_id in seen:
+            continue
+        if order_id:
+            seen.add(order_id)
+        filled_at = str(execution.get("filledAt") or row.get("orderedAt") or "").strip()
+        trade_date = filled_at[:10]
+        if not trade_date or trade_date < start_date or trade_date > end_date:
+            continue
+        currency = str(row.get("currency") or "KRW").strip().upper()
+        amount_native = _as_float(execution.get("filledAmount"))
+        unit_price = _as_float(execution.get("averageFilledPrice"))
+        if amount_native <= 0 and quantity > 0 and unit_price > 0:
+            amount_native = quantity * unit_price
+        amount_krw = (
+            amount_native
+            if currency == "KRW"
+            else amount_native * max(usd_exchange_rate, 0.0)
+        )
+        symbol = str(row.get("symbol") or "").strip()
+        side = str(row.get("side") or "").strip().upper()
+        normalized.append(
+            {
+                "date": trade_date.replace("-", ""),
+                "time": filled_at[11:19].replace(":", "") if len(filled_at) >= 19 else "",
+                "side": "매수" if side == "BUY" else "매도" if side == "SELL" else side,
+                "ticker": symbol,
+                "symbol": symbol,
+                "name": symbol or "-",
+                "market": "KOR" if currency == "KRW" else "NASD",
+                "currency": currency,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "amount": amount_native,
+                "amount_native": amount_native,
+                "amount_krw": amount_krw,
+                "realized_profit_krw": None,
+                "realized_return_rate": None,
+                "order_no": order_id,
+            }
+        )
+    return normalized
+
+
+def get_trade_history(
+    client_id: str,
+    client_secret: str,
+    account_seq: str,
+    start_date: str,
+    end_date: str,
+) -> dict[str, object]:
+    safe_seq = str(account_seq or "").strip()
+    if not safe_seq.isdigit() or not (0 < int(safe_seq) <= 9_223_372_036_854_775_807):
+        raise ValueError("Toss account_seq must be a positive integer")
+    safe_start = _iso_date(start_date)
+    safe_end = _iso_date(end_date)
+    if safe_start > safe_end:
+        raise ValueError("Toss trade-history start date must not exceed end date")
+
+    orders: list[Mapping[str, object]] = []
+    cursor = ""
+    seen_cursors: set[str] = set()
+    for _ in range(100):
+        params = {
+            "status": "CLOSED",
+            "from": safe_start,
+            "to": safe_end,
+            "limit": "100",
+        }
+        if cursor:
+            params["cursor"] = cursor
+        payload = _authorized_get(
+            "/api/v1/orders",
+            client_id,
+            client_secret,
+            account_seq=safe_seq,
+            params=params,
+        )
+        result = _as_mapping(payload.get("result"))
+        orders.extend(_as_rows(result.get("orders")))
+        has_next = bool(result.get("hasNext"))
+        next_cursor = str(result.get("nextCursor") or "").strip()
+        if not has_next or not next_cursor or next_cursor in seen_cursors:
+            break
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+
+    usd_rate = _get_usd_exchange_rate(client_id, client_secret)
+    items = _normalize_order_rows(
+        orders,
+        usd_exchange_rate=usd_rate,
+        start_date=safe_start,
+        end_date=safe_end,
+    )
+    items.sort(key=lambda row: (str(row.get("date", "")), str(row.get("time", ""))), reverse=True)
+    return {
+        "items": items,
+        "summary": {
+            "domestic_realized_profit_krw": 0.0,
+            "overseas_realized_profit_krw": 0.0,
+            "total_realized_profit_krw": 0.0,
+            "total_realized_return_rate": 0.0,
+            "total_buy_amount_krw": 0.0,
+            "trade_days": len({str(row.get("date", "")) for row in items}),
+        },
+        "daily": [],
+        "usd_exchange_rate": usd_rate,
+        "profit_available": False,
+    }

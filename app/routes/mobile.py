@@ -13,6 +13,7 @@ from app.routes.auth_pages import (
     decrypt_credentials_for_session,
 )
 from app.services.balance_aggregation import fetch_aggregated_balances
+from app.services.trade_history_aggregation import fetch_aggregated_trade_history
 from app.session_store import (
     AccountCredential,
     SessionData,
@@ -232,6 +233,14 @@ def _resolve_trade_history_range(
     if normalized == "6m":
         start = (today.replace(day=1) - datetime.timedelta(days=155)).replace(day=1)
         return start, today, "지난 6개월"
+    if normalized == "1y":
+        start_year = today.year
+        start_month = today.month - 11
+        if start_month <= 0:
+            start_year -= 1
+            start_month += 12
+        start = datetime.date(start_year, start_month, 1)
+        return start, today, "최근 1년"
     return today.replace(day=1), today, "이번 달"
 
 
@@ -265,6 +274,9 @@ def _normalize_mobile_trade(trade: Mapping[str, object]) -> dict[str, object]:
         "amount_krw": round(amount),
         "realized_profit_krw": round(_as_float(realized_profit), 2) if isinstance(realized_profit, (int, float, str)) else None,
         "return_rate": round(_as_float(return_rate), 2) if isinstance(return_rate, (int, float, str)) else None,
+        "account_id": str(trade.get("account_id") or ""),
+        "account_label": str(trade.get("account_label") or ""),
+        "broker": str(trade.get("broker") or "kis"),
     }
 
 
@@ -282,7 +294,7 @@ def _build_mobile_trade_history(
         for trade in trades_source:
             if isinstance(trade, Mapping):
                 trades.append(_normalize_mobile_trade(trade))
-    return {
+    result = {
         "status": "success",
         "period": {
             "start": str(period.get("start") or ""),
@@ -297,6 +309,16 @@ def _build_mobile_trade_history(
         },
         "trades": trades,
     }
+    for key in (
+        "accounts",
+        "selected_account_ids",
+        "account_errors",
+        "profit_available",
+        "profit_complete",
+    ):
+        if key in detail_payload:
+            result[key] = detail_payload[key]
+    return result
 
 
 @router.get("/api/mobile/status")
@@ -384,29 +406,26 @@ async def get_mobile_dashboard(request: Request):
 
 
 @router.get("/api/mobile/trade-history")
-async def get_mobile_trade_history(request: Request, range: str | None = None):
+async def get_mobile_trade_history(
+    request: Request,
+    range: str | None = None,
+    account_id: str | None = None,
+):
     session = require_session(request)
-    account = session.primary_kis_account
-    if account is None:
-        raise HTTPException(status_code=400, detail="KIS account required for trade history")
     start_day, end_day, label = _resolve_trade_history_range(range)
-
-    token = await asyncio.to_thread(
-        api_client.get_access_token, account.app_key, account.app_secret
-    )
-    if not token:
-        raise HTTPException(status_code=500, detail="Failed to get access token from API")
-
-    detail_payload = await asyncio.to_thread(
-        api_client.get_trade_history,
-        token,
-        account.app_key,
-        account.app_secret,
-        account.cano,
-        account.acnt_prdt_cd,
-        start_day.strftime("%Y%m%d"),
-        end_day.strftime("%Y%m%d"),
-    )
+    try:
+        detail_payload = await asyncio.to_thread(
+            fetch_aggregated_trade_history,
+            session.accounts,
+            start_day.strftime("%Y%m%d"),
+            end_day.strftime("%Y%m%d"),
+            account_id=account_id,
+            page=1,
+            page_size=10_000,
+            include_trades=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     serialized = {
         "period": {
             "start": start_day.isoformat(),
@@ -419,6 +438,16 @@ async def get_mobile_trade_history(request: Request, range: str | None = None):
         ),
         "trades": detail_payload.get("items", []) if isinstance(detail_payload, Mapping) else [],
     }
+    if isinstance(detail_payload, Mapping):
+        for key in (
+            "accounts",
+            "selected_account_ids",
+            "account_errors",
+            "profit_available",
+            "profit_complete",
+        ):
+            if key in detail_payload:
+                serialized[key] = detail_payload[key]
     return _build_mobile_trade_history(serialized, label)
 
 

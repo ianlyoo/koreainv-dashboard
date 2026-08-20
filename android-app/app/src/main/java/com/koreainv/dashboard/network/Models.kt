@@ -145,6 +145,9 @@ data class TradeHistoryResponse(
     val trades: List<Trade>,
     val lastSynced: String = "",
     val usdExchangeRate: Double = 1350.0,
+    val profitAvailable: Boolean = true,
+    val profitComplete: Boolean = true,
+    val accountErrors: List<String> = emptyList(),
 )
 
 data class TradePeriod(
@@ -173,6 +176,9 @@ data class Trade(
     val amountKrw: Double,
     val realizedProfitKrw: Double?,
     val returnRate: Double?,
+    val accountId: String = "",
+    val accountLabel: String = "",
+    val broker: String = Broker.KIS,
 )
 
 data class AuthToken(
