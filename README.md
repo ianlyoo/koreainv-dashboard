@@ -12,6 +12,13 @@ KIS 계좌는 기존 거래내역·실현손익·예약주문 기능도 그대�
 슬라이스가 포함되어 있고, 실제 KIS 주문 실행은 `CENTRAL_ORDER_EXECUTION_ENABLED`로
 명시적으로 켜야만 동작한다. 켜지 않으면 실행되지 않는다.
 
+## Highlights
+
+- **멀티 브로커 집계**: KIS·토스증권 계좌를 병렬 조회·합산한다. 계좌 수만큼 등록 가능하며 통합/개별 조회, 국내·미국 보유 합산을 지원한다.
+- **Web + Android + Desktop**: 동일 백엔드(`app/`) 위에 데스크톱/웹과 Android(`android-app/`) 클라이언트를 제공한다. 3개 플랫폼에서 동일한 집계·정규화 로직을 재사용한다.
+- **릴리스 파이프라인**: GitHub Actions `Build And Release`(`.github/workflows/release.yml`)로 3개 아티팩트(`KISDashboard-android.apk`, `KISDashboard-win64.zip`, `KISDashboard-mac-arm64.zip`)를 빌드·배포한다. `v*` 태그 푸시로 트리거되며 태그와 `app/version.py`/`build.gradle.kts` 버전 일치 여부를 게이트한다.
+- **테스트**: `tests/` 아래 17개 모듈, 로컬에서 `pytest -q`로 검증한다. CI는 릴리스 전용이며 테스트를 별도로 실행하지 않는다.
+
 ## 아키텍처
 
 ```mermaid
@@ -24,6 +31,27 @@ flowchart LR
     A --> E[토스증권 Open API<br/>자산 조회]
     B --> E
 ```
+
+### 운영과 모니터링
+
+운영 흐름은 `KIS/Toss 집계 → 정규화 → insight 캐시 → 설명 가능한 요약`이다.
+모든 수치 계산은 결정론적이며 외부 LLM/벡터 DB 호출이 없다.
+
+1. **집계(Aggregation)**: 등록된 KIS·토스 계좌를 병렬 조회해 합산한다.
+   토스는 `GET /api/v1/accounts`로 계좌를 자동 탐색하고 다계좌를 동시 수집한다.
+   브로커 한쪽 장애 시 해당 계좌만 실패 처리하고 나머지 집계는 유지한다.
+2. **정규화(Normalization)**: 브로커별 보유·거래·실현손익 스키마를 공통 모델로 정규화한다.
+   토스 현금은 API 미제공으로 합계에서 제외한다.
+   이동평균 원가 재구성 시 원가 불명 매도(대체입고·기업행사)는 미산출 건수로 분리 표기한다.
+3. **Insight 캐시**: `GET /api/asset-insight`은 300초 TTL 메모리 캐시로 보호된다.
+   키는 `market_type:ticker`, 구현은 `_INSIGHT_CACHE_TTL_SECONDS=300`과 `threading.RLock`이다.
+   재무·옵션·뉴스·차트를 `asyncio.to_thread`로 병렬 수집하고 동일 키로 재사용한다.
+4. **설명 가능한 요약**: 옵션 지표(max pain, PCR, OI 신뢰도)는 결정론적 공식으로 계산한다.
+   결과마다 `high/medium/low/none` 신뢰도 라벨과 사유를 함께 반환해 해석 편향을 드러낸다.
+5. **결정론적 계산 vs 모델 서술**: 모든 지표는 서버에서 수식으로 계산된다.
+   LLM 생성·임베딩·RAG 검색이 개입하지 않으며 요약 문구는 계산 결과의 규칙 기반 서술이다.
+6. **관측과 운영**: 앱 로그와 `CENTRAL_ORDER_POLL_INTERVAL_SECONDS` 폴링으로 만기 주문 처리 상태를 확인한다.
+   중앙 서버는 HTTPS 리버스 프록시 뒤에서만 노출하고 토큰·키는 환경변수로만 주입한다.
 
 ## 빠른 시작
 
@@ -125,16 +153,16 @@ TOSS_PROXY_REMOTE_TOKEN=<서버와 동일한 토큰>
 3. HTTPS 리버스 프록시(Nginx/Caddy) 뒤에서 돌리고 `CENTRAL_ORDER_SERVER_TOKEN`을 비공개로 유지한다.
 4. 주문을 중앙 서버로 전달할 데스크톱 클라이언트에 `CENTRAL_ORDER_REMOTE_URL`/`CENTRAL_ORDER_REMOTE_TOKEN`을 설정한다.
 
-## 보안
+## 보안 경계
 
-- 주문 실행 경로가 존재하므로 `CENTRAL_ORDER_EXECUTION_ENABLED`는 의도적으로 켤 때만 활성화한다.
-- 저장 실행 자격증명은 `CENTRAL_ORDER_MASTER_KEY`로 암호화되어 저장된다.
-- API 키·계좌번호·PIN·설정 파일은 외부에 공유하지 않는다.
-- 중앙 서버는 HTTPS 뒤에서만 노출하고 서버 토큰을 비공개로 유지한다.
+- 저장 실행 자격증명은 `CENTRAL_ORDER_MASTER_KEY` Fernet 키로 암호화되어 저장되며 키 없이 복호화할 수 없다.
+- 토스 조회 프록시는 읽기 전용으로 계좌 목록·보유자산·환율·체결내역만 중계하고 주문 생성/정정/취소 API를 제공하지 않으며 자격증명을 서버 디스크에 저장하지 않는다.
+- 주문 실행은 `CENTRAL_ORDER_EXECUTION_ENABLED=true`로만 게이트되고 중앙 서버는 HTTPS 리버스 프록시 뒤에서만 노출하며 서버 토큰을 비공개로 유지한다.
 
 ## 릴리스 방식
 
 GitHub Actions `Build And Release` 워크플로(`.github/workflows/release.yml`)로 릴리스한다.
+CI는 릴리스 전용이며 테스트는 로컬에서 `pytest -q`로 실행한다.
 
 - 태그 푸시: `v*`
 - 태그 버전은 `app/version.py`(`APP_VERSION`)와 `android-app/app/build.gradle.kts`와 일치해야 한다.
