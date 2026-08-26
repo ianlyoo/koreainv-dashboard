@@ -1,0 +1,38 @@
+{
+  "name": "koreainv-dashboard",
+  "version": "0.1.0",
+  "description": "Korea Investment Securities dashboard — track portfolio and market monitoring with Google Sheets ops integration in live trading workflows.",
+  "keywords": [
+    "dashboard",
+    "developer-tools",
+    "finance",
+    "google-sheets",
+    "kis-api",
+    "korea-investment",
+    "monitoring",
+    "ops",
+    "portfolio-tracking",
+    "stock-dashboard",
+    "trading",
+    "typescript"
+  ],
+  "homepage": "https://ianlyoo.github.io/koreainv-dashboard/",
+  "bugs": {
+    "url": "https://github.com/ianlyoo/koreainv-dashboard/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ianlyoo/koreainv-dashboard.git"
+  },
+  "license": "MIT",
+  "author": "ianlyoo",
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

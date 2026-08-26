@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "koreainv-dashboard"
+version: 0.1.0
+authors:
+  - family-names: "Yoo"
+    given-names: "Ian"
+    alias: "ianlyoo"
+type: software
+license: MIT
+repository-code: "https://github.com/ianlyoo/koreainv-dashboard"
+url: "https://ianlyoo.github.io/koreainv-dashboard/"
+homepage: "https://ianlyoo.github.io/koreainv-dashboard/"
+description: "Korea Investment Securities dashboard — track portfolio and market monitoring with Google Sheets ops integration in live trading workflows."
+keywords:
+  - dashboard
+  - developer-tools
+  - finance
+  - google-sheets
+  - kis-api
+  - korea-investment
+  - monitoring
+  - ops
+  - portfolio-tracking
+  - stock-dashboard
+  - trading
+  - typescript
