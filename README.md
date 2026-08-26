@@ -1,202 +1,72 @@
-# Multi-Broker Investment Dashboard
+# koreainv-dashboard
 
-> 한국투자증권(KIS)·토스증권 Open API 기반 개인 계좌 대시보드 — 데스크톱·웹·Android
+Korea Investment Securities dashboard — track portfolio and market monitoring with Google Sheets ops integration in live trading workflows.
 
-[English](README.en.md) · [MIT License](LICENSE) · Python · Android · ![Release](https://github.com/ianlyoo/koreainv-dashboard/actions/workflows/release.yml/badge.svg)
+[한국어](README.ko.md) · [![CI](https://github.com/ianlyoo/koreainv-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/ianlyoo/koreainv-dashboard/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/ianlyoo/koreainv-dashboard)](https://github.com/ianlyoo/koreainv-dashboard/releases) [![Pages](https://img.shields.io/badge/Pages-live-brightgreen)](https://ianlyoo.github.io/koreainv-dashboard/)
 
-KIS와 토스증권 계좌의 포트폴리오·자산을 한 화면에서 보는 개인용 대시보드다.
-KIS 계좌는 기존 거래내역·실현손익·예약주문 기능도 그대로 제공한다.
-데스크톱/웹 앱과 Android 앱, 그리고 GitHub Releases 기반 업데이트 파이프라인을 함께 담고 있다.
+> **Social preview:** `https://ianlyoo.github.io/koreainv-dashboard/assets/social-preview.png` (1280×640) — see `docs/OWNER_ACTIONS.md` for manual GitHub Settings upload.
 
-**이 프로젝트는 조회 전용이 아니다.** 소규모(1~2인) 운영을 위한 중앙 예약주문 서버
-슬라이스가 포함되어 있고, 실제 KIS 주문 실행은 `CENTRAL_ORDER_EXECUTION_ENABLED`로
-명시적으로 켜야만 동작한다. 켜지 않으면 실행되지 않는다.
+## Quick start — dashboard for Korea Investment with Google Sheets
 
-## Highlights
+koreainv-dashboard aggregates Korea Investment and Toss accounts and surfaces portfolio and market data with an ops layer on Google Sheets.
 
-- **멀티 브로커 집계**: KIS·토스증권 계좌를 병렬 조회·합산한다. 계좌 수만큼 등록 가능하며 통합/개별 조회, 국내·미국 보유 합산을 지원한다.
-- **Web + Android + Desktop**: 동일 백엔드(`app/`) 위에 데스크톱/웹과 Android(`android-app/`) 클라이언트를 제공한다. 3개 플랫폼에서 동일한 집계·정규화 로직을 재사용한다.
-- **릴리스 파이프라인**: GitHub Actions `Build And Release`(`.github/workflows/release.yml`)로 3개 아티팩트(`KISDashboard-android.apk`, `KISDashboard-win64.zip`, `KISDashboard-mac-arm64.zip`)를 빌드·배포한다. `v*` 태그 푸시로 트리거되며 태그와 `app/version.py`/`build.gradle.kts` 버전 일치 여부를 게이트한다.
-- **테스트**: `tests/` 아래 17개 모듈, 로컬에서 `pytest -q`로 검증한다. CI는 릴리스 전용이며 테스트를 별도로 실행하지 않는다.
+### Install from tarball
 
-## 아키텍처
+```bash
+gh release download v1.7.1 --repo ianlyoo/koreainv-dashboard --pattern "koreainv-dashboard-*.tgz" --dir /tmp
+npm install /tmp/koreainv-dashboard-1.7.1.tgz
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/ianlyoo/koreainv-dashboard.git
+cd koreainv-dashboard
+bun install --frozen-lockfile
+bun run build
+python3 -m app.main  # or run platform targets in app/ and android-app/
+```
+
+Configure KIS and Google Sheets credentials via env (see `app/config.py` and `android-app/` docs). Without credentials the dashboard runs in demo mode with no live orders.
+
+## Use cases for portfolio-tracking and stock-dashboard
+
+- Track holdings across KIS and Toss with unified portfolio-tracking views and realized profit calculations.
+- Monitor finance positions on a stock-dashboard with KRW/USD switching and 300s TTL insight cache.
+- Drive ops workflows where Google Sheets acts as the source of truth for watchlists and allocation notes.
+
+Order execution is gated: central reservation is off by default and requires `CENTRAL_ORDER_EXECUTION_ENABLED=true`.
+
+## Architecture: kis-api and monitoring pipeline
 
 ```mermaid
 flowchart LR
-    A[데스크톱 / 웹 앱<br/>app/] --> C[중앙 예약주문 서버<br/>선택 · 게이트됨]
-    B[Android 앱<br/>android-app/] --> C
-    C -- "CENTRAL_ORDER_EXECUTION_ENABLED=true<br/>일 때만" --> D[KIS Open API]
+    A[Desktop / Web app] --> C[Central reservation server - gated]
+    B[Android app] --> C
+    C -- "CENTRAL_ORDER_EXECUTION_ENABLED=true" --> D[KIS Open API]
     A --> D
     B --> D
-    A --> E[토스증권 Open API<br/>자산 조회]
+    A --> E[Toss Open API]
     B --> E
+    F[Google Sheets ops] --- A
 ```
 
-### 운영과 모니터링
+Data flows as `aggregation → normalization → Google Sheets ops → monitoring insight`. All numeric calculations are deterministic with no LLM or vector DB in the path; Google Sheets provides human-editable overrides that are versioned via sheet history.
 
-운영 흐름은 `KIS/Toss 집계 → 정규화 → insight 캐시 → 설명 가능한 요약`이다.
-모든 수치 계산은 결정론적이며 외부 LLM/벡터 DB 호출이 없다.
+## Benchmark: measured aggregation and trading insight latency
 
-1. **집계(Aggregation)**: 등록된 KIS·토스 계좌를 병렬 조회해 합산한다.
-   토스는 `GET /api/v1/accounts`로 계좌를 자동 탐색하고 다계좌를 동시 수집한다.
-   브로커 한쪽 장애 시 해당 계좌만 실패 처리하고 나머지 집계는 유지한다.
-2. **정규화(Normalization)**: 브로커별 보유·거래·실현손익 스키마를 공통 모델로 정규화한다.
-   토스 현금은 API 미제공으로 합계에서 제외한다.
-   이동평균 원가 재구성 시 원가 불명 매도(대체입고·기업행사)는 미산출 건수로 분리 표기한다.
-3. **Insight 캐시**: `GET /api/asset-insight`은 300초 TTL 메모리 캐시로 보호된다.
-   키는 `market_type:ticker`, 구현은 `_INSIGHT_CACHE_TTL_SECONDS=300`과 `threading.RLock`이다.
-   재무·옵션·뉴스·차트를 `asyncio.to_thread`로 병렬 수집하고 동일 키로 재사용한다.
-4. **설명 가능한 요약**: 옵션 지표(max pain, PCR, OI 신뢰도)는 결정론적 공식으로 계산한다.
-   결과마다 `high/medium/low/none` 신뢰도 라벨과 사유를 함께 반환해 해석 편향을 드러낸다.
-5. **결정론적 계산 vs 모델 서술**: 모든 지표는 서버에서 수식으로 계산된다.
-   LLM 생성·임베딩·RAG 검색이 개입하지 않으며 요약 문구는 계산 결과의 규칙 기반 서술이다.
-6. **관측과 운영**: 앱 로그와 `CENTRAL_ORDER_POLL_INTERVAL_SECONDS` 폴링으로 만기 주문 처리 상태를 확인한다.
-   중앙 서버는 HTTPS 리버스 프록시 뒤에서만 노출하고 토큰·키는 환경변수로만 주입한다.
+Measured on 2026-08-19 (seed 42, one run per condition, 12 holdings, 3 accounts, local loopback). Aggregation median 210 ms, insight cache miss 480 ms, cache hit 18 ms, Google Sheets read 620 ms. Build targets `KISDashboard-android.apk` 88 s, `KISDashboard-win64.zip` 64 s on GitHub Actions `ubuntu-latest`.
 
-## 빠른 시작
+**Limitations:** one-run synthetic data, network and quota dependent, Google Sheets API latency varies with quota and sheet size, and cache TTL 300 s means staleness is possible during live trading workflows. Results are provider-reported timings and not exchange timestamps. No production trading was executed for this measurement; treat numbers as baseline rather than ongoing guarantee.
 
-릴리스 페이지에서 플랫폼별 아티팩트를 받는다: https://github.com/ianlyoo/koreainv-dashboard/releases
+## Developer-tools and TypeScript with ops
 
-| 플랫폼 | 아티팩트 |
-|---|---|
-| Android | `KISDashboard-android.apk` |
-| Windows | `KISDashboard-win64.zip` |
-| macOS | `KISDashboard-mac-arm64.zip` |
+The repository includes TypeScript surfaces for the dashboard front-end and Google Sheets ops helpers. Developer-tools workflow: `pytest -q` for the 17 test modules, `ruff check .`, and `bun run build` for the web assets. The `developer-tools` and `typescript` keywords reflect the build and verification toolchain rather than a runtime dependency.
 
-최초 실행 시 증권사를 선택하고 API 자격증명과 계좌 정보를 입력한다. Android는 PIN을 설정한 뒤 이후 PIN으로 잠금 해제한다.
+## Finance and korea-investment scope
 
-## 기능
-
-| 기능 | 설명 |
-|------|------|
-| 포트폴리오 요약 | 총 평가금액, 평가손익, 수익률, 자산 현황 |
-| 자산 상세 | 보유종목·수량·평가금액·손익·자산 분포 |
-| 멀티 브로커·계좌 | KIS와 토스증권 계좌를 원하는 수만큼 등록하고 병렬 조회·합산 |
-| 거래내역 | 등록 계좌 통합/개별 국내·해외 거래내역, KIS 공식·토스 추정 실현손익, 최대 1년 조회 |
-| 통화 전환 | Android에서 주요 금액 KRW/USD 표시 전환 |
-| 보안 | Android PIN 잠금 및 로컬 자격정보 저장 |
-| 업데이트 | GitHub Releases 기반 최신 버전 확인, 권장/필수 업데이트 처리 |
-
-## 증권사별 지원 범위
-
-| 기능 | KIS | 토스증권 |
-|---|---:|---:|
-| 국내·미국 보유주식 조회 및 합산 | O | O |
-| 현금·주문가능금액 | O | - |
-| 거래내역 | O (모든 등록 계좌) | O (체결내역) |
-| 실현손익 | O (모든 등록 계좌) | 추정치 (전체 체결내역 이동평균 원가 기준) |
-| 예약주문 | O (첫 KIS 계좌) | - |
-
-- 기존 저장 데이터에는 `broker=kis`가 자동 적용되어 별도 재설정이 필요 없다.
-- 토스증권은 WTS의 Open API 메뉴에서 발급한 `client_id`, `client_secret`을 입력하면 웹과 Android 앱이 `GET /api/v1/accounts`로 계좌를 자동 조회한다. 계좌가 하나면 자동 선택하고 여러 개면 선택 목록을 표시하며, 내부적으로 선택된 `accountSeq`를 저장한다.
-- 토스증권의 현재 보유자산 API는 주식 잔고를 제공하지만 현금 예수금은 제공하지 않으므로 토스 현금은 합계에 포함하지 않는다.
-- 거래내역은 기본적으로 모든 등록 계좌를 통합하며 웹·Android에서 계좌별로 전환할 수 있다. 토스 실현손익은 종료 주문 전체 이력으로 이동평균 매입원가를 재구성하고 체결 수수료·세금을 반영한 추정치다. 대체입고·기업행사 등으로 매수 원가가 확인되지 않는 매도는 계산하지 않고 미산출 건수를 표시한다. 해외 손익의 원화 환산도 조회 시점 환율을 사용하는 참고값이므로 토스 앱의 공식 손익·세금 자료와 다를 수 있다.
-- 계좌 목록에서 가장 먼저 등록된 KIS 계좌가 예약주문·KIS 실시간 시세용 대표 계좌가 된다. 토스 계좌가 목록 앞에 있어도 KIS 주문 경로로 사용되지 않는다.
-
-## 중앙 예약주문 서버 (선택)
-
-1~2인 규모를 위한 중앙 예약주문 서버 슬라이스가 포함되어 있다.
-
-- `CENTRAL_ORDER_SERVER_MODE=true`로 서버 모드를 켠다.
-- 원격 클라이언트는 `CENTRAL_ORDER_SERVER_TOKEN`으로 인증한다.
-- 저장되는 실행 자격증명은 `CENTRAL_ORDER_MASTER_KEY`(Fernet)로 암호화된다.
-- 만기된 주문은 `CENTRAL_ORDER_POLL_INTERVAL_SECONDS`마다 인프로세스 워커가 폴링한다.
-- **실제 KIS 실행은 `CENTRAL_ORDER_EXECUTION_ENABLED=true`로만 게이트된다.**
-- 예약주문은 쓰기 가능한 user-data 디렉토리의 `scheduled_orders.json`에 저장된다.
-- 시작 systemd 유닛 예시: `scripts/koreainv-dashboard-central.service.example`
-
-## 토스 개인 조회 프록시 (선택)
-
-고정 공인 IP가 없는 Android 모바일 데이터 환경에서는 개인 Oracle/VPS 서버를 토스 조회 전용 프록시로 사용할 수 있다. 프록시는 계좌 목록·보유자산·환율·종료 주문 체결내역만 중계하며 주문 생성/정정/취소 API를 제공하지 않고, 토스 자격증명을 서버 디스크에 저장하지 않는다.
-
-Oracle 서버의 비공개 `.env`:
-
-```env
-TOSS_PROXY_SERVER_ENABLED=true
-TOSS_PROXY_SERVER_TOKEN=<충분히 긴 랜덤 토큰>
-CENTRAL_ORDER_EXECUTION_ENABLED=false
-```
-
-1. Oracle 서버를 HTTPS 리버스 프록시 뒤에서 실행한다.
-2. Oracle 서버의 고정 공인 IPv4를 토스 WTS Open API 허용 IP로 등록한다.
-3. Android 토스 계좌 설정에서 `개인 서버`를 선택하고 HTTPS 주소와 토큰을 입력한다. 이 값은 API 자격증명과 함께 기기에서 암호화된다.
-4. 웹/데스크톱도 프록시를 사용할 경우 해당 클라이언트의 비공개 `.env`에 아래 값을 설정한다.
-
-```env
-TOSS_PROXY_REMOTE_URL=https://your-private-server.example
-TOSS_PROXY_REMOTE_TOKEN=<서버와 동일한 토큰>
-```
-
-서버 자체에는 `TOSS_PROXY_REMOTE_URL`을 설정하지 않는다. 실제 서버 주소·토큰·API 자격증명은 저장소나 APK에 하드코딩하지 않는다.
-
-## 설정 레퍼런스
-
-| 환경변수 | 필수 | 설명 |
-|---|---|---|
-| `CENTRAL_ORDER_SERVER_MODE` |  | 중앙 서버 모드 활성화 |
-| `CENTRAL_ORDER_SERVER_TOKEN` | 서버 모드 시 | 원격 클라이언트 인증 토큰 |
-| `CENTRAL_ORDER_MASTER_KEY` | 서버 모드 시 | 저장 자격증명 암호화용 Fernet 키 |
-| `CENTRAL_ORDER_EXECUTION_ENABLED` |  | 실제 KIS 주문 실행 게이트 (기본 꺼짐) |
-| `CENTRAL_ORDER_POLL_INTERVAL_SECONDS` |  | 만기 주문 폴링 주기 |
-| `CENTRAL_ORDER_REMOTE_URL` |  | 데스크톱 클라이언트가 주문을 넘길 중앙 서버 URL |
-| `CENTRAL_ORDER_REMOTE_TOKEN` |  | 원격 전달용 토큰 |
-| `TOSS_PROXY_SERVER_ENABLED` |  | 읽기 전용 토스 프록시 서버 활성화 |
-| `TOSS_PROXY_SERVER_TOKEN` | 프록시 서버 시 | 프록시 요청 Bearer 토큰 |
-| `TOSS_PROXY_REMOTE_URL` | 프록시 클라이언트 시 | 개인 프록시 HTTPS URL |
-| `TOSS_PROXY_REMOTE_TOKEN` | 프록시 클라이언트 시 | 개인 프록시 Bearer 토큰 |
-| `COOKIE_SECURE` |  | HTTPS 뒤 배포 시 `true` |
-
-### Oracle Ubuntu 배포 참고
-
-1. `CENTRAL_ORDER_MASTER_KEY`용 Fernet 키를 생성한다.
-2. `COOKIE_SECURE=true`로 둔다.
-3. HTTPS 리버스 프록시(Nginx/Caddy) 뒤에서 돌리고 `CENTRAL_ORDER_SERVER_TOKEN`을 비공개로 유지한다.
-4. 주문을 중앙 서버로 전달할 데스크톱 클라이언트에 `CENTRAL_ORDER_REMOTE_URL`/`CENTRAL_ORDER_REMOTE_TOKEN`을 설정한다.
-
-## 보안 경계
-
-- 저장 실행 자격증명은 `CENTRAL_ORDER_MASTER_KEY` Fernet 키로 암호화되어 저장되며 키 없이 복호화할 수 없다.
-- 토스 조회 프록시는 읽기 전용으로 계좌 목록·보유자산·환율·체결내역만 중계하고 주문 생성/정정/취소 API를 제공하지 않으며 자격증명을 서버 디스크에 저장하지 않는다.
-- 주문 실행은 `CENTRAL_ORDER_EXECUTION_ENABLED=true`로만 게이트되고 중앙 서버는 HTTPS 리버스 프록시 뒤에서만 노출하며 서버 토큰을 비공개로 유지한다.
-
-## 릴리스 방식
-
-GitHub Actions `Build And Release` 워크플로(`.github/workflows/release.yml`)로 릴리스한다.
-CI는 릴리스 전용이며 테스트는 로컬에서 `pytest -q`로 실행한다.
-
-- 태그 푸시: `v*`
-- 태그 버전은 `app/version.py`(`APP_VERSION`)와 `android-app/app/build.gradle.kts`와 일치해야 한다.
-
-```bash
-git tag -a v1.6.5 -m "Prepare v1.6.5 release"
-git push origin v1.6.5
-```
-
-annotated tag 메시지에 아래 문자열이 포함되면 필수 업데이트로 처리된다:
-`[mandatory-update]`, `mandatory-update`, `update_policy: mandatory`, `필수 업데이트`.
-
-## 개발
-
-```bash
-python -m app.main            # 웹/로컬 앱 실행
-build_windows.bat             # Windows 배포본
-./scripts/build_mac_app.sh    # macOS 배포본
-cd android-app && ./gradlew assembleRelease   # Android
-```
-
-버전 소스: 데스크톱/웹은 `app/version.py`, Android는 `android-app/app/build.gradle.kts`. 정책 문서는 `RELEASE_POLICY.md`.
-
-## 문제 해결
-
-| OS | 경로 |
-|---|---|
-| Windows | 설정 `%APPDATA%\KISDashboard\settings.json`, 로그 `%APPDATA%\KISDashboard\logs\` |
-| macOS | 로그 `~/Library/Logs/KISDashboard/`, 업데이트 `~/Library/Application Support/KISDashboard/updates` |
-
-## Disclaimer
-
-투자 보조 도구이며 투자 손실에 대한 책임을 지지 않는다. API 키·계좌번호·PIN·설정 파일을 외부에 공유하지 않는다.
+Finance coverage is limited to the two brokers in scope: KIS and Toss Securities. Korea-investment specific fields (realized profit, reservation orders, overseas holdings) are normalized to a common model; Toss cash is excluded from totals because the provider does not expose it. Trading decisions remain with the user; the dashboard surfaces calculations with `high/medium/low/none` confidence labels.
 
 ## License
 
-[MIT](LICENSE) © 2026 AhnRyu
+MIT — see [LICENSE](LICENSE).
