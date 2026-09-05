@@ -44,7 +44,6 @@ class KisRepository(
     companion object {
         private const val BASE_URL = "https://openapi.koreainvestment.com:9443"
         private const val TOSS_BASE_URL = "https://openapi.tossinvest.com"
-        private const val TOKEN_BUFFER_SECONDS = 60L
         private const val DASHBOARD_CACHE_TTL_MILLIS = 15_000L
         private const val TRADE_HISTORY_CACHE_TTL_MILLIS = 10_000L
         private const val EXCHANGE_QUERY_CONCURRENCY = 4
@@ -71,14 +70,19 @@ class KisRepository(
         .callTimeout(90, TimeUnit.SECONDS)
         .build()
 
-    private val tokenMutex = Mutex()
     private val dashboardCacheMutex = Mutex()
     private val dashboardLoadMutex = Mutex()
     private val quoteRefreshMutex = Mutex()
     private val tradeHistoryCacheMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
     private val centralOrderClient by lazy { CentralOrderClient(client) }
-    private val authTokens = mutableMapOf<String, AuthToken>()
+    private val tokenAliases = AuthTokenAliases(accounts)
+    private val tokenCoordinator = AuthTokenCoordinator(
+        load = { settingsManager.loadAuthToken(tokenAliases.scopesFor(it)) },
+        save = { account, token -> settingsManager.saveAuthToken(tokenAliases.scopesFor(account), token) },
+        invalidate = { settingsManager.clearAuthToken(tokenAliases.scopesFor(it)) },
+        issue = ::issueToken,
+    )
     private var cachedBaseDashboard: Pair<Long, DashboardResponse>? = null
     private var cachedDashboard: Pair<Long, DashboardResponse>? = null
     private var cachedTradeHistory: MutableMap<String, Pair<Long, TradeHistoryResponse>> = mutableMapOf()
@@ -301,9 +305,7 @@ class KisRepository(
         client.newCall(builder.build()).execute().use { response ->
             val payload = parseObject(response.body?.string().orEmpty()) ?: JsonObject()
             if (response.code == 401 && retryOnTokenError) {
-                authTokens.remove(account.id)
-                settingsManager.clearAuthToken()
-                val refreshed = requireToken(account)
+                val refreshed = tokenCoordinator.refreshToken(account, token)
                     ?: throw IllegalStateException("TOSS_TOKEN_REFRESH_FAILED path=$path")
                 return getTossJson(account, path, query, refreshed, includeAccount, false)
             }
@@ -1350,18 +1352,10 @@ class KisRepository(
         else -> code
     }
 
-    private suspend fun requireToken(account: AccountCredential): String? = tokenMutex.withLock {
+    private suspend fun requireToken(account: AccountCredential): String? = tokenCoordinator.requireToken(account)
+
+    private fun issueToken(account: AccountCredential): AuthToken? {
         val now = System.currentTimeMillis()
-        val accountCredentials = account.toAppCredentials()
-        authTokens[account.id]
-            ?.takeIf { now < it.expiresAtMillis - TOKEN_BUFFER_SECONDS * 1000 }
-            ?.let { return@withLock it.value }
-        settingsManager.loadAuthToken(accountCredentials)
-            ?.takeIf { now < it.expiresAtMillis - TOKEN_BUFFER_SECONDS * 1000 }
-            ?.let {
-                authTokens[account.id] = it
-                return@withLock it.value
-            }
 
         val isToss = Broker.normalize(account.broker) == Broker.TOSS
         val request = if (isToss) {
@@ -1388,9 +1382,8 @@ class KisRepository(
                 .build()
         }
 
-        return@withLock client.newCall(request).execute().use { response: okhttp3.Response ->
+        return client.newCall(request).execute().use { response: okhttp3.Response ->
             if (!response.isSuccessful) {
-                authTokens.remove(account.id)
                 return@use null
             }
             val bodyString = response.body?.string().orEmpty()
@@ -1399,10 +1392,7 @@ class KisRepository(
             if (accessToken.isBlank()) return@use null
             val expiresIn = number(json, "expires_in").takeIf { it > 0.0 }?.toLong()
                 ?: if (isToss) 86400L else 43200L
-            val token = AuthToken(accessToken, now, now + expiresIn * 1000)
-            authTokens[account.id] = token
-            settingsManager.saveAuthToken(accountCredentials, token)
-            accessToken
+            AuthToken(accessToken, now, now + expiresIn * 1000)
         }
     }
 
@@ -1437,20 +1427,17 @@ class KisRepository(
         client.newCall(request).execute().use { response ->
             val bodyString = response.body?.string().orEmpty()
             val json = parseObject(bodyString) ?: JsonObject()
-            if (retryOnRateLimit > 0 && isRateLimitError(response.code, json)) {
-                delay((3 - retryOnRateLimit) * 400L + 400L)
-                return getJson(account, path, trId, query, token, extraHeaders, retryOnTokenError, retryOnRateLimit - 1)
-            }
-            if (retryOnTokenError && isTokenError(response.code, json)) {
-                val currentToken = authTokens[account.id]?.value
-                val refreshed = if (!currentToken.isNullOrBlank() && currentToken != token) {
-                    currentToken
-                } else {
-                    authTokens.remove(account.id)
-                    settingsManager.clearAuthToken()
-                    requireToken(account)
-                } ?: throw IllegalStateException("KIS_TOKEN_REFRESH_FAILED[$trId] path=$path")
-                return getJson(account, path, trId, query, refreshed, extraHeaders, false, retryOnRateLimit)
+            when (kisRetryAction(response.code, string(json, "msg_cd"), string(json, "msg1"), retryOnTokenError, retryOnRateLimit)) {
+                KisRetryAction.REFRESH_TOKEN -> {
+                    val refreshed = tokenCoordinator.refreshToken(account, token)
+                        ?: throw IllegalStateException("KIS_TOKEN_REFRESH_FAILED[$trId] path=$path")
+                    return getJson(account, path, trId, query, refreshed, extraHeaders, false, retryOnRateLimit)
+                }
+                KisRetryAction.RATE_LIMIT -> {
+                    delay((3 - retryOnRateLimit) * 400L + 400L)
+                    return getJson(account, path, trId, query, token, extraHeaders, retryOnTokenError, retryOnRateLimit - 1)
+                }
+                KisRetryAction.NONE -> Unit
             }
             if (!response.isSuccessful) {
                 throw IllegalStateException(
@@ -1696,18 +1683,6 @@ class KisRepository(
             "1y" -> Triple(today.withDayOfMonth(1).minusMonths(11), today, "최근 1년")
             else -> Triple(today.withDayOfMonth(1), today, "이번 달")
         }
-    }
-
-    private fun isTokenError(code: Int, json: JsonObject): Boolean {
-        if (code == 401) return true
-        val msgCode = string(json, "msg_cd")
-        val msg = string(json, "msg1").lowercase()
-        return msgCode in setOf("EGW00123", "EGW00121") || "token" in msg
-    }
-
-    private fun isRateLimitError(code: Int, json: JsonObject): Boolean {
-        val msg = string(json, "msg1")
-        return code >= 429 || msg.contains("초당 거래건수를 초과", ignoreCase = true)
     }
 
     private fun getOverseasNationCode(exchangeCode: String): String = when (exchangeCode.uppercase()) {

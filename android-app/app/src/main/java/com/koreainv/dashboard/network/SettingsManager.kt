@@ -38,6 +38,63 @@ class SettingsManager(private val context: Context) {
         private const val GCM_TAG_LENGTH_BITS = 128
         private const val GCM_IV_LENGTH_BYTES = 12
         private const val SALT_LENGTH_BYTES = 16
+
+        internal fun clearAuthToken(
+            preferences: androidx.datastore.preferences.core.MutablePreferences,
+            scope: String,
+        ) = clearAuthToken(preferences, setOf(scope))
+
+        internal fun clearAuthToken(
+            preferences: androidx.datastore.preferences.core.MutablePreferences,
+            scopes: Set<String>,
+        ) {
+            val current = preferences[TOKEN_CACHE_KEY]?.let { TokenCacheCodec.parse(it) } ?: emptyMap()
+            preferences[TOKEN_CACHE_KEY] = TokenCacheCodec.serialize(current - scopes)
+            // Prevent a rejected legacy token from being migrated back on the next load.
+            if (preferences[TOKEN_SCOPE_KEY] in scopes) {
+                clearLegacyTokenKeys(preferences)
+            }
+        }
+
+        internal fun loadAuthToken(
+            preferences: Preferences,
+            scopes: Set<String>,
+            nowMillis: Long = System.currentTimeMillis(),
+        ): AuthToken? {
+            val cached = preferences[TOKEN_CACHE_KEY]?.let { TokenCacheCodec.parse(it) } ?: emptyMap()
+            val candidates = scopes.mapNotNull { cached[it] }.toMutableList()
+            if (preferences[TOKEN_SCOPE_KEY] in scopes) {
+                val value = preferences[ACCESS_TOKEN_KEY]?.trim().orEmpty()
+                val issued = preferences[TOKEN_ISSUED_AT_KEY]
+                val expires = preferences[TOKEN_EXPIRES_AT_KEY]
+                if (value.isNotBlank() && issued != null && expires != null && expires > issued) {
+                    candidates.add(AuthToken(value, issued, expires))
+                }
+            }
+            // An older grant may be revoked even if its advertised expiry is later.
+            // Among usable aliases, prefer the most recently issued token.
+            return candidates.filter { nowMillis < it.expiresAtMillis - 60_000L }
+                .maxWithOrNull(compareBy<AuthToken> { it.issuedAtMillis }.thenBy { it.expiresAtMillis })
+        }
+
+        internal fun saveAuthToken(
+            preferences: androidx.datastore.preferences.core.MutablePreferences,
+            scopes: Set<String>,
+            token: AuthToken,
+        ) {
+            val current = preferences[TOKEN_CACHE_KEY]?.let { TokenCacheCodec.parse(it) } ?: emptyMap()
+            preferences[TOKEN_CACHE_KEY] = TokenCacheCodec.serialize(current + scopes.associateWith { token })
+            if (preferences[TOKEN_SCOPE_KEY] in scopes) {
+                clearLegacyTokenKeys(preferences)
+            }
+        }
+
+        private fun clearLegacyTokenKeys(preferences: androidx.datastore.preferences.core.MutablePreferences) {
+            preferences.remove(TOKEN_SCOPE_KEY)
+            preferences.remove(ACCESS_TOKEN_KEY)
+            preferences.remove(TOKEN_ISSUED_AT_KEY)
+            preferences.remove(TOKEN_EXPIRES_AT_KEY)
+        }
     }
 
     private val secureRandom = SecureRandom()
@@ -181,6 +238,17 @@ class SettingsManager(private val context: Context) {
         }
     }
 
+    internal suspend fun loadAuthToken(scopes: Set<String>): AuthToken? =
+        loadAuthToken(context.dataStore.data.first(), scopes)
+
+    internal suspend fun saveAuthToken(scopes: Set<String>, token: AuthToken) {
+        context.dataStore.edit { preferences -> saveAuthToken(preferences, scopes, token) }
+    }
+
+    internal suspend fun clearAuthToken(scopes: Set<String>) {
+        context.dataStore.edit { preferences -> clearAuthToken(preferences, scopes) }
+    }
+
     suspend fun clearAuthToken() {
         context.dataStore.edit { preferences ->
             clearAuthToken(preferences)
@@ -245,13 +313,6 @@ class SettingsManager(private val context: Context) {
     private fun clearAuthToken(preferences: androidx.datastore.preferences.core.MutablePreferences) {
         preferences.remove(TOKEN_CACHE_KEY)
         clearLegacyTokenKeys(preferences)
-    }
-
-    private fun clearLegacyTokenKeys(preferences: androidx.datastore.preferences.core.MutablePreferences) {
-        preferences.remove(TOKEN_SCOPE_KEY)
-        preferences.remove(ACCESS_TOKEN_KEY)
-        preferences.remove(TOKEN_ISSUED_AT_KEY)
-        preferences.remove(TOKEN_EXPIRES_AT_KEY)
     }
 
     private data class TokenStoreRecord(
