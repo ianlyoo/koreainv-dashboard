@@ -1,6 +1,6 @@
 {
   "name": "koreainv-dashboard",
-  "version": "0.1.0",
+  "version": "1.7.2",
   "description": "Korea Investment Securities dashboard — track portfolio and market monitoring with Google Sheets ops integration in live trading workflows.",
   "keywords": [
     "dashboard",
