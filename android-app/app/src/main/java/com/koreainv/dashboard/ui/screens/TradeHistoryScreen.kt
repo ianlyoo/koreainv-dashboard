@@ -1,26 +1,21 @@
 package com.koreainv.dashboard.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -28,47 +23,43 @@ import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
-import com.koreainv.dashboard.network.KisRepository
+import com.koreainv.dashboard.network.DashboardDataSource
 import com.koreainv.dashboard.network.Trade
 import com.koreainv.dashboard.network.TradeHistoryResponse
 import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.Error
 import com.koreainv.dashboard.ui.theme.Success
-import com.koreainv.dashboard.ui.theme.SurfaceBorder
-import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
-import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.text.NumberFormat
 import java.time.Duration
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TradeHistoryScreen(
-    repository: KisRepository,
+    repository: DashboardDataSource,
     accountFilters: List<HoldingAccountFilter>,
     onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
@@ -79,33 +70,47 @@ fun TradeHistoryScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    val initialTradeData = sessionState.tradeData ?: repository.peekTradeHistory(
-        sessionState.selectedRange,
-        sessionState.selectedAccountId,
-    )
-    var tradeData by remember(sessionState, initialTradeData) { mutableStateOf(initialTradeData) }
-    var isLoading by remember(sessionState, initialTradeData) { mutableStateOf(initialTradeData == null) }
-    var isTradeListLoading by remember(sessionState) { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var tradeFilter by remember(sessionState) { mutableStateOf(sessionState.tradeFilter) }
-    var selectedRange by remember(sessionState) { mutableStateOf(sessionState.selectedRange) }
-    var selectedRangeLabel by remember(sessionState) { mutableStateOf(sessionState.selectedRangeLabel) }
+    var tradeFilter by rememberSaveable { mutableStateOf(sessionState.tradeFilter) }
+    var selectedRange by rememberSaveable { mutableStateOf(sessionState.selectedRange) }
+    var selectedAccountId by rememberSaveable { mutableStateOf(sessionState.selectedAccountId) }
+    val currencyPreference = rememberCurrencyPreference()
+    val currencyMode = currencyPreference.mode
+    val currentCurrencyMode by rememberUpdatedState(currencyMode)
+    var selectedRangeLabel by rememberSaveable {
+        mutableStateOf(if (selectedRange == sessionState.selectedRange) sessionState.selectedRangeLabel else rangeLabel(selectedRange))
+    }
+    val initialTradeData = remember(repository) {
+        sessionState.tradeData?.takeIf { tradeHistorySessionMatches(sessionState, selectedRange, selectedAccountId) }
+            ?: repository.peekTradeHistory(selectedRange, selectedAccountId)
+    }
+    var snapshots by remember(repository) {
+        mutableStateOf(TradeHistorySnapshots(displayed = initialTradeData, complete = initialTradeData))
+    }
+    val tradeData = snapshots.displayed
+    var isLoading by remember(repository) { mutableStateOf(initialTradeData == null) }
+    var isTradeListLoading by remember(repository) { mutableStateOf(false) }
+    var errorMessage by remember(repository) {
+        mutableStateOf(sessionState.errorMessage.takeIf { tradeHistorySessionMatches(sessionState, selectedRange, selectedAccountId) })
+    }
     var rangeExpanded by remember { mutableStateOf(false) }
     var filterExpanded by remember { mutableStateOf(false) }
-    var selectedAccountId by remember(sessionState) { mutableStateOf(sessionState.selectedAccountId) }
     var accountExpanded by remember { mutableStateOf(false) }
-    var currencyMode by remember(sessionState) { mutableStateOf(sessionState.currencyMode) }
-    var activeLoadRequestId by remember { mutableStateOf(0) }
+    val requestOwner = remember(repository) { ScreenRequestOwner() }
+    val updateSessionState by rememberUpdatedState(onSessionStateChange)
+    DisposableEffect(requestOwner) {
+        onDispose { requestOwner.cancel() }
+    }
 
-    fun persistSessionState(snapshot: TradeHistoryResponse? = tradeData) {
-        onSessionStateChange(
+    fun persistSessionState(snapshot: TradeHistoryResponse? = snapshots.complete) {
+        updateSessionState(
             TradeHistorySessionState(
                 tradeData = snapshot,
                 tradeFilter = tradeFilter,
                 selectedRange = selectedRange,
                 selectedRangeLabel = selectedRangeLabel,
-                currencyMode = currencyMode,
+                currencyMode = currentCurrencyMode,
                 selectedAccountId = selectedAccountId,
+                errorMessage = errorMessage,
             ),
         )
     }
@@ -116,34 +121,31 @@ fun TradeHistoryScreen(
         forceRefresh: Boolean = false,
     ) {
         val resolvedLabel = rangeLabel(range)
-        val rangeChanged = range != selectedRange
-        val accountChanged = accountId != selectedAccountId
-        val previousFullTradeData = tradeData?.takeIf { current ->
-            !rangeChanged && !accountChanged && current.trades.isNotEmpty()
-        }
+        val scopeChanged = range != selectedRange || accountId != selectedAccountId
+        val previousFullTradeData = snapshots.complete.takeUnless { scopeChanged }
         val showSummaryPreview = previousFullTradeData == null
-        val requestId = activeLoadRequestId + 1
-        activeLoadRequestId = requestId
         selectedRange = range
         selectedRangeLabel = resolvedLabel
         selectedAccountId = accountId
         isLoading = true
         isTradeListLoading = false
-        errorMessage = null
-        if (rangeChanged || accountChanged) {
-            tradeData = null
+        if (scopeChanged) {
+            snapshots = TradeHistorySnapshots()
+            errorMessage = null
         }
         persistSessionState()
-        coroutineScope.launch {
-            runCatching {
+        requestOwner.launch(
+            scope = coroutineScope,
+            load = { requestVersion ->
                 repository.fetchTradeHistory(
                     range = range,
                     accountId = accountId,
                     forceRefresh = forceRefresh,
                     onSummaryReady = if (showSummaryPreview) {
                         { summary ->
-                            if (requestId == activeLoadRequestId) {
-                                tradeData = summary
+                            currentCoroutineContext().ensureActive()
+                            if (requestOwner.accepts(requestVersion)) {
+                                snapshots = snapshots.withSummary(summary)
                                 selectedRangeLabel = summary.period.label.ifBlank { resolvedLabel }
                                 isTradeListLoading = true
                             }
@@ -152,36 +154,25 @@ fun TradeHistoryScreen(
                         null
                     },
                 )
-            }
-                .onSuccess {
-                    if (requestId != activeLoadRequestId) {
-                        return@onSuccess
-                    }
-                    tradeData = it
-                    selectedRangeLabel = it.period.label.ifBlank { resolvedLabel }
-                    isTradeListLoading = false
-                    persistSessionState()
-                }
-                .onFailure {
-                    if (requestId != activeLoadRequestId) {
-                        return@onFailure
-                    }
-                    val detail = it.message?.takeIf(String::isNotBlank) ?: it::class.simpleName ?: "unknown"
-                    errorMessage = "거래내역을 불러오지 못했습니다. [$detail]"
-                    isTradeListLoading = false
-                    if (previousFullTradeData != null) {
-                        tradeData = previousFullTradeData
-                    }
-                    val persistedTradeData = previousFullTradeData ?: tradeData?.takeIf { current -> current.trades.isNotEmpty() }
-                    persistSessionState(snapshot = persistedTradeData)
-                }
-            if (requestId == activeLoadRequestId) {
-                isLoading = false
-            }
-        }
+            },
+            onSuccess = {
+                snapshots = snapshots.withSuccess(it)
+                selectedRangeLabel = it.period.label.ifBlank { resolvedLabel }
+                isTradeListLoading = false
+                errorMessage = null
+                persistSessionState()
+            },
+            onFailure = {
+                errorMessage = dashboardErrorMessage(it)
+                isTradeListLoading = false
+                snapshots = snapshots.afterFailure()
+                persistSessionState()
+            },
+            onFinished = { isLoading = false },
+        )
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(repository) {
         if (tradeData == null) {
             loadTradeHistory(range = selectedRange)
         } else if (isTradeHistorySnapshotStale(tradeData)) {
@@ -197,10 +188,7 @@ fun TradeHistoryScreen(
                 actions = {
                     CompactCurrencyToggle(
                         mode = currencyMode,
-                        onModeChange = {
-                            currencyMode = it
-                            persistSessionState()
-                        },
+                        onModeChange = currencyPreference.onModeChange,
                     )
                     if (isLoading && tradeData != null) {
                         HeaderLoadingIndicator()
@@ -224,39 +212,38 @@ fun TradeHistoryScreen(
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
                 isLoading && tradeData == null -> {
-                    CircularProgressIndicator(
+                    DashboardLoadingState(
+                        message = "거래내역을 불러오는 중입니다…",
                         modifier = Modifier.align(Alignment.Center),
-                        color = TextGold,
                     )
                 }
 
                 errorMessage != null && tradeData == null -> {
                     Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                        modifier = Modifier.align(Alignment.Center).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text(
-                            text = errorMessage.orEmpty(),
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
+                        DashboardErrorNotice(
+                            message = errorMessage.orEmpty(),
+                            onRetry = { loadTradeHistory(forceRefresh = true) },
                         )
-                        DashboardPillButton(
-                            label = stringResource(R.string.retry),
-                            onClick = { loadTradeHistory() },
-                            tone = AccentTone.Accent,
-                        )
+                        if (resolveAccountSelection(selectedAccountId, accountFilters).unavailable) {
+                            DashboardEmptyState(
+                                title = "선택한 계좌를 확인해 주세요",
+                                message = "현재 계좌 목록에 없는 계좌입니다. 전체 계좌로 다시 조회할 수 있습니다.",
+                                actionLabel = "전체 계좌 보기",
+                                onAction = { loadTradeHistory(accountId = null) },
+                            )
+                        }
                     }
                 }
 
                 tradeData != null -> {
-                    val data = tradeData!!
-                    val selectedAccountLabel = accountFilters
-                        .firstOrNull { it.accountId == selectedAccountId }
-                        ?.label
-                        ?: stringResource(R.string.all_accounts)
+                    val data = tradeData
+                    val accountSelection = resolveAccountSelection(selectedAccountId, accountFilters)
+                    val selectedAccountLabel = accountSelection.label
+                        ?: if (accountSelection.unavailable) "확인할 수 없는 계좌" else stringResource(R.string.all_accounts)
+                    val warningMessage = tradeHistoryWarningMessage(errorMessage, data.accountErrors)
                     val filterTone = when (tradeFilter) {
                         "buy" -> AccentTone.Positive
                         "sell" -> AccentTone.Negative
@@ -270,9 +257,28 @@ fun TradeHistoryScreen(
 
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 132.dp),
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = dashboardBottomContentPadding()),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
+                        if (warningMessage != null) {
+                            item {
+                                DashboardErrorNotice(
+                                    message = warningMessage,
+                                    onRetry = { loadTradeHistory(forceRefresh = true) },
+                                    usingCachedData = errorMessage != null && snapshots.complete != null,
+                                )
+                            }
+                        }
+                        if (accountSelection.unavailable) {
+                            item {
+                                DashboardEmptyState(
+                                    title = "선택한 계좌를 확인해 주세요",
+                                    message = "현재 계좌 목록에 없는 계좌입니다. 전체 계좌로 다시 조회할 수 있습니다.",
+                                    actionLabel = "전체 계좌 보기",
+                                    onAction = { loadTradeHistory(accountId = null) },
+                                )
+                            }
+                        }
                         item {
                             TradeSummaryCard(
                                 data = data,
@@ -283,14 +289,14 @@ fun TradeHistoryScreen(
                         }
 
                         item {
-                            Row(
+                            FlowRow(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(top = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Box(modifier = Modifier.weight(1.08f)) {
+                                Box(modifier = Modifier.widthIn(min = 120.dp).weight(1f)) {
                                     DashboardPillButton(
                                         label = selectedRangeLabel,
                                         onClick = { rangeExpanded = true },
@@ -298,13 +304,9 @@ fun TradeHistoryScreen(
                                         trailingIcon = Icons.Default.ArrowDropDown,
                                         compact = true,
                                     )
-                                    DropdownMenu(
+                                    ScreenFilterMenu(
                                         expanded = rangeExpanded,
                                         onDismissRequest = { rangeExpanded = false },
-                                        modifier = Modifier
-                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                                            .background(SurfaceGlassLight)
-                                            .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
                                     ) {
                                         tradeRangeOptions().forEach { option ->
                                             DropdownMenuItem(
@@ -318,21 +320,19 @@ fun TradeHistoryScreen(
                                         }
                                     }
                                 }
-                                Box(modifier = Modifier.weight(1.12f)) {
+                                Box(modifier = Modifier.widthIn(min = 120.dp).weight(1f)) {
                                     DashboardPillButton(
-                                        label = compactAccountFilterLabel(selectedAccountLabel),
+                                        label = selectedAccountLabel,
                                         onClick = { accountExpanded = true },
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier.fillMaxWidth().semantics {
+                                            contentDescription = "계좌 선택: $selectedAccountLabel"
+                                        },
                                         trailingIcon = Icons.Default.ArrowDropDown,
                                         compact = true,
                                     )
-                                    DropdownMenu(
+                                    ScreenFilterMenu(
                                         expanded = accountExpanded,
                                         onDismissRequest = { accountExpanded = false },
-                                        modifier = Modifier
-                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                                            .background(SurfaceGlassLight)
-                                            .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
                                     ) {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.all_accounts), color = TextPrimary) },
@@ -354,7 +354,7 @@ fun TradeHistoryScreen(
                                         }
                                     }
                                 }
-                                Box(modifier = Modifier.weight(0.8f)) {
+                                Box(modifier = Modifier.widthIn(min = 100.dp).weight(1f)) {
                                     DashboardPillButton(
                                         label = when (tradeFilter) {
                                             "buy" -> stringResource(R.string.buy)
@@ -367,13 +367,9 @@ fun TradeHistoryScreen(
                                         tone = filterTone,
                                         compact = true,
                                     )
-                                    DropdownMenu(
+                                    ScreenFilterMenu(
                                         expanded = filterExpanded,
                                         onDismissRequest = { filterExpanded = false },
-                                        modifier = Modifier
-                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
-                                            .background(SurfaceGlassLight)
-                                            .border(1.dp, SurfaceBorder, androidx.compose.foundation.shape.RoundedCornerShape(24.dp)),
                                     ) {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.all), color = TextPrimary) },
@@ -407,69 +403,35 @@ fun TradeHistoryScreen(
                             }
                         }
 
+                        item {
+                            Text(
+                                text = if (isTradeListLoading) "거래 목록 · 불러오는 중" else
+                                    "거래 목록 · 확인된 ${filteredTrades.size}건 · $selectedAccountLabel · $selectedRangeLabel",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                            )
+                        }
                         if (isTradeListLoading) {
-                            item {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 24.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                ) {
-                                    CircularProgressIndicator(color = TextGold)
-                                    Text(
-                                        text = "거래 목록을 불러오는 중…",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = TextSecondary,
-                                        textAlign = TextAlign.Center,
-                                    )
-                                }
-                            }
-                        } else if (errorMessage != null && filteredTrades.isEmpty()) {
-                            item {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 24.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                ) {
-                                    Text(
-                                        text = errorMessage.orEmpty(),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.error,
-                                        textAlign = TextAlign.Center,
-                                    )
-                                    DashboardPillButton(
-                                        label = stringResource(R.string.retry),
-                                        onClick = { loadTradeHistory(range = selectedRange, forceRefresh = true) },
-                                        tone = AccentTone.Accent,
-                                    )
-                                }
-                            }
+                            item { DashboardLoadingState(message = "거래 목록을 불러오는 중입니다…") }
                         } else if (filteredTrades.isEmpty()) {
-                            item {
-                                Text(
-                                    text = stringResource(R.string.no_trades_found),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = TextSecondary,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 24.dp),
-                                    textAlign = TextAlign.Center,
-                                )
+                            if (!accountSelection.unavailable) {
+                                item {
+                                    DashboardEmptyState(
+                                        title = if (warningMessage != null) "거래 목록을 확인해 주세요" else "조건에 맞는 거래가 없습니다",
+                                        message = if (warningMessage != null) {
+                                            "조회가 완료되지 않아 거래가 없는지 확인할 수 없습니다. 다시 시도해 주세요."
+                                        } else {
+                                            "$selectedAccountLabel · $selectedRangeLabel 범위입니다. 기간이나 매수·매도 조건을 바꿔 보세요."
+                                        },
+                                        actionLabel = if (tradeFilter != "all") "매수·매도 모두 보기" else null,
+                                        onAction = if (tradeFilter != "all") ({
+                                            tradeFilter = "all"
+                                            persistSessionState()
+                                        }) else null,
+                                    )
+                                }
                             }
                         } else {
-                            if (data.accountErrors.isNotEmpty()) {
-                                item {
-                                    Text(
-                                        text = data.accountErrors.joinToString("\n"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
-                            }
                             items(filteredTrades) { trade ->
                                 TradeItemCard(
                                     trade = trade,
@@ -505,7 +467,33 @@ data class TradeHistorySessionState(
     val selectedRangeLabel: String = rangeLabel("this_month"),
     val currencyMode: CurrencyDisplayMode = CurrencyDisplayMode.KRW,
     val selectedAccountId: String? = null,
+    val errorMessage: String? = null,
 )
+
+/** Summary callbacks may populate the screen, but only completed responses survive navigation. */
+internal data class TradeHistorySnapshots(
+    val displayed: TradeHistoryResponse? = null,
+    val complete: TradeHistoryResponse? = null,
+) {
+    fun withSummary(summary: TradeHistoryResponse) = copy(displayed = summary)
+    fun withSuccess(response: TradeHistoryResponse) = TradeHistorySnapshots(response, response)
+    fun afterFailure() = copy(displayed = complete ?: displayed)
+}
+
+internal fun tradeHistoryWarningMessage(errorMessage: String?, accountErrors: List<String>): String? {
+    val messages = listOfNotNull(
+        errorMessage,
+        "일부 계좌의 조회가 완료되지 않았습니다. 합계와 거래 목록에 누락이 있을 수 있습니다."
+            .takeIf { accountErrors.isNotEmpty() },
+    )
+    return messages.takeIf { it.isNotEmpty() }?.joinToString("\n")
+}
+
+internal fun tradeHistorySessionMatches(
+    session: TradeHistorySessionState,
+    range: String,
+    accountId: String?,
+): Boolean = session.selectedRange == range && session.selectedAccountId == accountId
 
 @Composable
 fun TradeSummaryCard(
@@ -545,6 +533,7 @@ fun TradeSummaryCard(
                     append(selectedAccountLabel)
                     append(" · ")
                     append(selectedRangeLabel)
+                    append(" · 매도 실현 손익")
                     if (!data.profitAvailable) {
                         append(" · 토스 추정 불가(원가 이력 부족)")
                     } else {
@@ -592,152 +581,32 @@ fun TradeItemCard(
     onClick: () -> Unit,
 ) {
     val isBuy = trade.side == stringResource(R.string.buy)
-    val sideTone = if (isBuy) AccentTone.Positive else AccentTone.Negative
-    val sideColor = if (isBuy) Success else Error
-
+    val accountLabel = trade.accountLabel.takeIf(String::isNotBlank) ?: "계좌 이름 없음"
+    val realizedProfit = trade.realizedProfitKrw?.takeIf { !isBuy }
+    val profitText = realizedProfit?.let {
+        "${if (trade.realizedProfitEstimated) "손익(추정)" else "손익"} ${formatCurrencyAmount(it, currencyMode, usdRate, signed = true)}"
+    }
     PremiumListItem(onClick = onClick) {
-        Column(
-            modifier = Modifier.weight(1f),
-            horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                SurfaceBadge(
-                    label = trade.side,
-                    tone = sideTone,
-                    modifier = Modifier.offset(x = (-6).dp),
-                )
-                if (trade.accountLabel.isNotBlank()) {
-                    SurfaceBadge(
-                        label = compactAccountFilterLabel(trade.accountLabel),
-                        tone = AccentTone.Neutral,
-                    )
-                }
-                Text(
-                    text = trade.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = stringResource(
-                        R.string.share_quantity_price,
-                        formatWholeNumber(trade.quantity),
-                        formatTradeUnitPrice(trade),
-                    ),
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip,
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(
-            modifier = Modifier.width(116.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TradeCardAmountText(
-                text = formatTradeAmount(trade, currencyMode, usdRate),
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = trade.name,
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
                 color = TextPrimary,
-                primary = true,
             )
-            if (trade.realizedProfitKrw != null && !isBuy) {
-                TradeCardAmountText(
-                    text = buildString {
-                        append(formatCurrencyAmount(trade.realizedProfitKrw, currencyMode, usdRate, signed = true))
-                        if (trade.realizedProfitEstimated) append(" 추정")
-                    },
-                    color = if (trade.realizedProfitKrw >= 0) Success else Error,
-                )
-            } else {
-                Text(
-                    text = trade.market,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = sideColor,
-                    textAlign = TextAlign.End,
-                )
-            }
+            Text(
+                text = "${trade.side} · $accountLabel · ${trade.ticker} · ${stringResource(R.string.share_count, formatWholeNumber(trade.quantity))} · ${trade.date}",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+            )
+            AdaptiveListAmounts(
+                amount = formatTradeAmount(trade, currencyMode, usdRate),
+                secondary = profitText,
+                secondaryColor = realizedProfit?.let(::profitColorForAmount) ?: TextSecondary,
+            )
         }
     }
-}
-
-@Composable
-private fun TradeCardAmountText(
-    text: String,
-    color: Color,
-    primary: Boolean = false,
-    modifier: Modifier = Modifier,
-) {
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val textSpec = tradeCardAmountTextSpec(
-            value = text,
-            maxWidth = maxWidth,
-            primary = primary,
-        )
-        Text(
-            text = text,
-            modifier = Modifier.fillMaxWidth(),
-            style = textSpec.style,
-            color = color,
-            fontWeight = FontWeight.SemiBold,
-            textAlign = TextAlign.End,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Clip,
-        )
-    }
-}
-
-private data class TradeCardTextSpec(
-    val style: TextStyle,
-)
-
-@Composable
-private fun tradeCardAmountTextSpec(
-    value: String,
-    maxWidth: Dp,
-    primary: Boolean,
-): TradeCardTextSpec {
-    val density = LocalDensity.current
-    val styles = if (primary) {
-        listOf(
-            MaterialTheme.typography.titleMedium,
-            MaterialTheme.typography.titleSmall,
-            MaterialTheme.typography.bodyLarge,
-            MaterialTheme.typography.bodyMedium,
-            MaterialTheme.typography.bodySmall,
-            MaterialTheme.typography.labelLarge,
-            MaterialTheme.typography.labelMedium,
-        )
-    } else {
-        listOf(
-            MaterialTheme.typography.bodyMedium,
-            MaterialTheme.typography.bodySmall,
-            MaterialTheme.typography.labelLarge,
-            MaterialTheme.typography.labelMedium,
-        )
-    }
-    val availablePx = with(density) { maxWidth.toPx() }
-    val chosen = styles.firstOrNull { style ->
-        val fontPx = with(density) { style.fontSize.toPx() }
-        (value.length * fontPx * 0.52f) <= availablePx
-    } ?: styles.last()
-
-    return TradeCardTextSpec(style = chosen)
 }
 
 private fun profitColorForAmount(amount: Double) = when {
@@ -746,7 +615,7 @@ private fun profitColorForAmount(amount: Double) = when {
     else -> TextPrimary
 }
 
-private fun formatTradeAmount(trade: Trade, currencyMode: CurrencyDisplayMode, usdRate: Double): String {
+internal fun formatTradeAmount(trade: Trade, currencyMode: CurrencyDisplayMode, usdRate: Double): String {
     return when {
         currencyMode == CurrencyDisplayMode.USD && trade.currency == "USD" -> "$${formatUsdNumber(trade.amountNative)}"
         currencyMode == CurrencyDisplayMode.KRW && trade.currency == "USD" -> formatCurrencyAmount(trade.amountKrw, CurrencyDisplayMode.KRW, usdRate)

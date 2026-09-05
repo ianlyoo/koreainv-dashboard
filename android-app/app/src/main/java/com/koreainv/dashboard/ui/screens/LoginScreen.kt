@@ -1,13 +1,11 @@
 package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,16 +14,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,23 +35,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.koreainv.dashboard.R
-import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.Surface
-import com.koreainv.dashboard.ui.theme.SurfaceAccent
-import com.koreainv.dashboard.ui.theme.SurfaceBorder
-import com.koreainv.dashboard.ui.theme.SurfaceGlass
-import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
-import com.koreainv.dashboard.ui.theme.SurfacePrimary
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
@@ -61,12 +59,26 @@ fun PinUnlockScreen(
     onUnlock: (String) -> Unit,
 ) {
     var pin by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var submissionError by remember { mutableStateOf<String?>(null) }
+    val submissionGuard = remember { FormSubmissionGuard() }
+    val isBusy = isLoading || submitting
+    val latestExternalBusy by rememberUpdatedState(isLoading)
+    LaunchedEffect(submitting, isLoading, errorMessage) {
+        if (!isLoading) {
+            // Allow the parent callback to publish busy, including operations completing in one frame.
+            if (submitting) withFrameNanos { }
+            if (latestExternalBusy) return@LaunchedEffect
+            submissionGuard.finish()
+            submitting = false
+        }
+    }
 
     CredentialShell(
         title = stringResource(R.string.welcome_back),
         subtitle = stringResource(R.string.enter_pin_prompt),
-        isLoading = isLoading,
-        errorMessage = errorMessage,
+        isLoading = isBusy,
+        errorMessage = submissionError ?: errorMessage?.let { "잠금을 해제하지 못했습니다. PIN을 확인한 뒤 다시 시도하세요." },
     ) {
         Text(
             text = stringResource(R.string.enter_pin),
@@ -78,6 +90,7 @@ fun PinUnlockScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Row(
+            modifier = Modifier.semantics { stateDescription = "잠금번호 ${pin.length}자리 입력됨, 전체 4자리" },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -110,11 +123,32 @@ fun PinUnlockScreen(
                     NumpadButton(
                         text = key,
                         onClick = {
-                            when (key) {
-                                "DEL" -> if (pin.isNotEmpty()) pin = pin.dropLast(1)
-                                "OK" -> if (pin.length == 4) onUnlock(pin)
-                                else -> if (pin.length < 4) pin += key
+                            if (!isBusy && !submissionGuard.isPending) {
+                                submissionError = null
+                                when (key) {
+                                    "DEL" -> if (pin.isNotEmpty()) pin = pin.dropLast(1)
+                                    "OK" -> if (isAccountPinValid(pin) && submissionGuard.begin(isLoading)) {
+                                        submitting = true
+                                        try {
+                                            onUnlock(pin)
+                                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                            submissionGuard.finish()
+                                            submitting = false
+                                            throw cancelled
+                                        } catch (error: Exception) {
+                                            submissionGuard.finish()
+                                            submitting = false
+                                            submissionError = accountFormErrorMessage(error)
+                                        }
+                                    }
+                                    else -> if (pin.length < ACCOUNT_PIN_LENGTH) pin += key
+                                }
                             }
+                        },
+                        enabled = !isBusy && when (key) {
+                            "OK" -> isAccountPinValid(pin)
+                            "DEL" -> pin.isNotEmpty()
+                            else -> pin.length < ACCOUNT_PIN_LENGTH
                         },
                         isAction = key == "DEL" || key == "OK",
                     )
@@ -131,156 +165,83 @@ fun CredentialShell(
     subtitle: String,
     isLoading: Boolean,
     errorMessage: String?,
+    loadingMessage: String = "잠금을 해제하고 있습니다.",
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Background),
-    ) {
-        DecorativeBackdrop()
+    ScreenBackground {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .safeDrawingPadding()
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+                .padding(horizontal = 20.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(32.dp))
-                    .background(Surface.copy(alpha = 0.94f))
-                    .border(1.dp, SurfaceBorder.copy(alpha = 0.88f), RoundedCornerShape(32.dp))
-                    .padding(28.dp),
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = stringResource(R.string.korea_inv_dashboard),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = TextGold,
-                        letterSpacing = 1.4.sp,
+            Column(modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_launcher_foreground),
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp),
                     )
-                    Spacer(modifier = Modifier.height(18.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(Surface.copy(alpha = 0.85f))
-                            .border(1.dp, SurfaceBorder, RoundedCornerShape(22.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                            contentDescription = null,
-                            modifier = Modifier.size(52.dp),
-                            contentScale = ContentScale.Fit,
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(20.dp))
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.displayMedium,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary,
-                    )
-                    Spacer(modifier = Modifier.height(22.dp))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        content = content,
-                    )
+                    Text(stringResource(R.string.korea_inv_dashboard), style = MaterialTheme.typography.labelLarge, color = TextSecondary)
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(title, style = MaterialTheme.typography.headlineMedium, color = TextPrimary,
+                    modifier = Modifier.semantics { heading() })
+                Spacer(Modifier.height(8.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                Spacer(Modifier.height(24.dp))
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, content = content)
+                if (errorMessage != null) {
+                    Spacer(Modifier.height(12.dp))
+                    AccountFormErrorText(errorMessage)
                 }
             }
         }
-
-        if (errorMessage != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 32.dp, vertical = 120.dp),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                Text(
-                    text = errorMessage,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-
         if (isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(color = TextGold)
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.Surface(shape = RoundedCornerShape(20.dp), color = Surface,
+                    modifier = Modifier.padding(24.dp).widthIn(max = 400.dp)) {
+                    DashboardLoadingState(loadingMessage)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DecorativeBackdrop() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Background,
-                        Surface,
-                        Background,
-                    ),
-                ),
-            ),
-    ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(104.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            SurfaceGlassLight.copy(alpha = 0.42f),
-                            Color.Transparent,
-                        ),
-                    ),
-                ),
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(132.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            SurfaceGlass.copy(alpha = 0.3f),
-                        ),
-                    ),
-                ),
-        )
+internal fun AccountFormErrorText(message: String) {
+    Text(
+        message,
+        color = MaterialTheme.colorScheme.error,
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+    )
+}
+
+@Composable
+internal fun AccountRemovalUndo(isEnabled: Boolean, onUndo: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text("계좌를 목록에서 제거했습니다. 저장하기 전까지 되돌릴 수 있습니다.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+        TextButton(onClick = onUndo, enabled = isEnabled) { Text("계좌 제거 되돌리기") }
     }
 }
 
 @Composable
-fun NumpadButton(text: String, onClick: () -> Unit, isAction: Boolean = false) {
+internal fun AccountDiscardDialog(onDismiss: () -> Unit, onDiscard: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("변경사항을 버릴까요?") },
+        text = { Text("저장하지 않은 계좌 정보와 입력 내용이 사라집니다.") },
+        confirmButton = { TextButton(onClick = onDiscard) { Text("버리고 나가기") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("계속 수정") } },
+    )
+}
+
+@Composable
+fun NumpadButton(text: String, onClick: () -> Unit, isAction: Boolean = false, enabled: Boolean = true) {
     val buttonText = when (text) {
         "DEL" -> stringResource(R.string.delete)
         "OK" -> stringResource(R.string.ok)
@@ -289,6 +250,7 @@ fun NumpadButton(text: String, onClick: () -> Unit, isAction: Boolean = false) {
 
     TextButton(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier.size(64.dp),
         shape = CircleShape,
         colors = ButtonDefaults.textButtonColors(

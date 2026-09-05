@@ -8,6 +8,7 @@ import java.time.ZoneOffset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class TradeHistoryScreenLogicTest {
@@ -35,6 +36,64 @@ class TradeHistoryScreenLogicTest {
     @Test
     fun isTradeHistorySnapshotStaleReturnsTrueWhenTimestampMissing() {
         assertTrue(isTradeHistorySnapshotStale(tradeHistoryResponse("")))
+    }
+
+    @Test
+    fun partialAccountFailure_alwaysProducesWarningWithoutRawBrokerPayload() {
+        val warning = tradeHistoryWarningMessage(null, listOf("internal broker payload"))
+
+        assertTrue(warning.orEmpty().contains("누락"))
+        assertFalse(warning.orEmpty().contains("internal broker payload"))
+        assertNull(tradeHistoryWarningMessage(null, emptyList()))
+    }
+
+    @Test
+    fun cachedRefreshError_remainsVisibleAlongsideAccountCompletenessWarning() {
+        val warning = tradeHistoryWarningMessage("다시 시도해 주세요", listOf("unavailable"))
+
+        assertTrue(warning.orEmpty().contains("다시 시도해 주세요"))
+        assertTrue(warning.orEmpty().contains("합계와 거래 목록"))
+    }
+
+    @Test
+    fun failedListAfterSummary_doesNotPersistPreviewAsCompletedHistory() {
+        val summary = tradeHistoryResponse("2026-04-18T12:00:00+09:00")
+        val snapshots = TradeHistorySnapshots().withSummary(summary).afterFailure()
+
+        assertEquals(summary, snapshots.displayed)
+        assertNull(snapshots.complete)
+    }
+
+    @Test
+    fun failedRefresh_preservesPreviouslyCompletedEmptyHistory() {
+        val empty = tradeHistoryResponse("2026-04-18T12:00:00+09:00")
+        val newerSummary = tradeHistoryResponse("2026-04-18T12:01:00+09:00")
+        val snapshots = TradeHistorySnapshots().withSuccess(empty).withSummary(newerSummary).afterFailure()
+
+        assertEquals(empty, snapshots.displayed)
+        assertEquals(empty, snapshots.complete)
+    }
+
+    @Test
+    fun restoredFilters_cannotReuseSnapshotFromAnotherAccountOrPeriod() {
+        val session = TradeHistorySessionState(
+            tradeData = tradeHistoryResponse("2026-04-18T12:00:00+09:00"),
+            selectedRange = "this_month",
+            selectedAccountId = "account-a",
+        )
+
+        assertTrue(tradeHistorySessionMatches(session, "this_month", "account-a"))
+        assertFalse(tradeHistorySessionMatches(session, "last_month", "account-a"))
+        assertFalse(tradeHistorySessionMatches(session, "this_month", "account-b"))
+        assertFalse(tradeHistorySessionMatches(session, "this_month", null))
+    }
+
+    @Test
+    fun missingAccount_isUnavailableWithoutBecomingAllAccounts() {
+        val selection = resolveAccountSelection("account-a", listOf(HoldingAccountFilter("account-b", "Other")))
+
+        assertTrue(selection.unavailable)
+        assertEquals("account-a", selection.accountId)
     }
 
     private fun tradeHistoryResponse(lastSynced: String): TradeHistoryResponse = TradeHistoryResponse(

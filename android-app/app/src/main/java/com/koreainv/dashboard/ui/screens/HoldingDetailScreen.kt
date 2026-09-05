@@ -2,23 +2,21 @@ package com.koreainv.dashboard.ui.screens
 
 import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,12 +27,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.DashboardResponse
 import com.koreainv.dashboard.network.Holding
-import com.koreainv.dashboard.network.KisRepository
+import com.koreainv.dashboard.network.DashboardDataSource
 import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_INTERVAL_MILLIS
 import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_WINDOW_MILLIS
 import com.koreainv.dashboard.ui.theme.Background
@@ -43,8 +40,10 @@ import com.koreainv.dashboard.ui.theme.Success
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.abs
@@ -52,43 +51,44 @@ import kotlin.math.abs
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HoldingDetailScreen(
-    repository: KisRepository,
+    repository: DashboardDataSource,
     symbol: String,
     accountId: String?,
     onBackClick: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var holding by remember { mutableStateOf<Holding?>(null) }
-    var usdRate by remember { mutableStateOf(1350.0) }
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var currencyMode by remember { mutableStateOf(CurrencyDisplayMode.KRW) }
+    var holding by remember(repository, symbol, accountId) { mutableStateOf<Holding?>(null) }
+    var usdRate by remember(repository, symbol, accountId) { mutableStateOf(1350.0) }
+    var lastSynced by remember(repository, symbol, accountId) { mutableStateOf<String?>(null) }
+    var isLoading by remember(repository, symbol, accountId) { mutableStateOf(true) }
+    var errorMessage by remember(repository, symbol, accountId) { mutableStateOf<String?>(null) }
+    val currencyPreference = rememberCurrencyPreference()
+    val currencyMode = currencyPreference.mode
+
+    val requestOwner = remember(repository, symbol, accountId) { ScreenRequestOwner() }
+    DisposableEffect(requestOwner) {
+        onDispose { requestOwner.cancel() }
+    }
 
     fun applyDashboard(dashboard: DashboardResponse) {
         usdRate = dashboard.summary.usdExchangeRate
+        lastSynced = dashboard.summary.lastSynced
         holding = findHolding(dashboard.holdings, symbol, accountId)
-        if (holding == null) {
-            errorMessage = "종목 정보를 찾을 수 없습니다. [$symbol]"
-        }
+        errorMessage = if (holding == null) "종목 정보를 찾을 수 없습니다. [$symbol]" else null
     }
 
     fun loadHolding(forceRefresh: Boolean = false) {
         isLoading = true
-        errorMessage = null
-        scope.launch {
-            runCatching { repository.fetchDashboard(forceRefresh = forceRefresh) }
-                .onSuccess { dashboard ->
-                    applyDashboard(dashboard)
-                }
-                .onFailure {
-                    val detail = it.message?.takeIf(String::isNotBlank) ?: it::class.simpleName ?: "unknown"
-                    errorMessage = "종목 정보를 불러오지 못했습니다. [$detail]"
-                }
-            isLoading = false
-        }
+        requestOwner.launch(
+            scope = scope,
+            load = { repository.fetchDashboard(forceRefresh = forceRefresh) },
+            onSuccess = { applyDashboard(it) },
+            onFailure = { errorMessage = dashboardErrorMessage(it) },
+            onFinished = { isLoading = false },
+        )
     }
 
-    LaunchedEffect(symbol, accountId) {
+    LaunchedEffect(repository, symbol, accountId) {
         val cached = repository.peekDashboard()
         if (cached != null) {
             applyDashboard(cached)
@@ -101,16 +101,34 @@ fun HoldingDetailScreen(
         }
     }
 
-    LaunchedEffect(symbol, accountId, holding?.quoteSession) {
+    LaunchedEffect(repository, symbol, accountId, holding?.quoteSession) {
         val current = holding ?: return@LaunchedEffect
         if (current.market != "USA" || current.quoteSession != "day_market") return@LaunchedEffect
 
         val startedAt = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - startedAt < US_DAY_MARKET_REFRESH_WINDOW_MILLIS) {
-            val refreshed = runCatching { repository.refreshDashboardQuotes() }.getOrNull() ?: break
-            applyDashboard(refreshed)
-            val updated = holding ?: break
-            if (updated.quoteSession != "day_market") break
+            if (!isLoading) {
+                val version = requestOwner.version
+                val refreshed = try {
+                    repository.refreshDashboardQuotes()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    if (requestOwner.accepts(version)) errorMessage = dashboardErrorMessage(error)
+                    break
+                }
+                currentCoroutineContext().ensureActive()
+                if (refreshed == null) break
+                if (requestOwner.accepts(version)) {
+                    // Quote success must not erase a failed full-dashboard refresh notice.
+                    val previousError = errorMessage
+                    applyDashboard(refreshed)
+                    if (holding != null) errorMessage = previousError
+                    val updated = holding ?: break
+                    if (updated.quoteSession != "day_market") break
+                }
+            }
             delay(US_DAY_MARKET_REFRESH_INTERVAL_MILLIS)
         }
     }
@@ -119,7 +137,7 @@ fun HoldingDetailScreen(
         topBar = {
             DashboardTopBar(
                 title = stringResource(R.string.holding_detail),
-                lastSynced = repository.peekDashboard()?.summary?.lastSynced,
+                lastSynced = lastSynced,
                 navigationButton = {
                     HeaderIconButton(
                         imageVector = Icons.Default.ArrowBack,
@@ -130,7 +148,7 @@ fun HoldingDetailScreen(
                 actions = {
                     CompactCurrencyToggle(
                         mode = currencyMode,
-                        onModeChange = { currencyMode = it },
+                        onModeChange = currencyPreference.onModeChange,
                     )
                     if (isLoading && holding != null) {
                         HeaderLoadingIndicator()
@@ -149,29 +167,20 @@ fun HoldingDetailScreen(
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
                 isLoading && holding == null -> {
-                    CircularProgressIndicator(
+                    DashboardLoadingState(
+                        message = "종목 정보를 불러오는 중입니다…",
                         modifier = Modifier.align(Alignment.Center),
-                        color = TextGold,
                     )
                 }
 
                 errorMessage != null && holding == null -> {
                     Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                        modifier = Modifier.align(Alignment.Center).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text(
-                            text = errorMessage.orEmpty(),
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                        )
-                        DashboardPillButton(
-                            label = stringResource(R.string.retry),
-                            onClick = { loadHolding(forceRefresh = true) },
-                            tone = AccentTone.Accent,
+                        DashboardErrorNotice(
+                            message = errorMessage.orEmpty(),
+                            onRetry = { loadHolding(forceRefresh = true) },
                         )
                     }
                 }
@@ -179,6 +188,7 @@ fun HoldingDetailScreen(
                 holding != null -> {
                     val data = holding!!
                     val profitColor = if (data.profitLossKrw >= 0) Success else Error
+                    val unitPriceCurrency = if (data.currency == "USD") currencyMode.name else data.currency
 
                     Column(
                         modifier = Modifier
@@ -187,20 +197,29 @@ fun HoldingDetailScreen(
                             .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
+                        if (errorMessage != null) {
+                            DashboardErrorNotice(
+                                message = errorMessage.orEmpty(),
+                                onRetry = { loadHolding(forceRefresh = true) },
+                                usingCachedData = true,
+                            )
+                        }
                         HeroTopSection {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 SurfaceBadge(label = data.market, tone = AccentTone.Info)
-                                data.accountLabel?.takeIf { it.isNotBlank() }?.let { label ->
-                                    SurfaceBadge(label = label, tone = AccentTone.Neutral)
-                                }
                                 if (data.market == "USA" && data.quoteSession == "day_market" && data.quoteStale) {
                                     SurfaceBadge(label = "종가", tone = AccentTone.Neutral)
                                 }
                             }
+                            Text(
+                                text = data.accountLabel?.takeIf(String::isNotBlank) ?: "계좌 이름 없음",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                            )
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(
                                     text = data.name,
-                                    style = MaterialTheme.typography.displaySmall,
+                                    style = MaterialTheme.typography.headlineSmall,
                                     color = TextPrimary,
                                     fontWeight = FontWeight.Bold,
                                 )
@@ -210,24 +229,16 @@ fun HoldingDetailScreen(
                                     color = TextSecondary,
                                 )
                             }
-                            Text(
-                                text = formatCurrencyAmount(data.totalValueKrw, currencyMode, usdRate),
-                                style = MaterialTheme.typography.displayLarge,
-                                color = TextGold,
+                            FullMonetaryValue(
+                                label = "${stringResource(R.string.total_value)} (${currencyMode.name})",
+                                value = formatCurrencyAmount(data.totalValueKrw, currencyMode, usdRate),
+                                valueColor = TextGold,
                             )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                MetricPill(
-                                    label = stringResource(R.string.quantity),
-                                    value = formatWholeNumber(data.quantity),
-                                    modifier = Modifier.weight(1f),
-                                )
-                                MetricPill(
-                                    label = stringResource(R.string.profit_loss_percentage),
-                                    value = formatSignedPercent(data.profitLossRate),
-                                    modifier = Modifier.weight(1f),
+                            HeroMetricGroup {
+                                ResponsiveDetailRow(stringResource(R.string.quantity), formatWholeNumber(data.quantity))
+                                ResponsiveDetailRow(
+                                    stringResource(R.string.profit_loss_percentage),
+                                    formatSignedPercent(data.profitLossRate),
                                     valueColor = profitColor,
                                 )
                             }
@@ -235,21 +246,21 @@ fun HoldingDetailScreen(
 
                         PremiumGlassCard {
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                HoldingMetricRow(stringResource(R.string.current_price), formatHoldingUnitPrice(data.currentPrice, data.currency, currencyMode, usdRate))
-                                HoldingMetricRow(stringResource(R.string.average_cost), formatHoldingUnitPrice(data.averageCost, data.currency, currencyMode, usdRate))
-                                HoldingMetricRow(stringResource(R.string.total_cost), formatCurrencyAmount(data.totalCostKrw, currencyMode, usdRate))
-                                HoldingMetricRow(stringResource(R.string.total_value), formatCurrencyAmount(data.totalValueKrw, currencyMode, usdRate))
+                                ResponsiveDetailRow("${stringResource(R.string.current_price)} ($unitPriceCurrency)", formatHoldingUnitPrice(data.currentPrice, data.currency, currencyMode, usdRate))
+                                ResponsiveDetailRow("${stringResource(R.string.average_cost)} ($unitPriceCurrency)", formatHoldingUnitPrice(data.averageCost, data.currency, currencyMode, usdRate))
+                                ResponsiveDetailRow(stringResource(R.string.total_cost), formatCurrencyAmount(data.totalCostKrw, currencyMode, usdRate))
+                                ResponsiveDetailRow(stringResource(R.string.total_value), formatCurrencyAmount(data.totalValueKrw, currencyMode, usdRate))
                             }
                         }
 
                         PremiumGlassCard {
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                HoldingMetricRow(
+                                ResponsiveDetailRow(
                                     stringResource(R.string.profit_loss_amount),
                                     formatCurrencyAmount(data.profitLossKrw, currencyMode, usdRate, signed = true),
                                     valueColor = profitColor,
                                 )
-                                HoldingMetricRow(
+                                ResponsiveDetailRow(
                                     stringResource(R.string.profit_loss_percentage),
                                     formatSignedPercent(data.profitLossRate),
                                     valueColor = profitColor,
@@ -302,25 +313,4 @@ private fun formatHoldingUnitPrice(
         else -> "₩"
     }
     return "$prefix${formatter.format(abs(price))}"
-}
-
-@Composable
-private fun HoldingMetricRow(label: String, value: String, valueColor: androidx.compose.ui.graphics.Color = TextPrimary) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextSecondary,
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleSmall,
-            color = valueColor,
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
 }

@@ -37,7 +37,7 @@ class KisRepository(
     private val accounts: List<AccountCredential>,
     private val settingsManager: SettingsManager,
     private val primaryIndex: Int = 0,
-) {
+) : DashboardDataSource {
     constructor(credentials: AppCredentials, settingsManager: SettingsManager) :
         this(listOf(credentials.toAccountCredential()), settingsManager, 0)
 
@@ -98,8 +98,8 @@ class KisRepository(
 
     private val usQuoteService = primaryKisAccount?.let { KisUsQuoteService(it.toAppCredentials(), client) }
 
-    fun peekDashboard(): DashboardResponse? = cachedDashboard?.second
-    fun peekTradeHistory(range: String = "this_month", accountId: String? = null): TradeHistoryResponse? {
+    override fun peekDashboard(): DashboardResponse? = cachedDashboard?.second
+    override fun peekTradeHistory(range: String, accountId: String?): TradeHistoryResponse? {
         val cacheKey = tradeHistoryCacheKey(range, accountId)
         val cached = cachedTradeHistory[cacheKey] ?: return null
         return cached.second.takeIf { System.currentTimeMillis() - cached.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }
@@ -108,7 +108,7 @@ class KisRepository(
     private fun tradeHistoryCacheKey(range: String, accountId: String?): String =
         "${range.lowercase(Locale.US)}:${accountId?.takeIf(String::isNotBlank) ?: "all"}"
 
-    suspend fun fetchDashboard(forceRefresh: Boolean = false): DashboardResponse = withContext(Dispatchers.IO) {
+    override suspend fun fetchDashboard(forceRefresh: Boolean): DashboardResponse = withContext(Dispatchers.IO) {
         dashboardLoadMutex.withLock {
             if (!forceRefresh) {
                 val cachedBase = dashboardCacheMutex.withLock {
@@ -139,7 +139,7 @@ class KisRepository(
         }
     }
 
-    suspend fun refreshDashboardQuotes(): DashboardResponse? = withContext(Dispatchers.IO) {
+    override suspend fun refreshDashboardQuotes(): DashboardResponse? = withContext(Dispatchers.IO) {
         quoteRefreshMutex.withLock {
             val baseDashboard = dashboardCacheMutex.withLock { cachedBaseDashboard?.second } ?: return@withLock null
             val refreshed = refreshDashboardFromBase(baseDashboard, forceRetry = false)
@@ -553,11 +553,11 @@ class KisRepository(
         ).joinToString("|")
     }
 
-    suspend fun fetchTradeHistory(
-        range: String = "this_month",
-        accountId: String? = null,
-        forceRefresh: Boolean = false,
-        onSummaryReady: (suspend (TradeHistoryResponse) -> Unit)? = null,
+    override suspend fun fetchTradeHistory(
+        range: String,
+        accountId: String?,
+        forceRefresh: Boolean,
+        onSummaryReady: (suspend (TradeHistoryResponse) -> Unit)?,
     ): TradeHistoryResponse = withContext(Dispatchers.IO) {
         tradeHistoryLoadMutex.withLock {
             val normalizedRange = range.lowercase(Locale.US)

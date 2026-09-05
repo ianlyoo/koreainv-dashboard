@@ -1,11 +1,8 @@
 package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,7 +13,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +37,8 @@ fun TradeDetailScreen(
     lastSynced: String?,
     onBackClick: () -> Unit,
 ) {
+    val currencyPreference = rememberCurrencyPreference()
+    val currencyMode = currencyPreference.mode
     val isBuy = trade.side == stringResource(R.string.buy)
     val sideTone = if (isBuy) AccentTone.Positive else AccentTone.Negative
     val sideColor = if (isBuy) Success else Error
@@ -51,6 +49,9 @@ fun TradeDetailScreen(
             DashboardTopBar(
                 title = stringResource(R.string.trade_detail),
                 lastSynced = lastSynced,
+                actions = {
+                    CompactCurrencyToggle(mode = currencyMode, onModeChange = currencyPreference.onModeChange)
+                },
                 navigationButton = {
                     HeaderIconButton(
                         imageVector = Icons.Default.ArrowBack,
@@ -72,10 +73,15 @@ fun TradeDetailScreen(
             ) {
                 HeroTopSection {
                     SurfaceBadge(label = trade.side, tone = sideTone)
+                    Text(
+                        text = trade.accountLabel.takeIf(String::isNotBlank) ?: "계좌 이름 없음",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                    )
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             text = trade.name,
-                            style = MaterialTheme.typography.displaySmall,
+                            style = MaterialTheme.typography.headlineSmall,
                             color = TextPrimary,
                             fontWeight = FontWeight.Bold,
                         )
@@ -85,30 +91,25 @@ fun TradeDetailScreen(
                             color = TextSecondary,
                         )
                     }
-                    Text(
-                        text = formatTradeAmountForDetail(trade, usdRate),
-                        style = MaterialTheme.typography.displayLarge,
-                        color = TextGold,
+                    FullMonetaryValue(
+                        label = "${stringResource(R.string.trade_amount)} (${currencyMode.name})",
+                        value = formatTradeAmount(trade, currencyMode, usdRate),
+                        valueColor = TextGold,
                     )
                     HeroMetricGroup {
-                        HeroMetricRow(
-                            primaryLabel = stringResource(R.string.quantity),
-                            primaryValue = formatWholeNumber(trade.quantity),
-                            secondaryLabel = stringResource(R.string.trade_currency),
-                            secondaryValue = trade.currency,
-                            secondaryValueColor = sideColor,
-                        )
+                        ResponsiveDetailRow("거래 수량", formatWholeNumber(trade.quantity))
+                        ResponsiveDetailRow(stringResource(R.string.trade_currency), trade.currency)
                     }
                 }
 
                 PremiumGlassCard {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        TradeMetricRow(stringResource(R.string.trade_type), trade.side, valueColor = sideColor)
-                        TradeMetricRow(stringResource(R.string.trade_date), trade.date)
-                        TradeMetricRow(stringResource(R.string.ticker), trade.ticker)
-                        TradeMetricRow(stringResource(R.string.trade_currency), trade.currency)
-                        TradeMetricRow(stringResource(R.string.trade_unit_price), formatTradeUnitPriceForDetail(trade, usdRate))
-                        TradeMetricRow(stringResource(R.string.trade_amount), formatTradeAmountForDetail(trade, usdRate))
+                        ResponsiveDetailRow(stringResource(R.string.trade_type), trade.side, valueColor = sideColor)
+                        ResponsiveDetailRow(stringResource(R.string.trade_date), trade.date)
+                        ResponsiveDetailRow(stringResource(R.string.ticker), trade.ticker)
+                        ResponsiveDetailRow(stringResource(R.string.trade_currency), trade.currency)
+                        ResponsiveDetailRow("${stringResource(R.string.trade_unit_price)} (${trade.currency})", formatTradeUnitPriceForDetail(trade, usdRate))
+                        ResponsiveDetailRow("거래 통화 금액 (${trade.currency})", formatTradeAmountForDetail(trade, usdRate))
                     }
                 }
 
@@ -116,14 +117,14 @@ fun TradeDetailScreen(
                     PremiumGlassCard {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             trade.realizedProfitKrw?.let {
-                                TradeMetricRow(
+                                ResponsiveDetailRow(
                                     if (trade.realizedProfitEstimated) "실현 손익(추정)" else stringResource(R.string.realized_profit),
-                                    formatCurrencyAmount(it, CurrencyDisplayMode.KRW, usdRate, signed = true),
+                                    formatCurrencyAmount(it, currencyMode, usdRate, signed = true),
                                     valueColor = if (it >= 0) Success else Error,
                                 )
                             }
                             trade.returnRate?.let {
-                                TradeMetricRow(
+                                ResponsiveDetailRow(
                                     stringResource(R.string.return_label),
                                     formatSignedPercent(it),
                                     valueColor = if (it >= 0) Success else Error,
@@ -134,31 +135,6 @@ fun TradeDetailScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun TradeMetricRow(
-    label: String,
-    value: String,
-    valueColor: androidx.compose.ui.graphics.Color = TextPrimary,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextSecondary,
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleSmall,
-            color = valueColor,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 

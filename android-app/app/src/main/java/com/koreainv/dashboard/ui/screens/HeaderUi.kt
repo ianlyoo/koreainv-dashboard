@@ -3,6 +3,8 @@ package com.koreainv.dashboard.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +18,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,6 +35,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,12 +49,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.ui.theme.Background
@@ -92,7 +105,13 @@ enum class AccentTone {
 data class DashboardTabItem(
     val route: String,
     val label: String,
+    val icon: ImageVector? = null,
 )
+
+internal val LocalDashboardBottomBarHeight = compositionLocalOf<MutableState<Dp>?> { null }
+
+@Composable
+fun dashboardBottomContentPadding(): Dp = (LocalDashboardBottomBarHeight.current?.value ?: 116.dp) + 16.dp
 
 @Composable
 fun ScreenBackground(
@@ -280,13 +299,21 @@ fun HeroMetricRow(
     syncValueSizing: Boolean = false,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val sharedSpec = if (syncValueSizing && secondaryLabel != null && secondaryValue != null) {
+        val stackMetrics = maxWidth < 300.dp || LocalDensity.current.fontScale > 1.2f
+        val sharedSpec = if (!stackMetrics && syncValueSizing && secondaryLabel != null && secondaryValue != null) {
             heroMetricSharedTextSpec(primaryValue, secondaryValue, maxWidth)
         } else {
             null
         }
 
-        Row(
+        if (stackMetrics) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                HeroMetricCell(primaryLabel, primaryValue, primaryValueColor)
+                if (secondaryLabel != null && secondaryValue != null) {
+                    HeroMetricCell(secondaryLabel, secondaryValue, secondaryValueColor)
+                }
+            }
+        } else Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.Top,
@@ -323,26 +350,35 @@ fun DashboardTopBar(
     lastSynced: String?,
     modifier: Modifier = Modifier,
     navigationButton: @Composable (() -> Unit)? = null,
-    actions: @Composable RowScope.() -> Unit = {},
+    actions: (@Composable RowScope.() -> Unit)? = null,
 ) {
-    Row(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
-        navigationButton?.invoke()
-        InlineTitleWithSync(
-            title = title,
-            lastSynced = lastSynced,
-            modifier = Modifier.weight(1f),
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = actions,
-        )
+        if (actions != null && (maxWidth < 340.dp || LocalDensity.current.fontScale > 1.2f)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    navigationButton?.invoke()
+                    InlineTitleWithSync(title, lastSynced, Modifier.weight(1f))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = actions,
+                )
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                navigationButton?.invoke()
+                InlineTitleWithSync(title, lastSynced, Modifier.weight(1f))
+                if (actions != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+                }
+            }
+        }
     }
 }
 
@@ -352,11 +388,12 @@ fun HeaderIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     tone: AccentTone = AccentTone.Neutral,
+    enabled: Boolean = true,
 ) {
     val palette = tonePalette(tone)
     Box(
         modifier = Modifier
-            .size(46.dp)
+            .size(48.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.verticalGradient(
@@ -367,13 +404,13 @@ fun HeaderIconButton(
                 ),
             )
             .border(1.dp, palette.border, RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = imageVector,
             contentDescription = contentDescription,
-            tint = palette.content,
+            tint = if (enabled) palette.content else TextSecondary,
         )
     }
 }
@@ -382,7 +419,7 @@ fun HeaderIconButton(
 fun HeaderLoadingIndicator() {
     Box(
         modifier = Modifier
-            .size(46.dp)
+            .size(48.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.verticalGradient(
@@ -409,9 +446,7 @@ fun SectionTitle(
         text = title,
         style = MaterialTheme.typography.titleLarge,
         color = TextPrimary,
-        modifier = modifier,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+        modifier = modifier.semantics { heading() },
     )
 }
 
@@ -427,7 +462,9 @@ fun SectionHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        titleContent?.invoke() ?: SectionTitle(title = title)
+        Box(Modifier.weight(1f).padding(end = 12.dp)) {
+            titleContent?.invoke() ?: SectionTitle(title = title)
+        }
         action?.invoke()
     }
 }
@@ -476,16 +513,13 @@ fun InlineTitleWithSync(
             text = title,
             style = MaterialTheme.typography.titleMedium,
             color = TextPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.semantics { heading() },
         )
         lastSynced?.takeIf { it.isNotBlank() }?.let {
             Text(
                 text = "동기화 ${formatRelativeSyncText(it)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -498,6 +532,7 @@ fun CompactCurrencyToggle(
 ) {
     Row(
         modifier = Modifier
+            .selectableGroup()
             .clip(RoundedCornerShape(22.dp))
             .background(
                 Brush.horizontalGradient(
@@ -513,11 +548,13 @@ fun CompactCurrencyToggle(
     ) {
         CurrencyPill(
             label = "$",
+            description = "미국 달러로 표시",
             selected = mode == CurrencyDisplayMode.USD,
             onClick = { onModeChange(CurrencyDisplayMode.USD) },
         )
         CurrencyPill(
             label = "원",
+            description = "원화로 표시",
             selected = mode == CurrencyDisplayMode.KRW,
             onClick = { onModeChange(CurrencyDisplayMode.KRW) },
         )
@@ -546,7 +583,8 @@ fun DashboardPillButton(
                 ),
             )
             .border(1.dp, palette.border, RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 48.dp)
             .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (compact) Arrangement.SpaceBetween else Arrangement.spacedBy(6.dp),
@@ -626,24 +664,29 @@ fun DashboardBottomTabBar(
     currentRoute: String?,
     onTabSelected: (DashboardTabItem) -> Unit,
 ) {
+    val density = LocalDensity.current
+    val measuredHeight = LocalDashboardBottomBarHeight.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .onSizeChanged { size -> measuredHeight?.value = with(density) { size.height.toDp() } }
+            .background(Background)
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .selectableGroup()
                 .clip(RoundedCornerShape(30.dp))
-                .background(SurfaceGlassLight.copy(alpha = 0.74f))
+                .background(SurfaceGlassLight)
                 .border(1.dp, SurfaceBorder.copy(alpha = 0.74f), RoundedCornerShape(30.dp))
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items.forEach { item ->
                 val selected = currentRoute == item.route
-                Box(
+                Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(22.dp))
@@ -653,17 +696,21 @@ fun DashboardBottomTabBar(
                             color = if (selected) SurfaceBorderPrimary else SurfaceBorder.copy(alpha = 0.55f),
                             shape = RoundedCornerShape(22.dp),
                         )
-                        .clickable { onTabSelected(item) }
-                        .padding(horizontal = 12.dp, vertical = 14.dp),
-                    contentAlignment = Alignment.Center,
+                        .selectable(selected = selected, role = Role.Tab) { onTabSelected(item) }
+                        .heightIn(min = 56.dp)
+                        .padding(horizontal = 4.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
                 ) {
+                    item.icon?.let { icon ->
+                        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (selected) TextPrimary else TextSecondary)
+                    }
                     Text(
                         text = item.label,
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelMedium,
                         color = if (selected) TextGold else TextPrimary.copy(alpha = 0.86f),
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -763,25 +810,24 @@ private fun HeroMetricCell(
 @Composable
 private fun heroMetricValueTextSpec(value: String, maxWidth: androidx.compose.ui.unit.Dp): MetricTextSpec {
     val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
     val styles = listOf(
         MaterialTheme.typography.titleLarge,
         MaterialTheme.typography.titleMedium,
         MaterialTheme.typography.titleSmall,
         MaterialTheme.typography.bodyLarge,
         MaterialTheme.typography.bodyMedium,
-        MaterialTheme.typography.bodySmall,
     )
     val availablePx = with(density) { maxWidth.toPx() }
     val chosen = styles.firstOrNull { style ->
-        val fontPx = with(density) { style.fontSize.toPx() }
-        (value.length * fontPx * 0.52f) <= availablePx
+        measurer.measure(value, style.copy(fontWeight = FontWeight.SemiBold), softWrap = false).size.width <= availablePx
     }
     return if (chosen != null) {
         MetricTextSpec(style = chosen, maxLines = 1, softWrap = false)
     } else {
         MetricTextSpec(
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 2,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = Int.MAX_VALUE,
             softWrap = true,
         )
     }
@@ -820,6 +866,7 @@ private data class MetricTextSpec(
 @Composable
 private fun heroHeadlineTextSpec(value: String, maxWidth: androidx.compose.ui.unit.Dp): MetricTextSpec {
     val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
     val styles = listOf(
         MaterialTheme.typography.displayLarge,
         MaterialTheme.typography.displayMedium,
@@ -829,28 +876,30 @@ private fun heroHeadlineTextSpec(value: String, maxWidth: androidx.compose.ui.un
     )
     val availablePx = with(density) { maxWidth.toPx() }
     val chosen = styles.firstOrNull { style ->
-        val fontPx = with(density) { style.fontSize.toPx() }
-        (value.length * fontPx * 0.6f) <= availablePx
+        measurer.measure(value, style.copy(fontWeight = FontWeight.Bold), softWrap = false).size.width <= availablePx
     }
     return if (chosen != null) {
         MetricTextSpec(style = chosen, maxLines = 1, softWrap = false)
     } else {
-        MetricTextSpec(style = MaterialTheme.typography.titleSmall, maxLines = 2, softWrap = true)
+        MetricTextSpec(style = MaterialTheme.typography.titleMedium, maxLines = Int.MAX_VALUE, softWrap = true)
     }
 }
 
 @Composable
 private fun CurrencyPill(
     label: String,
+    description: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(if (selected) SurfaceAccent else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .semantics { contentDescription = description }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -889,7 +938,7 @@ fun formatCurrencyAmount(
             minimumFractionDigits = 2
         }
         val usdValue = amountKrw / safeRate
-        val prefix = if (signed && usdValue > 0) "+" else if (signed && usdValue < 0) "-" else ""
+        val prefix = if (usdValue < 0) "-" else if (signed && usdValue > 0) "+" else ""
         val absValue = abs(usdValue)
         "$prefix$${formatter.format(absValue)}"
     } else {
@@ -897,7 +946,7 @@ fun formatCurrencyAmount(
             maximumFractionDigits = 0
             minimumFractionDigits = 0
         }
-        val prefix = if (signed && amountKrw > 0) "+" else if (signed && amountKrw < 0) "-" else ""
+        val prefix = if (amountKrw < 0) "-" else if (signed && amountKrw > 0) "+" else ""
         val absValue = abs(amountKrw)
         "$prefix₩${formatter.format(absValue)}"
     }

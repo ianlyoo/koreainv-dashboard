@@ -17,31 +17,30 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Divider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.DashboardResponse
-import com.koreainv.dashboard.network.KisRepository
+import com.koreainv.dashboard.network.DashboardDataSource
 import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.ChartTone1
 import com.koreainv.dashboard.ui.theme.ChartTone2
@@ -52,39 +51,45 @@ import com.koreainv.dashboard.ui.theme.ChartTone6
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
-import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AssetStatusScreen(
-    repository: KisRepository,
+    repository: DashboardDataSource,
     onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
     onLogoutClick: () -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    var dashboardData by remember { mutableStateOf<DashboardResponse?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var dashboardData by remember(repository) { mutableStateOf<DashboardResponse?>(null) }
+    var isLoading by remember(repository) { mutableStateOf(true) }
+    var errorMessage by remember(repository) { mutableStateOf<String?>(null) }
+
+    val requestOwner = remember(repository) { ScreenRequestOwner() }
+    DisposableEffect(requestOwner) {
+        onDispose { requestOwner.cancel() }
+    }
 
     fun loadDashboard(forceRefresh: Boolean = false) {
         isLoading = true
-        errorMessage = null
-        coroutineScope.launch {
-            runCatching { repository.fetchDashboard(forceRefresh = forceRefresh) }
-                .onSuccess { dashboardData = it }
-                .onFailure {
-                    val detail = it.message?.takeIf(String::isNotBlank) ?: it::class.simpleName ?: "unknown"
-                    errorMessage = "자산 정보를 불러오지 못했습니다. [$detail]"
-                }
-            isLoading = false
-        }
+        requestOwner.launch(
+            scope = coroutineScope,
+            load = { repository.fetchDashboard(forceRefresh = forceRefresh) },
+            onSuccess = {
+                dashboardData = it
+                errorMessage = null
+            },
+            onFailure = {
+                errorMessage = dashboardErrorMessage(it)
+            },
+            onFinished = { isLoading = false },
+        )
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(repository) {
         val cached = repository.peekDashboard()
         if (cached != null) {
             dashboardData = cached
@@ -122,29 +127,20 @@ fun AssetStatusScreen(
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
                 isLoading && dashboardData == null -> {
-                    CircularProgressIndicator(
+                    DashboardLoadingState(
+                        message = "자산 현황을 불러오는 중입니다…",
                         modifier = Modifier.align(Alignment.Center),
-                        color = TextGold,
                     )
                 }
 
                 errorMessage != null && dashboardData == null -> {
                     Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                        modifier = Modifier.align(Alignment.Center).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text(
-                            text = errorMessage.orEmpty(),
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                        )
-                        DashboardPillButton(
-                            label = stringResource(R.string.retry),
-                            onClick = { loadDashboard() },
-                            tone = AccentTone.Accent,
+                        DashboardErrorNotice(
+                            message = errorMessage.orEmpty(),
+                            onRetry = { loadDashboard(forceRefresh = true) },
                         )
                     }
                 }
@@ -155,9 +151,16 @@ fun AssetStatusScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 132.dp),
+                            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = dashboardBottomContentPadding()),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
+                        if (errorMessage != null) {
+                            DashboardErrorNotice(
+                                message = errorMessage.orEmpty(),
+                                onRetry = { loadDashboard(forceRefresh = true) },
+                                usingCachedData = true,
+                            )
+                        }
                         TotalAssetsCard(data)
                         CashBalanceCard(data)
                         AssetDistributionCard(data)
@@ -188,7 +191,7 @@ fun TotalAssetsCard(data: DashboardResponse) {
                 color = TextGold,
             )
             Text(
-                text = stringResource(R.string.cash_balance_label),
+                text = "전체 계좌 · 원화 환산",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
             )
@@ -210,68 +213,45 @@ fun CashBalanceCard(data: DashboardResponse) {
         maximumFractionDigits = 0
         minimumFractionDigits = 0
     }
-    var isExpanded by remember { mutableStateOf(false) }
+    var isExpanded by rememberSaveable { mutableStateOf(false) }
 
     PremiumGlassCard {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = stringResource(R.string.cash_balance_label),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TextSecondary,
-                    )
-                    Text(
-                        text = "₩${formatter.format(data.summary.totalCashKrw)}",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = TextPrimary,
-                    )
-                }
+                Text(
+                    text = stringResource(R.string.cash_balance_label),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                )
                 DashboardPillButton(
-                    label = if (isExpanded) "접기" else "상세",
+                    label = if (isExpanded) "접기" else "통화별 보기",
                     onClick = { isExpanded = !isExpanded },
                     trailingIcon = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                 )
             }
+            FullMonetaryValue(
+                label = "전체 계좌 · 원화 환산",
+                value = "₩${formatter.format(data.summary.totalCashKrw)}",
+            )
 
             AnimatedVisibility(visible = isExpanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)
-                    CurrencyBreakdownRow(label = "KRW", value = "₩${formatter.format(data.summary.cashKrw)}")
-                    CurrencyBreakdownRow(
+                    ResponsiveDetailRow(label = "KRW", value = "₩${formatter.format(data.summary.cashKrw)}")
+                    ResponsiveDetailRow(
                         label = stringResource(R.string.orderable_cash),
                         value = "₩${formatter.format(data.summary.orderableCashKrw)}",
                     )
-                    CurrencyBreakdownRow(label = "USD", value = "$${formatter.format(data.summary.cashUsd)}")
-                    CurrencyBreakdownRow(label = "JPY", value = "¥${formatter.format(data.summary.cashJpy)}")
+                    ResponsiveDetailRow(label = "USD", value = formatCashUsd(data.summary.cashUsd))
+                    ResponsiveDetailRow(label = "JPY", value = "¥${formatter.format(data.summary.cashJpy)}")
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun CurrencyBreakdownRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextSecondary,
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleSmall,
-            color = TextPrimary,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 
@@ -295,7 +275,7 @@ fun AssetDistributionCard(data: DashboardResponse) {
                     color = TextPrimary,
                 )
                 Text(
-                    text = stringResource(R.string.asset_status),
+                    text = "보유 주식 평가금액 기준",
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                 )
@@ -332,7 +312,7 @@ fun AssetDistributionCard(data: DashboardResponse) {
 
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = stringResource(R.string.all_assets),
+                            text = "구성 항목",
                             style = MaterialTheme.typography.labelSmall,
                             color = TextSecondary,
                         )
@@ -348,33 +328,16 @@ fun AssetDistributionCard(data: DashboardResponse) {
                     data.assetDistribution.forEachIndexed { index, asset ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.Top,
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .padding(0.dp),
-                                ) {
-                                    Canvas(modifier = Modifier.fillMaxSize()) {
-                                        drawCircle(color = colors[index % colors.size])
-                                    }
-                                }
-                                Text(
-                                    text = asset.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextPrimary,
-                                )
+                            Canvas(modifier = Modifier.padding(top = 5.dp).size(12.dp)) {
+                                drawCircle(color = colors[index % colors.size])
                             }
-                            Text(
-                                text = formatSignedPercent(asset.weightPercent).removePrefix("+"),
-                                style = MaterialTheme.typography.titleSmall,
-                                color = TextPrimary,
-                                fontWeight = FontWeight.SemiBold,
+                            ResponsiveDetailRow(
+                                label = asset.name,
+                                value = formatSignedPercent(asset.weightPercent).removePrefix("+"),
+                                modifier = Modifier.weight(1f),
                             )
                         }
                     }
@@ -383,3 +346,9 @@ fun AssetDistributionCard(data: DashboardResponse) {
         }
     }
 }
+
+internal fun formatCashUsd(value: Double): String = "$" +
+    NumberFormat.getNumberInstance(Locale.US).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }.format(value)

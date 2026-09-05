@@ -49,5 +49,5 @@ val OnError = Background
 
 val TextPrimary = Color(0xFFF5F7FA)
 val TextSecondary = Color(0xFFA6B1BD)
-val TextHint = Color(0xFF707A87)
+val TextHint = Color(0xFF96A2B0)
 val TextGold = Color(0xFFE4EAF2)

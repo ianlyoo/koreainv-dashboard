@@ -5,15 +5,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,34 +20,36 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.DashboardResponse
 import com.koreainv.dashboard.network.Holding
-import com.koreainv.dashboard.network.KisRepository
+import com.koreainv.dashboard.network.DashboardDataSource
 import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_INTERVAL_MILLIS
 import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_WINDOW_MILLIS
 import com.koreainv.dashboard.ui.theme.Background
@@ -66,13 +66,18 @@ import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PortfolioScreen(
-    repository: KisRepository,
+    repository: DashboardDataSource,
     accountFilters: List<HoldingAccountFilter>,
     onManageAccountsClick: () -> Unit,
     onCheckUpdatesClick: () -> Unit,
@@ -81,30 +86,38 @@ fun PortfolioScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    var dashboardData by remember { mutableStateOf<DashboardResponse?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var currencyMode by remember { mutableStateOf(CurrencyDisplayMode.KRW) }
-    var sortMode by remember { mutableStateOf(HoldingSortMode.VALUE) }
+    var dashboardData by remember(repository) { mutableStateOf<DashboardResponse?>(null) }
+    var isLoading by remember(repository) { mutableStateOf(true) }
+    var errorMessage by remember(repository) { mutableStateOf<String?>(null) }
+    val currencyPreference = rememberCurrencyPreference()
+    val currencyMode = currencyPreference.mode
+    var sortMode by rememberSaveable { mutableStateOf(HoldingSortMode.VALUE) }
     var sortExpanded by remember { mutableStateOf(false) }
-    var selectedAccountId by remember { mutableStateOf<String?>(null) }
+    var selectedAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var accountExpanded by remember { mutableStateOf(false) }
+
+    val requestOwner = remember(repository) { ScreenRequestOwner() }
+    DisposableEffect(requestOwner) {
+        onDispose { requestOwner.cancel() }
+    }
 
     fun loadDashboard(forceRefresh: Boolean = false) {
         isLoading = true
-        errorMessage = null
-        coroutineScope.launch {
-            runCatching { repository.fetchDashboard(forceRefresh = forceRefresh) }
-                .onSuccess { dashboardData = it }
-                .onFailure {
-                    val detail = it.message?.takeIf(String::isNotBlank) ?: it::class.simpleName ?: "unknown"
-                    errorMessage = "자산 정보를 불러오지 못했습니다. [$detail]"
-                }
-            isLoading = false
-        }
+        requestOwner.launch(
+            scope = coroutineScope,
+            load = { repository.fetchDashboard(forceRefresh = forceRefresh) },
+            onSuccess = {
+                dashboardData = it
+                errorMessage = null
+            },
+            onFailure = {
+                errorMessage = dashboardErrorMessage(it)
+            },
+            onFinished = { isLoading = false },
+        )
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(repository) {
         val cached = repository.peekDashboard()
         if (cached != null) {
             dashboardData = cached
@@ -114,15 +127,32 @@ fun PortfolioScreen(
         }
     }
 
-    LaunchedEffect(dashboardData?.usMarketStatus?.session) {
+    LaunchedEffect(repository, dashboardData?.usMarketStatus?.session) {
         val current = dashboardData ?: return@LaunchedEffect
         if (current.usMarketStatus.session != "day_market") return@LaunchedEffect
 
         val startedAt = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - startedAt < US_DAY_MARKET_REFRESH_WINDOW_MILLIS) {
-            val refreshed = runCatching { repository.refreshDashboardQuotes() }.getOrNull() ?: break
-            dashboardData = refreshed
-            if (refreshed.usMarketStatus.session != "day_market") break
+            if (!isLoading) {
+                val version = requestOwner.version
+                val refreshed = try {
+                    repository.refreshDashboardQuotes()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    if (requestOwner.accepts(version)) {
+                        errorMessage = dashboardErrorMessage(error)
+                    }
+                    break
+                }
+                currentCoroutineContext().ensureActive()
+                if (refreshed == null) break
+                if (requestOwner.accepts(version)) {
+                    dashboardData = refreshed
+                    if (refreshed.usMarketStatus.session != "day_market") break
+                }
+            }
             delay(US_DAY_MARKET_REFRESH_INTERVAL_MILLIS)
         }
     }
@@ -135,7 +165,7 @@ fun PortfolioScreen(
                 actions = {
                     CompactCurrencyToggle(
                         mode = currencyMode,
-                        onModeChange = { currencyMode = it },
+                        onModeChange = currencyPreference.onModeChange,
                     )
                     if (isLoading && dashboardData != null) {
                         HeaderLoadingIndicator()
@@ -159,131 +189,128 @@ fun PortfolioScreen(
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
                 isLoading && dashboardData == null -> {
-                    CircularProgressIndicator(
+                    DashboardLoadingState(
+                        message = "보유 자산을 불러오는 중입니다…",
                         modifier = Modifier.align(Alignment.Center),
-                        color = TextGold,
                     )
                 }
 
                 errorMessage != null && dashboardData == null -> {
                     Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                        modifier = Modifier.align(Alignment.Center).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text(
-                            text = errorMessage.orEmpty(),
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                        )
-                        DashboardPillButton(
-                            label = stringResource(R.string.retry),
-                            onClick = { loadDashboard() },
-                            tone = AccentTone.Accent,
+                        DashboardErrorNotice(
+                            message = errorMessage.orEmpty(),
+                            onRetry = { loadDashboard(forceRefresh = true) },
                         )
                     }
                 }
 
                 dashboardData != null -> {
                     val data = dashboardData!!
-                    val activeAccountId = selectedAccountId?.takeIf { selected ->
-                        accountFilters.any { it.accountId == selected }
-                    }
-                    val selectedAccountLabel = accountFilters
-                        .firstOrNull { it.accountId == activeAccountId }
-                        ?.label
-                        ?: stringResource(R.string.all_accounts)
+                    val accountSelection = resolveAccountSelection(selectedAccountId, accountFilters)
+                    val activeAccountId = accountSelection.accountId
+                    val selectedAccountLabel = accountSelection.label
+                        ?: if (accountSelection.unavailable) "확인할 수 없는 계좌" else stringResource(R.string.all_accounts)
                     val sortedHoldings = remember(data.holdings, sortMode, activeAccountId) {
                         filterAndSortHoldings(data.holdings, activeAccountId, sortMode)
                     }
 
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 132.dp),
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = dashboardBottomContentPadding()),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
+                        if (errorMessage != null) {
+                            item {
+                                DashboardErrorNotice(
+                                    message = errorMessage.orEmpty(),
+                                    onRetry = { loadDashboard(forceRefresh = true) },
+                                    usingCachedData = true,
+                                )
+                            }
+                        }
+                        if (accountSelection.unavailable) {
+                            item {
+                                DashboardEmptyState(
+                                    title = "선택한 계좌를 확인해 주세요",
+                                    message = "현재 계좌 목록에 없는 계좌입니다. 표시 범위를 전체 계좌로 바꿀 수 있습니다.",
+                                    actionLabel = "전체 계좌 보기",
+                                    onAction = { selectedAccountId = null },
+                                )
+                            }
+                        }
                         item {
                             PortfolioSummarySection(data = data, currencyMode = currencyMode)
                         }
 
                         item {
-                            SectionHeader(
-                                title = stringResource(R.string.holdings),
-                                modifier = Modifier.padding(top = 8.dp),
-                                action = {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box {
-                                            DashboardPillButton(
-                                                label = sortMode.label(),
-                                                onClick = { sortExpanded = true },
-                                                tone = AccentTone.Neutral,
-                                                trailingIcon = Icons.Default.ArrowDropDown,
-                                            )
-                                            PortfolioDropdownMenu(
-                                                expanded = sortExpanded,
-                                                onDismissRequest = { sortExpanded = false },
-                                            ) {
-                                                HoldingSortMode.entries.forEach { mode ->
-                                                    DropdownMenuItem(
-                                                        text = { Text(mode.label(), color = TextPrimary) },
-                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                        onClick = {
-                                                            sortMode = mode
-                                                            sortExpanded = false
-                                                        },
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Box {
-                                            DashboardPillButton(
-                                                label = compactAccountFilterLabel(selectedAccountLabel),
-                                                onClick = { accountExpanded = true },
-                                                tone = AccentTone.Neutral,
-                                                trailingIcon = Icons.Default.ArrowDropDown,
-                                            )
-                                            PortfolioDropdownMenu(
-                                                expanded = accountExpanded,
-                                                onDismissRequest = { accountExpanded = false },
-                                            ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                SectionHeader(title = stringResource(R.string.holdings))
+                                Text(
+                                    text = "$selectedAccountLabel · ${sortedHoldings.size}종목",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Box(Modifier.weight(1f)) {
+                                        DashboardPillButton(
+                                            label = sortMode.label(),
+                                            onClick = { sortExpanded = true },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            trailingIcon = Icons.Default.ArrowDropDown,
+                                            compact = true,
+                                        )
+                                        ScreenFilterMenu(sortExpanded, { sortExpanded = false }) {
+                                            HoldingSortMode.entries.forEach { mode ->
                                                 DropdownMenuItem(
-                                                    text = { Text(stringResource(R.string.all_accounts), color = TextPrimary) },
-                                                    colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                    onClick = {
-                                                        selectedAccountId = null
-                                                        accountExpanded = false
-                                                    },
+                                                    text = { Text(mode.label(), color = TextPrimary) },
+                                                    onClick = { sortMode = mode; sortExpanded = false },
                                                 )
-                                                accountFilters.forEach { account ->
-                                                    DropdownMenuItem(
-                                                        text = { Text(account.label, color = TextPrimary) },
-                                                        colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                                                        onClick = {
-                                                            selectedAccountId = account.accountId
-                                                            accountExpanded = false
-                                                        },
-                                                    )
-                                                }
                                             }
                                         }
                                     }
-                                },
-                            )
+                                    Box(Modifier.weight(1.3f)) {
+                                        DashboardPillButton(
+                                            label = selectedAccountLabel,
+                                            onClick = { accountExpanded = true },
+                                            modifier = Modifier.fillMaxWidth().semantics {
+                                                contentDescription = "계좌 선택: $selectedAccountLabel"
+                                            },
+                                            trailingIcon = Icons.Default.ArrowDropDown,
+                                            compact = true,
+                                        )
+                                        ScreenFilterMenu(accountExpanded, { accountExpanded = false }) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.all_accounts), color = TextPrimary) },
+                                                onClick = { selectedAccountId = null; accountExpanded = false },
+                                            )
+                                            accountFilters.forEach { account ->
+                                                DropdownMenuItem(
+                                                    text = { Text(account.label, color = TextPrimary) },
+                                                    onClick = { selectedAccountId = account.accountId; accountExpanded = false },
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         if (sortedHoldings.isEmpty()) {
-                            item {
-                                Text(
-                                    text = stringResource(R.string.no_holdings_found),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = TextSecondary,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 24.dp),
-                                    textAlign = TextAlign.Center,
-                                )
+                            if (!accountSelection.unavailable) {
+                                item {
+                                    DashboardEmptyState(
+                                        title = "보유 종목이 없습니다",
+                                        message = "$selectedAccountLabel 기준입니다. 계좌를 바꾸거나 최신 정보를 다시 불러오세요.",
+                                        actionLabel = if (activeAccountId != null) "전체 계좌 보기" else "새로고침",
+                                        onAction = {
+                                            if (activeAccountId != null) selectedAccountId = null
+                                            else loadDashboard(forceRefresh = true)
+                                        },
+                                    )
+                                }
                             }
                         } else {
                             items(sortedHoldings) { holding ->
@@ -300,6 +327,64 @@ fun PortfolioScreen(
             }
         }
     }
+}
+
+/** Confined to the screen's UI coroutine context; never owns repository caches. */
+internal class ScreenRequestOwner {
+    var version: Long = 0
+        private set
+    private var job: Job? = null
+
+    fun accepts(requestVersion: Long): Boolean = version == requestVersion
+
+    fun cancel() {
+        version += 1
+        job?.cancel()
+        job = null
+    }
+
+    fun <T> launch(
+        scope: CoroutineScope,
+        load: suspend (requestVersion: Long) -> T,
+        onSuccess: (T) -> Unit,
+        onFailure: (Throwable) -> Unit,
+        onFinished: () -> Unit,
+    ) {
+        cancel()
+        val requestVersion = version
+        job = scope.launch {
+            try {
+                val result = load(requestVersion)
+                currentCoroutineContext().ensureActive()
+                if (accepts(requestVersion)) onSuccess(result)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                if (accepts(requestVersion)) onFailure(error)
+            } finally {
+                if (accepts(requestVersion)) onFinished()
+            }
+        }
+    }
+}
+
+internal data class AccountFilterSelection(
+    val accountId: String?,
+    val label: String?,
+    val unavailable: Boolean,
+)
+
+internal fun resolveAccountSelection(
+    selectedAccountId: String?,
+    accountFilters: List<HoldingAccountFilter>,
+): AccountFilterSelection {
+    val account = accountFilters.firstOrNull { it.accountId == selectedAccountId }
+    return AccountFilterSelection(
+        accountId = selectedAccountId,
+        label = account?.label,
+        unavailable = selectedAccountId != null && account == null,
+    )
 }
 
 internal enum class HoldingSortMode {
@@ -342,7 +427,7 @@ internal fun compactAccountFilterLabel(label: String): String =
     if (label.length <= 8) label else "${label.take(7)}…"
 
 @Composable
-private fun PortfolioDropdownMenu(
+internal fun ScreenFilterMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
@@ -383,7 +468,7 @@ fun PortfolioSummarySection(data: DashboardResponse, currencyMode: CurrencyDispl
                 color = TextGold,
             )
             Text(
-                text = stringResource(R.string.all_assets),
+                text = "전체 계좌 합계",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
             )
@@ -414,82 +499,76 @@ fun HoldingItem(
     onClick: () -> Unit,
 ) {
     val profitColor = if (holding.profitLossKrw >= 0) Success else Error
-
+    val accountLabel = holding.accountLabel?.takeIf(String::isNotBlank) ?: "계좌 이름 없음"
+    val staleQuote = holding.market == "USA" && holding.quoteSession == "day_market" && holding.quoteStale
     PremiumListItem(onClick = onClick) {
-        Column(
-            modifier = Modifier.weight(1f),
-            horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                MarketBadge(
-                    market = holding.market,
-                    modifier = Modifier.offset(x = (-6).dp),
-                )
-                Text(
-                    text = holding.name,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (holding.market == "USA" && holding.quoteSession == "day_market" && holding.quoteStale) {
-                    SurfaceBadge(label = "종가", tone = AccentTone.Neutral)
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = holding.symbol,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = stringResource(R.string.share_count, formatWholeNumber(holding.quantity)),
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(
-            modifier = Modifier.width(116.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = formatCurrencyAmount(holding.totalValueKrw, currencyMode, usdRate),
+                text = holding.name,
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.titleMedium,
                 color = TextPrimary,
                 fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.End,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = formatSignedPercent(holding.profitLossRate),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = profitColor,
-                textAlign = TextAlign.End,
+                text = "$accountLabel · ${holding.symbol} · ${stringResource(R.string.share_count, formatWholeNumber(holding.quantity))} · ${holding.market}" +
+                    if (staleQuote) " · 종가 기준" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+            )
+            AdaptiveListAmounts(
+                amount = formatCurrencyAmount(holding.totalValueKrw, currencyMode, usdRate),
+                secondary = formatSignedPercent(holding.profitLossRate),
+                secondaryColor = profitColor,
             )
         }
+    }
+}
+
+@Composable
+internal fun AdaptiveListAmounts(amount: String, secondary: String? = null, secondaryColor: Color = TextSecondary) {
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val amountStyle = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+    val secondaryStyle = MaterialTheme.typography.bodyMedium
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val availablePx = with(density) { maxWidth.toPx() }
+        val amountWidth = textMeasurer.measure(amount, style = amountStyle, softWrap = false).size.width
+        val secondaryWidth = secondary?.let {
+            textMeasurer.measure(it, style = secondaryStyle, softWrap = false).size.width
+        } ?: 0
+        val stack = maxWidth < 280.dp || density.fontScale > 1.2f ||
+            amountWidth + secondaryWidth + with(density) { 12.dp.toPx() } > availablePx
+        if (secondary == null || stack) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(amount, style = amountStyle, color = TextPrimary)
+                secondary?.let { Text(it, style = secondaryStyle, color = secondaryColor) }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(amount, modifier = Modifier.weight(1f), style = amountStyle, color = TextPrimary)
+                Text(secondary, style = secondaryStyle, color = secondaryColor)
+            }
+        }
+    }
+}
+
+/** Full-width, wrapping amounts preserve digits and accessibility font scaling. */
+@Composable
+internal fun FullMonetaryValue(label: String, value: String, valueColor: Color = TextPrimary) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+        Text(
+            value,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = valueColor,
+        )
     }
 }
 

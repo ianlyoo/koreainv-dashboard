@@ -1,6 +1,7 @@
 package com.koreainv.dashboard.ui
 
 import android.net.Uri
+import kotlinx.coroutines.CancellationException
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
@@ -11,7 +12,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.List
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,6 +48,9 @@ import com.koreainv.dashboard.ui.screens.DashboardBottomTabBar
 import com.koreainv.dashboard.ui.screens.DashboardTabItem
 import com.koreainv.dashboard.ui.screens.HoldingDetailScreen
 import com.koreainv.dashboard.ui.screens.HoldingAccountFilter
+import com.koreainv.dashboard.ui.screens.LocalCurrencyPreference
+import com.koreainv.dashboard.ui.screens.LocalDashboardBottomBarHeight
+import com.koreainv.dashboard.ui.screens.rememberCurrencyPreference
 import com.koreainv.dashboard.ui.screens.PinUnlockScreen
 import com.koreainv.dashboard.ui.screens.PortfolioScreen
 import com.koreainv.dashboard.ui.screens.SetupScreen
@@ -76,6 +85,18 @@ sealed class Screen(val route: String) {
 
 @Composable
 fun KoreaInvApp() {
+    val currencyPreference = rememberCurrencyPreference()
+    val bottomBarHeight = remember { mutableStateOf(116.dp) }
+    CompositionLocalProvider(
+        LocalCurrencyPreference provides currencyPreference,
+        LocalDashboardBottomBarHeight provides bottomBarHeight,
+    ) {
+        KoreaInvAppContent()
+    }
+}
+
+@Composable
+private fun KoreaInvAppContent() {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -99,9 +120,9 @@ fun KoreaInvApp() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val primaryTabs = listOf(
-        DashboardTabItem(route = Screen.Portfolio.route, label = stringResource(R.string.portfolio)),
-        DashboardTabItem(route = Screen.AssetStatus.route, label = stringResource(R.string.asset_status)),
-        DashboardTabItem(route = Screen.TradeHistory.route, label = stringResource(R.string.trade_history_title)),
+        DashboardTabItem(route = Screen.Portfolio.route, label = stringResource(R.string.portfolio), icon = Icons.Default.Home),
+        DashboardTabItem(route = Screen.AssetStatus.route, label = stringResource(R.string.asset_status), icon = Icons.Default.AccountBox),
+        DashboardTabItem(route = Screen.TradeHistory.route, label = stringResource(R.string.trade_history_title), icon = Icons.Default.List),
     )
     val primaryRoutes = remember(primaryTabs) { primaryTabs.map { it.route }.toSet() }
 
@@ -132,7 +153,8 @@ fun KoreaInvApp() {
     fun navigateToPrimaryTab(route: String) {
         navController.navigate(route) {
             launchSingleTop = true
-            popUpTo(Screen.Portfolio.route) { inclusive = false }
+            restoreState = true
+            popUpTo(Screen.Portfolio.route) { saveState = true }
         }
     }
 
@@ -229,19 +251,27 @@ fun KoreaInvApp() {
                         isLoading = isUnlocking,
                         onUnlock = { pin ->
                             scope.launch {
+                                if (isUnlocking) return@launch
                                 isUnlocking = true
-                                val profile = settingsManager.unlockProfile(pin)
-                                if (profile != null) {
-                                    unlockedProfile = profile
-                                    hasAutoCheckedUpdate = false
-                                    errorMessage = null
-                                    navController.navigate(Screen.Portfolio.route) {
-                                        popUpTo(Screen.Unlock.route) { inclusive = true }
+                                try {
+                                    val profile = settingsManager.unlockProfile(pin)
+                                    if (profile != null) {
+                                        unlockedProfile = profile
+                                        hasAutoCheckedUpdate = false
+                                        errorMessage = null
+                                        navController.navigate(Screen.Portfolio.route) {
+                                            popUpTo(Screen.Unlock.route) { inclusive = true }
+                                        }
+                                    } else {
+                                        errorMessage = context.getString(R.string.invalid_pin)
                                     }
-                                } else {
-                                    errorMessage = context.getString(R.string.invalid_pin)
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    errorMessage = "잠금을 해제하지 못했습니다. 다시 시도해 주세요."
+                                } finally {
+                                    isUnlocking = false
                                 }
-                                isUnlocking = false
                             }
                         },
                     )
@@ -340,11 +370,11 @@ fun KoreaInvApp() {
                             errorMessage = accountManagementError,
                             onSave = { pin, accounts ->
                                 scope.launch {
+                                    if (isSavingAccounts) return@launch
                                     isSavingAccounts = true
                                     accountManagementError = null
-                                    runCatching {
-                                        settingsManager.updateProfile(accounts, pin)
-                                    }.onSuccess { updatedProfile ->
+                                    try {
+                                        val updatedProfile = settingsManager.updateProfile(accounts, pin)
                                         if (updatedProfile == null) {
                                             accountManagementError = context.getString(R.string.invalid_pin)
                                         } else {
@@ -352,7 +382,9 @@ fun KoreaInvApp() {
                                             tradeHistorySessionState = TradeHistorySessionState()
                                             navController.popBackStack()
                                         }
-                                    }.onFailure { error ->
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (error: Exception) {
                                         accountManagementError = when (error.message) {
                                             "ACCOUNT_PROFILE_DUPLICATE" -> "같은 계좌번호와 상품코드를 중복 등록할 수 없습니다."
                                             "ACCOUNT_NUMBER_INVALID" -> "계좌번호는 숫자 8자리여야 합니다."
@@ -360,8 +392,9 @@ fun KoreaInvApp() {
                                             "ACCOUNT_CREDENTIALS_REQUIRED" -> "신규 계좌의 APP KEY와 APP SECRET을 입력하세요."
                                             else -> "계좌 설정을 저장하지 못했습니다."
                                         }
+                                    } finally {
+                                        isSavingAccounts = false
                                     }
-                                    isSavingAccounts = false
                                 }
                             },
                             onBack = { navController.popBackStack() },

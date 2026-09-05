@@ -3,7 +3,16 @@ package com.koreainv.dashboard.ui.screens
 import com.koreainv.dashboard.network.Holding
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 
 class PortfolioScreenLogicTest {
     private val firstAccountHolding = holding(
@@ -61,6 +70,93 @@ class PortfolioScreenLogicTest {
     fun longAccountLabels_areCompactedForTheFilterButton() {
         assertEquals("장기투자계좌", compactAccountFilterLabel("장기투자계좌"))
         assertEquals("장기투자용계좌…", compactAccountFilterLabel("장기투자용계좌이름"))
+    }
+
+    @Test
+    fun missingAccountSelection_keepsItsScopeUntilExplicitReset() {
+        val selection = resolveAccountSelection("removed", emptyList())
+
+        assertTrue(selection.unavailable)
+        assertEquals("removed", selection.accountId)
+        assertNull(selection.label)
+        assertTrue(filterAndSortHoldings(listOf(firstAccountHolding), selection.accountId, HoldingSortMode.VALUE).isEmpty())
+        assertFalse(resolveAccountSelection(null, emptyList()).unavailable)
+    }
+
+    @Test
+    fun lateCancelledRequest_cannotOverwriteNewResultOrFinishItsLoadingState() = runBlocking {
+        val owner = ScreenRequestOwner()
+        val releaseOldRequest = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        owner.launch(
+            scope = this,
+            load = {
+                // Model a transport that returns even after cancellation.
+                withContext(NonCancellable) { releaseOldRequest.await() }
+                "old"
+            },
+            onSuccess = { events += it },
+            onFailure = { events += "old error" },
+            onFinished = { events += "old finished" },
+        )
+        yield()
+        val oldVersion = owner.version
+        owner.launch(
+            scope = this,
+            load = { "new" },
+            onSuccess = { events += it },
+            onFailure = { events += "new error" },
+            onFinished = { events += "new finished" },
+        )
+        releaseOldRequest.complete(Unit)
+        yield()
+
+        assertFalse(owner.accepts(oldVersion))
+        assertEquals(listOf("new", "new finished"), events)
+    }
+
+    @Test
+    fun disposingRequest_cancelsWorkWithoutPublishingFailure() = runBlocking {
+        val owner = ScreenRequestOwner()
+        var wasCancelled = false
+        val events = mutableListOf<String>()
+        owner.launch(
+            scope = this,
+            load = {
+                try {
+                    awaitCancellation()
+                } finally {
+                    wasCancelled = true
+                }
+            },
+            onSuccess = { events += "success" },
+            onFailure = { events += "error" },
+            onFinished = { events += "finished" },
+        )
+        yield()
+        owner.cancel()
+        yield()
+
+        assertTrue(wasCancelled)
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun cancellationException_isNotReportedAsRefreshFailure() = runBlocking {
+        val owner = ScreenRequestOwner()
+        var failed = false
+        var finished = false
+        owner.launch(
+            scope = this,
+            load = { throw CancellationException("screen left") },
+            onSuccess = { },
+            onFailure = { failed = true },
+            onFinished = { finished = true },
+        )
+        yield()
+
+        assertFalse(failed)
+        assertTrue(finished)
     }
 
     private fun holding(
