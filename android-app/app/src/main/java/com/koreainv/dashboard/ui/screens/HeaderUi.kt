@@ -670,7 +670,6 @@ fun DashboardBottomTabBar(
         modifier = Modifier
             .fillMaxWidth()
             .onSizeChanged { size -> measuredHeight?.value = with(density) { size.height.toDp() } }
-            .background(Background)
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {

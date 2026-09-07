@@ -1,6 +1,7 @@
 package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,10 +45,12 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.ui.theme.Surface
+import com.koreainv.dashboard.ui.theme.SurfaceBorder
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
@@ -78,6 +81,7 @@ fun PinUnlockScreen(
         title = stringResource(R.string.welcome_back),
         subtitle = stringResource(R.string.enter_pin_prompt),
         isLoading = isBusy,
+        centered = true,
         errorMessage = submissionError ?: errorMessage?.let { "잠금을 해제하지 못했습니다. PIN을 확인한 뒤 다시 시도하세요." },
     ) {
         Text(
@@ -166,6 +170,7 @@ fun CredentialShell(
     isLoading: Boolean,
     errorMessage: String?,
     loadingMessage: String = "잠금을 해제하고 있습니다.",
+    centered: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     ScreenBackground {
@@ -177,21 +182,48 @@ fun CredentialShell(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = if (centered) Arrangement.Center else Arrangement.Top,
         ) {
-            Column(modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = if (centered) 440.dp else 560.dp)
+                    .fillMaxWidth()
+                    .then(
+                        if (centered) Modifier
+                            .clip(RoundedCornerShape(32.dp))
+                            .background(Surface.copy(alpha = 0.94f))
+                            .border(1.dp, SurfaceBorder, RoundedCornerShape(32.dp))
+                            .padding(horizontal = 24.dp, vertical = 28.dp)
+                        else Modifier,
+                    ),
+                horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
+            ) {
+                if (centered) {
                     Image(
                         painter = painterResource(R.drawable.ic_launcher_foreground),
                         contentDescription = null,
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)),
                     )
-                    Text(stringResource(R.string.korea_inv_dashboard), style = MaterialTheme.typography.labelLarge, color = TextSecondary)
+                    Spacer(Modifier.height(16.dp))
+                    Text(stringResource(R.string.korea_inv_dashboard), style = MaterialTheme.typography.labelLarge,
+                        color = TextGold, textAlign = TextAlign.Center)
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Image(
+                            painter = painterResource(R.drawable.ic_launcher_foreground),
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp),
+                        )
+                        Text(stringResource(R.string.korea_inv_dashboard), style = MaterialTheme.typography.labelLarge, color = TextSecondary)
+                    }
                 }
                 Spacer(Modifier.height(20.dp))
                 Text(title, style = MaterialTheme.typography.headlineMedium, color = TextPrimary,
+                    textAlign = if (centered) TextAlign.Center else TextAlign.Start,
                     modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(8.dp))
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = TextSecondary,
+                    textAlign = if (centered) TextAlign.Center else TextAlign.Start)
                 Spacer(Modifier.height(24.dp))
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, content = content)
                 if (errorMessage != null) {
