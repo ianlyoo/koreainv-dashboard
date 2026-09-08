@@ -1,7 +1,6 @@
 package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
@@ -48,7 +47,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -482,6 +480,7 @@ fun CompactCurrencyToggle(
     onModeChange: (CurrencyDisplayMode) -> Unit,
 ) {
     val density = LocalDensity.current
+    val capsuleStretch = rememberSelectionStretch(mode)
     var usdWidth by remember { mutableStateOf(48.dp) }
     var krwWidth by remember { mutableStateOf(48.dp) }
     val selectedOffset by animateDpAsState(
@@ -495,7 +494,12 @@ fun CompactCurrencyToggle(
     Box(Modifier.selectableGroup().liquidGlass(radius = 28.dp, role = GlassRole.Control).padding(4.dp)) {
         Box(Modifier.matchParentSize()) {
             Box(Modifier.offset { IntOffset(with(density) { selectedOffset.roundToPx() }, 0) }
-                .width(selectedWidth).fillMaxHeight().clip(CircleShape)
+                .width(selectedWidth).fillMaxHeight()
+                .graphicsLayer {
+                    scaleX = capsuleStretch.value
+                    scaleY = 1f - (capsuleStretch.value - 1f) * 0.5f
+                }
+                .clip(CircleShape)
                 .background(TextPrimary.copy(alpha = 0.10f)))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -601,14 +605,7 @@ fun DashboardBottomTabBar(
         ) {
             val tabWidth = maxWidth / items.size
             val selectedIndex = items.indexOfFirst { it.route == currentRoute }
-            val capsuleStretch = remember { Animatable(1f) }
-            var previousIndex by remember { mutableStateOf(selectedIndex) }
-            LaunchedEffect(selectedIndex) {
-                val moved = previousIndex >= 0 && selectedIndex >= 0 && previousIndex != selectedIndex
-                previousIndex = selectedIndex
-                if (moved) capsuleStretch.animateTo(1.045f, tween(80))
-                capsuleStretch.animateTo(1f, DashboardMotion.release())
-            }
+            val capsuleStretch = rememberSelectionStretch(selectedIndex, enabled = selectedIndex >= 0)
             val indicatorOffset by animateDpAsState(
                 targetValue = tabWidth * selectedIndex.coerceAtLeast(0),
                 animationSpec = DashboardMotion.selection(),

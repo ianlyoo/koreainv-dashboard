@@ -190,14 +190,28 @@ def _build_asset_distribution(holdings: list[dict[str, object]]) -> list[dict[st
     total_value = sum(_as_float(item.get("total_value_krw")) for item in holdings)
     if total_value <= 0:
         return []
+    grouped: dict[tuple[str, str, int], dict[str, object]] = {}
+    for index, item in enumerate(holdings):
+        symbol = str(item.get("symbol") or "").strip().upper()
+        # Holdings built above use canonical country markets. Account and quote
+        # currency do not change instrument identity; values are already in KRW.
+        market = str(item.get("market") or "").strip().upper()
+        key = (market, symbol, index if not symbol else -1)
+        if key not in grouped:
+            grouped[key] = {
+                "symbol": symbol,
+                "name": str(item.get("name") or symbol or "-"),
+                "value_krw": 0.0,
+            }
+        grouped[key]["value_krw"] = _as_float(grouped[key]["value_krw"]) + _as_float(item.get("total_value_krw"))
     return [
         {
-            "symbol": str(item.get("symbol") or ""),
-            "name": str(item.get("name") or item.get("symbol") or "-"),
-            "weight_percent": round(_as_float(item.get("total_value_krw")) / total_value * 100.0, 2),
-            "value_krw": round(_as_float(item.get("total_value_krw"))),
+            "symbol": item["symbol"],
+            "name": item["name"],
+            "weight_percent": round(_as_float(item["value_krw"]) / total_value * 100.0, 2),
+            "value_krw": round(_as_float(item["value_krw"])),
         }
-        for item in holdings
+        for item in sorted(grouped.values(), key=lambda item: _as_float(item["value_krw"]), reverse=True)
     ]
 
 

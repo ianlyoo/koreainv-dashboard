@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.routes.mobile import _build_asset_distribution, _build_mobile_dashboard
 from app.session_store import SessionData, active_sessions
 
 
@@ -240,6 +241,43 @@ class MobileApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "success")
         self.assertEqual(len(active_sessions), 0)
+
+
+class MobileAssetDistributionTests(unittest.TestCase):
+    def test_merges_accounts_preserving_individual_holdings_and_summary(self):
+        domestic = {"items": [
+            {"ticker": "005930", "name": "Samsung", "qty": 1, "avg_price": 100, "now_price": 100, "account_id": "one"},
+            {"ticker": "005930", "name": "Samsung", "qty": 2, "avg_price": 100, "now_price": 100, "account_id": "two"},
+        ]}
+        dashboard = _build_mobile_dashboard(domestic, {})
+        self.assertEqual(len(dashboard["holdings"]), 2)
+        self.assertEqual(dashboard["summary"]["total_assets_krw"], 300)
+        self.assertEqual(dashboard["summary"]["domestic_count"], 2)
+        self.assertEqual([item["account_id"] for item in dashboard["holdings"]], ["two", "one"])
+        self.assertEqual(dashboard["asset_distribution"], [
+            {"symbol": "005930", "name": "Samsung", "value_krw": 300, "weight_percent": 100.0},
+        ])
+
+    def test_sorts_combined_values_normalizes_symbols_and_distinguishes_markets(self):
+        holdings = [
+            {"symbol": "OTHER", "market": "USA", "total_value_krw": 400},
+            {"symbol": " abc ", "name": "First name", "market": "USA", "total_value_krw": 300},
+            {"symbol": "ABC", "market": "USA", "total_value_krw": 300},
+            {"symbol": "ABC", "market": "JPN", "total_value_krw": 200},
+        ]
+        result = _build_asset_distribution(holdings)
+        self.assertEqual([item["value_krw"] for item in result], [600, 400, 200])
+        self.assertEqual(result[0]["symbol"], "ABC")
+        self.assertEqual(result[0]["name"], "First name")
+        self.assertAlmostEqual(sum(item["weight_percent"] for item in result), 100.0)
+        self.assertEqual(sum(item["value_krw"] for item in result), 1200)
+
+    def test_empty_and_zero_totals_and_unidentified_holdings(self):
+        self.assertEqual(_build_asset_distribution([]), [])
+        self.assertEqual(_build_asset_distribution([{"total_value_krw": 0}]), [])
+        self.assertEqual(len(_build_asset_distribution([
+            {"total_value_krw": 100}, {"total_value_krw": 100},
+        ])), 2)
 
 
 if __name__ == "__main__":

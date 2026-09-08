@@ -98,7 +98,7 @@ class KisRepository(
 
     private val usQuoteService = primaryKisAccount?.let { KisUsQuoteService(it.toAppCredentials(), client) }
 
-    override fun peekDashboard(): DashboardResponse? = cachedDashboard?.second
+    override fun peekDashboard(): DashboardResponse? = cachedDashboard?.second?.withRebuiltAssetDistribution()
     override fun peekTradeHistory(range: String, accountId: String?): TradeHistoryResponse? {
         val cacheKey = tradeHistoryCacheKey(range, accountId)
         val cached = cachedTradeHistory[cacheKey] ?: return null
@@ -1300,7 +1300,7 @@ class KisRepository(
         forceRetry: Boolean,
     ): DashboardResponse {
         val usHoldings = baseDashboard.holdings.filter { it.market == "USA" }
-        val quoteService = usQuoteService ?: return baseDashboard
+        val quoteService = usQuoteService ?: return baseDashboard.withRebuiltAssetDistribution()
         quoteService.syncHoldings(usHoldings, forceRetry = forceRetry)
 
         val enrichedUsHoldings = quoteService.enrichHoldings(usHoldings)
@@ -1330,26 +1330,6 @@ class KisRepository(
             assetDistribution = buildAssetDistribution(mergedHoldings),
             usMarketStatus = quoteService.getMarketStatus(mergedHoldings.filter { it.market == "USA" }),
         )
-    }
-
-    private fun buildAssetDistribution(holdings: List<Holding>): List<AssetDistribution> {
-        val total = holdings.sumOf { it.totalValueKrw }
-        if (total <= 0.0) return emptyList()
-        return holdings.map { holding ->
-            AssetDistribution(
-                symbol = holding.symbol,
-                name = holding.name,
-                weightPercent = holding.totalValueKrw / total * 100.0,
-                valueKrw = holding.totalValueKrw,
-            )
-        }
-    }
-
-    private fun marketBadgeCode(code: String): String = when (code.uppercase()) {
-        "KOR", "KRX", "J", "UN", "NX" -> "KOR"
-        "USA", "NAS", "NASD", "NYS", "NYSE", "AMS", "AMEX" -> "USA"
-        "JPN", "TSE", "TKSE", "JPX", "TYO" -> "JPN"
-        else -> code
     }
 
     private suspend fun requireToken(account: AccountCredential): String? = tokenCoordinator.requireToken(account)
