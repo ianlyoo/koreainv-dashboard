@@ -202,29 +202,3 @@ internal fun tokenScope(credentials: AppCredentials): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
     return digest.joinToString("") { "%02x".format(it) }
 }
-
-data class ScheduledDomesticOrderRequest(
-    val executeAt: String,
-    val side: String,
-    val pdno: String,
-    val ordQty: Int,
-    val ordUnpr: String,
-    val ordDvsn: String = "00",
-    val excgIdDvsnCd: String = "NXT",
-    val sllType: String = "",
-    val cndtPric: String = "",
-    val note: String = "",
-)
-
-data class ScheduledOrderSummary(
-    val id: String,
-    val status: String,
-    val sourceApp: String,
-    val accountRef: String,
-    val createdAt: String,
-    val updatedAt: String,
-    val executeAt: String,
-    val attemptCount: Int,
-    val lastError: String,
-    val note: String,
-)

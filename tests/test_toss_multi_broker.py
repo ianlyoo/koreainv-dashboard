@@ -132,8 +132,8 @@ class MultiBrokerAggregationTests(unittest.TestCase):
         metadata = accounts_metadata(session.accounts)
         self.assertFalse(metadata[0]["is_primary"])
         self.assertTrue(metadata[1]["is_primary"])
-        self.assertFalse(metadata[0]["supports_orders"])
-        self.assertTrue(metadata[1]["supports_orders"])
+        self.assertNotIn("supports_orders", metadata[0])
+        self.assertNotIn("supports_orders", metadata[1])
 
     @patch("app.services.balance_aggregation.api_client.get_overseas_balance")
     @patch("app.services.balance_aggregation.api_client.get_domestic_balance")

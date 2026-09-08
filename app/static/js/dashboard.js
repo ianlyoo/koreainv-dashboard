@@ -51,29 +51,93 @@
         let usQuotePollingActive = false;
         let currentInsightState = null;
         let currentInsightRequestSeq = 0;
-        let insightTradeMode = false;
-        let scheduledOrders = [];
-        let scheduledOrderModalTab = 'history';
-        let scheduledOrderEditingId = '';
-        let scheduledOrderAvailability = {
-            allowed: true,
-            blocked: false,
-            reason: '',
-            policy: null,
-            current_kst: '',
-        };
-        let scheduledOrderAvailabilityLoadedAt = 0;
-        const scheduledOrderNoticeState = {
-            modal: null,
-            insight: null,
-        };
+        let insightChart = null;
+        let insightChartKind = null;
+        let insightChartObserver = null;
+        let insightCandleSeries = null;
+        let insightVolumeSeries = null;
+        let marketOverviewGeneration = 0;
+        let marketOverviewLoadTimer = null;
+
+        function themeColor(name) {
+            return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        }
+
+        function resolvedTheme() {
+            return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+        }
+
+        function disposeInsightChart() {
+            disposeInsightDetailCharts();
+            insightChartObserver?.disconnect();
+            insightChartObserver = null;
+            if (insightChart && typeof insightChart.remove === 'function') {
+                try { insightChart.remove(); } catch (error) { console.warn('Chart cleanup failed:', error); }
+            }
+            insightChart = null;
+            insightChartKind = null;
+            insightCandleSeries = null;
+            insightVolumeSeries = null;
+        }
+
+        function insightChartThemeOptions() {
+            return {
+                layout: { background: { type: 'solid', color: 'transparent' }, textColor: themeColor('--chart-text'), fontSize: 11 },
+                grid: { vertLines: { color: themeColor('--chart-grid') }, horzLines: { color: themeColor('--chart-grid') } },
+                rightPriceScale: { borderColor: themeColor('--chart-border') },
+                timeScale: { borderColor: themeColor('--chart-border'), timeVisible: false },
+            };
+        }
+
+        function candleThemeOptions() {
+            return {
+                upColor: themeColor('--chart-up'), downColor: themeColor('--chart-down'),
+                borderUpColor: themeColor('--chart-up'), borderDownColor: themeColor('--chart-down'),
+                wickUpColor: themeColor('--chart-up'), wickDownColor: themeColor('--chart-down'),
+            };
+        }
+
+        function volumeChartData(history) {
+            return history.map((item) => ({ time: item.time, value: item.volume,
+                color: themeColor(item.close >= item.open ? '--chart-volume-up' : '--chart-volume-down') }));
+        }
+
+        function portfolioTooltipTheme() {
+            return { backgroundColor: themeColor('--chart-tooltip-bg'), titleColor: themeColor('--chart-tooltip-text'),
+                bodyColor: themeColor('--chart-tooltip-text'), borderColor: themeColor('--chart-border') };
+        }
+
+        function refreshChartThemes() {
+            if (myChart) {
+                const colors = allocationColors();
+                myChart.data.datasets[0].backgroundColor = myChart.data.labels.map((_, index) => colors[index % colors.length]);
+                document.querySelectorAll('.alloc-color').forEach((element, index) => {
+                    element.style.color = colors[index % colors.length];
+                    element.style.backgroundColor = colors[index % colors.length];
+                });
+                myChart.options.color = themeColor('--chart-text');
+                Object.assign(myChart.options.plugins.tooltip, portfolioTooltipTheme());
+                myChart.update('none');
+            }
+            if (insightChartKind === 'lightweight' && insightChart) {
+                insightChart.applyOptions(insightChartThemeOptions());
+                insightCandleSeries.applyOptions(candleThemeOptions());
+                insightVolumeSeries.setData(volumeChartData(currentInsightState?.data?.history || []));
+            } else if (insightChartKind === 'tradingview') {
+                // Replace only the embedded chart, retaining the insight content and scroll position.
+                initializeInsightChart(currentInsightState);
+            }
+            initializeInsightDetailCharts(currentInsightState);
+            scheduleMarketOverviewMount(true);
+        }
+
+        window.addEventListener('dashboard:themechange', refreshChartThemes);
         const US_QUOTE_POLL_INTERVAL_MS = 3000;
         const US_QUOTE_POLL_WINDOW_MS = 1 * 60 * 1000;
         const LIVE_CHART_UPDATE_MIN_INTERVAL_MS = 15000;
 
         const LAYOUT_STORAGE_KEY = 'dashboard_layout_mode';
         const MARKET_OVERVIEW_WIDGET_CONFIG = {
-            colorTheme: 'dark',
             dateRange: '1M',
             showChart: true,
             locale: 'kr',
@@ -99,11 +163,9 @@
             ],
         };
 
-        // 프리미엄 색상 팔레트
-        const chartColors = [
-            '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e',
-            '#f97316', '#fbbf24', '#10b981', '#14b8a6', '#0ea5e9'
-        ];
+        function allocationColors() {
+            return Array.from({ length: 9 }, (_, index) => themeColor(`--chart-tone-${index + 1}`));
+        }
 
         // 숫자 포맷
         function formatNumber(num) {
@@ -202,72 +264,6 @@
             return `${year}.${month}.${day} ${hour}:${minute}`;
         }
 
-        function formatDateTimeLocalValue(value) {
-            if (!value) return '';
-            const parsed = value instanceof Date ? value : new Date(value);
-            if (Number.isNaN(parsed.getTime())) {
-                return String(value).slice(0, 16);
-            }
-            const year = parsed.getFullYear();
-            const month = String(parsed.getMonth() + 1).padStart(2, '0');
-            const day = String(parsed.getDate()).padStart(2, '0');
-            const hour = String(parsed.getHours()).padStart(2, '0');
-            const minute = String(parsed.getMinutes()).padStart(2, '0');
-            return `${year}-${month}-${day}T${hour}:${minute}`;
-        }
-
-        function getDefaultScheduledExecuteAtValue() {
-            const date = new Date();
-            date.setSeconds(0, 0);
-            if (date.getDay() === 0) {
-                date.setDate(date.getDate() + 1);
-            } else if (date.getDay() === 6) {
-                date.setDate(date.getDate() + 2);
-            }
-            if (date.getHours() >= 20) {
-                date.setDate(date.getDate() + 1);
-            }
-            while (date.getDay() === 0 || date.getDay() === 6) {
-                date.setDate(date.getDate() + 1);
-            }
-            date.setHours(20, 0, 0, 0);
-            return formatDateTimeLocalValue(date);
-        }
-
-        function getScheduledOrderBlockReason() {
-            return scheduledOrderAvailability?.reason || '';
-        }
-
-        function isScheduledOrderWriteAllowed() {
-            return scheduledOrderAvailability?.allowed !== false;
-        }
-
-        async function loadScheduledOrderAvailability(force = false) {
-            const now = Date.now();
-            if (!force && scheduledOrderAvailabilityLoadedAt && (now - scheduledOrderAvailabilityLoadedAt) < 60000) {
-                return scheduledOrderAvailability;
-            }
-            try {
-                const response = await fetch('/api/scheduled-orders/availability', { cache: force ? 'no-store' : 'default' });
-                if (response.status === 401) {
-                    window.location.href = '/login';
-                    return scheduledOrderAvailability;
-                }
-                if (!response.ok) {
-                    throw new Error(await readApiErrorMessage(response, '조건주문 가능 여부를 확인하지 못했습니다.'));
-                }
-                const data = await response.json();
-                scheduledOrderAvailability = data?.availability || scheduledOrderAvailability;
-                scheduledOrderAvailabilityLoadedAt = now;
-                updateInsightTradeModeButton();
-                return scheduledOrderAvailability;
-            } catch (err) {
-                console.error('loadScheduledOrderAvailability error', err);
-                scheduledOrderAvailabilityLoadedAt = now;
-                return scheduledOrderAvailability;
-            }
-        }
-
         function formatInsightPrice(fin, marketType) {
             const price = Number(fin?.currentPrice);
             if (!Number.isFinite(price)) {
@@ -281,99 +277,6 @@
                 return formatJpy(price);
             }
             return `${fin?.currency || ''} ${formatNumber(price.toFixed(2))}`.trim();
-        }
-
-        function getScheduledOrderStatusLabel(status) {
-            switch (String(status || '').toLowerCase()) {
-                case 'scheduled':
-                    return '활성';
-                case 'submitted':
-                    return '제출됨';
-                case 'open':
-                    return '미체결';
-                case 'filled':
-                    return '체결 완료';
-                case 'broker_cancelled':
-                    return '브로커 취소';
-                case 'cancel_requested':
-                    return '취소 요청';
-                case 'cancelled':
-                    return '취소됨';
-                case 'expired':
-                    return '만료됨';
-                case 'failed':
-                    return '실패';
-                case 'executing':
-                    return '실행 중';
-                default:
-                    return '확인 필요';
-            }
-        }
-
-        function getScheduledOrderStatusClass(status) {
-            const normalized = String(status || '').toLowerCase();
-            if (normalized === 'submitted' || normalized === 'open' || normalized === 'cancel_requested' || normalized === 'executing') return 'scheduled-order-status--submitted';
-            if (normalized === 'filled') return 'scheduled-order-status--filled';
-            if (normalized === 'expired') return 'scheduled-order-status--expired';
-            if (normalized === 'cancelled' || normalized === 'broker_cancelled' || normalized === 'failed') return 'scheduled-order-status--cancelled';
-            return 'scheduled-order-status--scheduled';
-        }
-
-        function getScheduledOrderDisplayEndAt(item) {
-            return String(item?.end_at || item?.execute_at || '');
-        }
-
-        function getScheduledOrderNoticeElementId(surface) {
-            return surface === 'insight' ? 'scheduledOrderInsightNotice' : 'scheduledOrderModalNotice';
-        }
-
-        function buildScheduledOrderNoticeHtml(surface) {
-            const notice = scheduledOrderNoticeState[surface];
-            const classNames = ['scheduled-order-notice'];
-            if (notice?.type) {
-                classNames.push('active', `scheduled-order-notice--${notice.type}`);
-            }
-            return `<div class="${classNames.join(' ')}" id="${getScheduledOrderNoticeElementId(surface)}" aria-live="polite">${escapeHtml(notice?.message || '')}</div>`;
-        }
-
-        function renderScheduledOrderNotice(surface) {
-            const element = document.getElementById(getScheduledOrderNoticeElementId(surface));
-            if (!element) return;
-            const notice = scheduledOrderNoticeState[surface];
-            const classNames = ['scheduled-order-notice'];
-            if (notice?.type) {
-                classNames.push('active', `scheduled-order-notice--${notice.type}`);
-            }
-            element.className = classNames.join(' ');
-            element.innerText = notice?.message || '';
-        }
-
-        function setScheduledOrderNotice(surface, message, type = 'info') {
-            scheduledOrderNoticeState[surface] = message ? { message, type } : null;
-            renderScheduledOrderNotice(surface);
-        }
-
-        function clearScheduledOrderNotice(surface) {
-            scheduledOrderNoticeState[surface] = null;
-            renderScheduledOrderNotice(surface);
-        }
-
-        function canBrokerCancelScheduledOrder(item) {
-            const status = String(item?.status || '').toLowerCase();
-            return status === 'submitted' || status === 'open' || status === 'cancel_requested';
-        }
-
-        function canEditScheduledOrder(item) {
-            const status = String(item?.status || '').toLowerCase();
-            return status === 'scheduled' || canBrokerCancelScheduledOrder(item);
-        }
-
-        function isLiveEditableScheduledOrder(item) {
-            return canBrokerCancelScheduledOrder(item);
-        }
-
-        function getScheduledOrderSideLabel(side) {
-            return String(side || '').toLowerCase() === 'sell' ? '매도' : '매수';
         }
 
         function getInsightMarketLabel(marketType) {
@@ -423,7 +326,7 @@
                     : `<span class="profit-minus">-${formatted}</span>`;
             }
             return isBadge
-                ? `<span class="profit-badge" style="background: rgba(255,255,255,0.1); color: #fff;">0.00%</span>`
+                ? `<span class="profit-badge" style="background: var(--surface-subtle); color: var(--text-main);">0.00%</span>`
                 : `<span style="color: var(--text-sub);">0.00%</span>`;
         }
 
@@ -668,7 +571,7 @@
                         </div>
                     </td>
                     <td>${formatNumber(item.qty)}</td>
-                    <td class="js-eval" style="color:#fff; font-weight:600;">${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}</td>
+                    <td class="js-eval" style="color:var(--text-main); font-weight:600;">${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}</td>
                     <td style="color:var(--text-sub);">${pricePrefix}${formatNumber(displayAvg.toFixed(dp))}</td>
                     <td class="js-now">${pricePrefix}${formatNumber(displayNow.toFixed(dp))}</td>
                     <td class="holding-profit-amount ${profitAmtClass}">${profitAmtFormatted}</td>
@@ -799,13 +702,12 @@
             if (!container || !widget) return;
 
             const hasFrame = !!widget.querySelector('iframe');
-            if (!force && hasFrame) {
+            if (!force && hasFrame && widget.dataset.theme === resolvedTheme()) {
                 hideMarketOverviewStatus();
                 return;
             }
 
             if (container.offsetWidth <= 0 || container.offsetHeight <= 0) {
-                scheduleMarketOverviewMount(force, 250);
                 return;
             }
 
@@ -814,6 +716,9 @@
                 marketOverviewVerifyTimer = null;
             }
 
+            widget.dataset.theme = resolvedTheme();
+            const generation = ++marketOverviewGeneration;
+            clearTimeout(marketOverviewLoadTimer);
             widget.innerHTML = '';
             setMarketOverviewStatus('주요 지표 위젯을 불러오는 중입니다...');
 
@@ -821,21 +726,25 @@
             script.type = 'text/javascript';
             script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js';
             script.async = true;
-            script.textContent = JSON.stringify(MARKET_OVERVIEW_WIDGET_CONFIG);
+            script.textContent = JSON.stringify({ ...MARKET_OVERVIEW_WIDGET_CONFIG, colorTheme: resolvedTheme() });
             script.onload = () => {
-                setTimeout(() => {
+                if (generation !== marketOverviewGeneration) return;
+                marketOverviewLoadTimer = setTimeout(() => {
+                    if (generation !== marketOverviewGeneration) return;
                     if (widget.querySelector('iframe')) {
                         hideMarketOverviewStatus();
                     }
                 }, 150);
             };
             script.onerror = () => {
+                if (generation !== marketOverviewGeneration) return;
                 setMarketOverviewStatus('주요 지표 위젯을 불러오지 못했습니다. 네트워크 또는 광고 차단 설정을 확인한 뒤 새로고침해 주세요.', true);
             };
             widget.appendChild(script);
 
             marketOverviewVerifyTimer = setTimeout(() => {
                 marketOverviewVerifyTimer = null;
+                if (generation !== marketOverviewGeneration) return;
                 if (widget.querySelector('iframe')) {
                     hideMarketOverviewStatus();
                     return;
@@ -896,7 +805,7 @@
             scheduleMarketOverviewMount(true);
 
             if (persist) {
-                localStorage.setItem(LAYOUT_STORAGE_KEY, currentLayoutMode);
+                try { localStorage.setItem(LAYOUT_STORAGE_KEY, currentLayoutMode); } catch (_err) { /* Storage is optional. */ }
             }
 
             if (myChart) {
@@ -918,7 +827,6 @@
         }
 
         function closeInsightPane() {
-            clearScheduledOrderNotice('insight');
             if (currentLayoutMode === 'mode2') {
                 setRightPaneState('widgets');
             }
@@ -953,6 +861,7 @@
         // 차트 및 비중 리스트 업데이트
         function updateChart(items, totalEval) {
             const ctx = document.getElementById('portfolioChart').getContext('2d');
+            const chartColors = allocationColors();
 
             let labels = [];
             let data = [];
@@ -972,7 +881,7 @@
                     <div class="alloc-item">
                         <div class="alloc-info">
                             <div class="alloc-color" style="color: ${color}; background-color: ${color};"></div>
-                            <div class="alloc-name">${i.name}</div>
+                            <div class="alloc-name" title="${escapeAttributeValue(i.name)}">${escapeHtml(i.name)}</div>
                         </div>
                         <div class="alloc-percent">${percent}%</div>
                     </div>
@@ -989,7 +898,7 @@
                 myChart.data.datasets[0].backgroundColor = bgColors;
                 myChart.update();
             } else {
-                Chart.defaults.color = '#9ca3af';
+                Chart.defaults.color = themeColor('--chart-text');
                 Chart.defaults.font.family = "'Pretendard', sans-serif";
 
                 myChart = new Chart(ctx, {
@@ -1012,11 +921,8 @@
                         plugins: {
                             legend: { display: false },
                             tooltip: {
-                                backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                                titleColor: '#fff',
-                                bodyColor: '#fff',
+                                ...portfolioTooltipTheme(),
                                 bodyFont: { size: 14, weight: 'bold' },
-                                borderColor: 'rgba(255,255,255,0.1)',
                                 borderWidth: 1,
                                 padding: 16,
                                 cornerRadius: 12,
@@ -1039,7 +945,7 @@
                                 centerText.style.color = bgColors[index];
                             } else {
                                 centerText.innerText = defaultCenterTicker;
-                                centerText.style.color = "#fff";
+                                centerText.style.color = "var(--text-main)";
                             }
                         }
                     }
@@ -1928,10 +1834,10 @@
                             const safeTicker = encodeURIComponent(item.ticker || '');
                             const safeMarket = item.market || 'USA';
                             html += `<div data-ticker="${safeTicker}" data-market="${safeMarket}" onclick="selectSearchResult(decodeURIComponent(this.dataset.ticker), this.dataset.market)"
-                                style="padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;"
-                                onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='transparent'">
+                                style="padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-subtle); transition:background 0.15s;"
+                                onmouseover="this.style.background='var(--surface-hover)'" onmouseout="this.style.background='transparent'">
                                 <div>
-                                    <div style="font-size:13px; font-weight:600; color:#fff;">${item.name}</div>
+                                    <div style="font-size:13px; font-weight:600; color:var(--text-main);">${item.name}</div>
                                     <div style="font-size:11px; color:var(--text-muted);">${item.ticker}</div>
                                 </div>
                                 <span style="font-size:14px;">${mktBadge}</span>
@@ -1991,15 +1897,15 @@
                         let details = '';
                         if ((item.actual && item.actual !== 'None') || (item.forecast && item.forecast !== 'None') || (item.previous && item.previous !== 'None')) {
                             details = `<div style = "color: var(--text-muted); font-size: 12px; margin-top: 4px;" > `;
-                            details += `실제: <span style="color:#fff;">${item.actual && item.actual !== 'None' ? item.actual : 'None'}</span> <span style="margin:0 4px; color:rgba(255,255,255,0.2);">/</span> `;
-                            details += `예측: <span style="color:#fff;">${item.forecast && item.forecast !== 'None' ? item.forecast : 'None'}</span> <span style="margin:0 4px; color:rgba(255,255,255,0.2);">/</span> `;
-                            details += `이전: <span style="color:#fff;">${item.previous && item.previous !== 'None' ? item.previous : 'None'}</span>`;
+                            details += `실제: <span style="color:var(--text-main);">${item.actual && item.actual !== 'None' ? item.actual : 'None'}</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
+                            details += `예측: <span style="color:var(--text-main);">${item.forecast && item.forecast !== 'None' ? item.forecast : 'None'}</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
+                            details += `이전: <span style="color:var(--text-main);">${item.previous && item.previous !== 'None' ? item.previous : 'None'}</span>`;
                             details += `</div> `;
                         } else {
                             details = `<div style = "color: var(--text-muted); font-size: 12px; margin-top: 4px;" > `;
-                            details += `실제: <span style="color:#fff;">None</span> <span style="margin:0 4px; color:rgba(255,255,255,0.2);">/</span> `;
-                            details += `예측: <span style="color:#fff;">None</span> <span style="margin:0 4px; color:rgba(255,255,255,0.2);">/</span> `;
-                            details += `이전: <span style="color:#fff;">None</span>`;
+                            details += `실제: <span style="color:var(--text-main);">None</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
+                            details += `예측: <span style="color:var(--text-main);">None</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
+                            details += `이전: <span style="color:var(--text-main);">None</span>`;
                             details += `</div> `;
                         }
 
@@ -2014,7 +1920,7 @@
                                 <div class="cal-desc" style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
                                     <div style="display: flex; align-items: flex-start; gap: 6px;">
                                         <div style="font-size: 10px; letter-spacing: 1px; flex-shrink: 0; padding-top: 3px;">${stars}</div>
-                                        <div style="font-weight: 500; color: #f8fafc; line-height: 1.4; word-break: keep-all;">
+                                        <div style="font-weight: 500; color: var(--text-main); line-height: 1.4; word-break: keep-all;">
                                             <span style="color: var(--text-muted);"></span> ${titleText}
                                         </div>
                                     </div>
@@ -2040,22 +1946,14 @@
             }
         }
 
-        function updateInsightTradeModeButton() {
-            const button = document.getElementById('insightTradeModeBtn');
-            if (!button) return;
-            const enabled = !!currentInsightState;
-            button.disabled = !enabled;
-            button.classList.toggle('active', enabled && insightTradeMode);
-            button.title = !enabled
-                ? '종목을 선택해 주세요.'
-                : isScheduledOrderWriteAllowed()
-                    ? '국내 조건주문 입력'
-                    : getScheduledOrderBlockReason();
-        }
-
         function getInsightDisplayName(state) {
             if (state?.status === 'success') {
-                return state.data?.financials?.shortName || state.ticker;
+                const providerName = state.data?.financials?.shortName;
+                if (state.data?.source === 'saveticker' && (!providerName || providerName === state.ticker)) {
+                    const holding = cachedItems.find(item => item.type === state.marketType && normalizeTicker(item.ticker) === normalizeTicker(state.ticker));
+                    if (holding?.name) return holding.name;
+                }
+                return providerName || state.ticker;
             }
             return state?.ticker || '-';
         }
@@ -2075,7 +1973,7 @@
             const ticker = escapeHtml(state?.ticker || '-');
             const title = escapeHtml(getInsightDisplayName(state));
             const price = escapeHtml(getInsightDisplayPrice(state));
-            const logoHtml = state?.imgHtml || `<div style="width:40px; height:40px; border-radius:50%; background:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; color:var(--text-sub); font-size:13px; font-weight:700;">${escapeHtml(String(state?.ticker || '?').slice(0, 2))}</div>`;
+            const logoHtml = state?.imgHtml || `<div style="width:40px; height:40px; border-radius:50%; background:var(--surface-subtle); display:flex; align-items:center; justify-content:center; color:var(--text-sub); font-size:13px; font-weight:700;">${escapeHtml(String(state?.ticker || '?').slice(0, 2))}</div>`;
             return `
                 <div class="insight-top-bar animate-enter">
                     <div style="display:flex; align-items:center; gap:12px; min-width:0;">
@@ -2105,7 +2003,7 @@
         function buildInsightErrorHtml(state) {
             return `
                 ${buildInsightIdentityHtml(state)}
-                <div class="scheduled-order-card-error animate-enter" style="animation-delay:0.05s;">
+                <div class="form-notice form-notice--error active animate-enter" style="animation-delay:0.05s;">
                     ${escapeHtml(state?.message || '정보를 불러오는 데 실패했습니다.')}
                 </div>
             `;
@@ -2117,104 +2015,274 @@
             return `<div class="${className}" id="tv_chart_container"${styleAttr}></div>`;
         }
 
-        function getScheduledOrderLifecycleCopy(item) {
-            const status = String(item?.status || '').toLowerCase();
-            switch (status) {
-                case 'scheduled':
-                    return '종료 시각 전까지 조건을 유지하며, 미체결이면 다음 가능 시간에 다시 제출될 수 있습니다.';
-                case 'submitted':
-                case 'executing':
-                    return '브로커에 제출된 주문입니다. 종료 시각 전까지 최신 진행 상황을 계속 추적합니다.';
-                case 'open':
-                    return '브로커에 제출된 뒤 미체결 상태입니다. 종료 시각 또는 체결 전까지 계속 추적합니다.';
-                case 'cancel_requested':
-                    return '취소 요청을 보냈습니다. 브로커 응답을 기다리는 중입니다.';
-                case 'filled':
-                    return '조건주문이 체결되어 종료되었습니다.';
-                case 'expired':
-                    return '종료 시각이 지나 조건주문이 자동 종료되었습니다.';
-                case 'cancelled':
-                case 'broker_cancelled':
-                    return '조건주문이 취소되어 종료되었습니다.';
-                case 'failed':
-                    return '주문 처리 중 오류가 있어 재확인이 필요합니다.';
-                default:
-                    return '조건주문 상태를 확인해 주세요.';
+        // SaveTicker percentages are already expressed as percent, not fractions.
+        function insightFinite(value) {
+            if (!['number', 'string'].includes(typeof value) || (typeof value === 'string' && !value.trim())) return null;
+            const number = Number(value);
+            return Number.isFinite(number) ? number : null;
+        }
+
+        function insightNumber(value, suffix = '', compact = false) {
+            const number = insightFinite(value);
+            return number === null ? '—' : escapeHtml(number.toLocaleString('en-US', {
+                maximumFractionDigits: 2, ...(compact ? { notation: 'compact' } : {}),
+            }) + suffix);
+        }
+
+        function insightDate(value) {
+            if (typeof value === 'string') {
+                // Calendar dates describe reporting periods; do not shift them by timezone.
+                const day = value.slice(0, 10);
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '—';
+                const calendar = new Date(day + 'T00:00:00Z');
+                if (!Number.isFinite(calendar.getTime()) || calendar.toISOString().slice(0, 10) !== day) return '—';
+                if (value === day) return escapeHtml(day);
+                if (!/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value)) return '—';
+            } else if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+            const timestamp = new Date(value).getTime();
+            const koreanTime = new Date(timestamp + 9 * 60 * 60 * 1000);
+            if (!Number.isFinite(timestamp) || !Number.isFinite(koreanTime.getTime())) return '—';
+            return escapeHtml(koreanTime.toISOString().slice(0, 16).replace('T', ' ') + ' KST');
+        }
+
+        function insightSafeUrl(value) {
+            try {
+                const url = new URL(String(value));
+                return ['https:', 'http:'].includes(url.protocol) ? escapeHtml(url.href) : '';
+            } catch (_) { return ''; }
+        }
+
+        let insightDetailCharts = [];
+
+        function disposeInsightDetailCharts() {
+            insightDetailCharts.forEach(chart => { if (chart.canvas) chart.canvas.onkeydown = null; try { chart.destroy(); } catch (_) { /* Already detached. */ } });
+            insightDetailCharts = [];
+        }
+
+        function insightExact(value, suffix = '') {
+            const number = insightFinite(value);
+            return number === null ? '—' : escapeHtml(number.toLocaleString('en-US', { maximumFractionDigits: 2 }) + suffix);
+        }
+
+        function saveTickerQuarters(section) {
+            const rows = Array.isArray(section?.quarters) ? section.quarters.filter(q => q && typeof q === 'object').slice(0, 5).reverse() : [];
+            const rank = label => {
+                const match = String(label).match(/^'?(\d{2}|\d{4})\s+Q([1-4])$/);
+                return match ? (Number(match[1]) + (match[1].length === 2 ? 2000 : 0)) * 4 + Number(match[2]) : null;
+            };
+            return rows.sort((a, b) => rank(a.label) !== null && rank(b.label) !== null ? rank(a.label) - rank(b.label) : 0);
+        }
+
+        function saveTickerDetailChartSpecs(state) {
+            if (state?.status !== 'success' || !['available', 'partial'].includes(state.data?.saveticker?.status)) return [];
+            const s = state.data.saveticker.sections || {};
+            const specs = [];
+            const nonnegative = value => { const n = insightFinite(value); return n !== null && n >= 0 ? n : null; };
+            const count = value => { const n = nonnegative(value); return Number.isInteger(n) ? n : null; };
+            const quarters = saveTickerQuarters(s.revenue);
+            if (quarters.some(q => nonnegative(q.revenue) !== null)) specs.push({ id: 'revenue', title: '분기별 매출 · USD', labels: quarters.map(q => String(q.label ?? '—')), unit: 'USD', datasets: [{ label: '매출', data: quarters.map(q => nonnegative(q.revenue)), color: 'blue' }] });
+            const a = s.analyst;
+            const counts = ['buy', 'hold', 'sell'].map(key => count(a?.dist?.[key]));
+            const total = counts.reduce((sum, n) => sum + (n ?? 0), 0);
+            if (counts.every(n => n !== null) && total > 0 && count(a?.analystCount) === total) specs.push({ id: 'consensus', title: `애널리스트 의견 · 총 ${total}명`, labels: ['의견 비중'], horizontal: true, stacked: true, unit: '%', datasets: counts.map((n, i) => ({ label: `${['매수', '보유', '매도'][i]} ${n}명`, data: [n / total * 100], color: ['teal', 'neutral', 'coral'][i] })) });
+            const low = nonnegative(a?.target?.low), mean = nonnegative(a?.target?.mean), high = nonnegative(a?.target?.high);
+            const current = nonnegative(s.header?.price ?? state.data?.financials?.currentPrice);
+            if (low !== null && mean !== null && high !== null && low <= mean && mean <= high) {
+                specs.push({ id: 'targets', title: '목표가 범위와 현재가 · USD', scatter: true, unit: 'USD', datasets: [
+                    { label: '목표가 범위', data: [{ x: low, y: 0 }, { x: high, y: 0 }], color: 'neutral', showLine: true, pointStyle: 'rect' },
+                    { label: '평균 목표가', data: [{ x: mean, y: 0 }], color: 'blue', pointStyle: 'circle' },
+                    ...(current === null ? [] : [{ label: '현재가', data: [{ x: current, y: 0.4 }], color: 'teal', pointStyle: 'triangle' }]),
+                ] });
+            }
+            const o = s.options;
+            if (o && o.optionable !== false) {
+                const shares = [['거래량', o.volumeShare], ['미결제약정', o.openInterestShare], ['프리미엄', o.premiumShare]].filter(([, pair]) => {
+                    const call = nonnegative(pair?.call), put = nonnegative(pair?.put);
+                    return call !== null && put !== null && call <= 100 && put <= 100 && Math.abs(call + put - 100) <= 0.05;
+                });
+                if (shares.length) specs.push({ id: 'shares', title: '옵션 콜·풋 비중', labels: shares.map(([label]) => label), horizontal: true, stacked: true, unit: '%', datasets: ['call', 'put'].map((key, i) => ({ label: i ? '풋' : '콜', data: shares.map(([, pair]) => Number(pair[key])), color: i ? 'coral' : 'teal' })) });
+                const ratios = ['d3', 'd7', 'd30'].map(key => ({ label: `${key.slice(1)}일 평균`, value: o.optionVolumeVsAvg?.windows?.[key]?.available === true ? nonnegative(o.optionVolumeVsAvg.windows[key].ratioPct) : null }));
+                if (ratios.some(r => r.value !== null)) specs.push({ id: 'volume-comparison', title: '동일 시각 누적 거래량 · 평균 대비', labels: ratios.map(r => r.label), horizontal: true, unit: '%', reference: 100, datasets: [{ label: '평균 대비', data: ratios.map(r => r.value), color: 'blue' }] });
+            }
+            const buys = count(s.insider?.buyCount), sells = count(s.insider?.sellCount);
+            if (buys !== null && sells !== null) specs.push({ id: 'insider-counts', title: `최근 ${insightFinite(s.insider?.window) ?? '—'}일 내부자 거래 건수`, labels: ['매수', '매도'], horizontal: true, unit: '건', datasets: [{ label: '거래 건수', data: [buys, sells], color: ['teal', 'coral'] }] });
+            return specs;
+        }
+
+        function initializeInsightDetailCharts(state) {
+            disposeInsightDetailCharts();
+            if (typeof Chart === 'undefined') return;
+            const palette = resolvedTheme() === 'light'
+                ? { blue: '#2865b4', teal: '#087d72', coral: '#bc4d42', neutral: '#7b808a' }
+                : { blue: '#69aaff', teal: '#42c7b4', coral: '#f38b7c', neutral: '#969eac' };
+            const textColor = themeColor('--chart-text');
+            const gridColor = themeColor('--chart-grid');
+            for (const spec of saveTickerDetailChartSpecs(state)) {
+                const canvas = document.getElementById(`st-chart-${spec.id}`);
+                if (!canvas) continue;
+                const valueAxis = spec.horizontal || spec.scatter ? 'x' : 'y';
+                const format = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2, notation: 'compact' }) + (spec.unit === 'USD' ? ' USD' : spec.unit);
+                const config = {
+                    type: spec.scatter ? 'scatter' : 'bar',
+                    data: { labels: spec.labels, datasets: spec.datasets.map(d => ({ ...d, backgroundColor: Array.isArray(d.color) ? d.color.map(c => palette[c]) : palette[d.color], borderColor: palette[d.color] || palette.neutral, borderWidth: spec.scatter ? 2 : 0, pointRadius: spec.scatter ? 5 : undefined, pointHoverRadius: 7, borderRadius: 2, maxBarThickness: 30 })) },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, indexAxis: spec.horizontal ? 'y' : 'x', color: textColor,
+                        animation: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? false : { duration: 250 },
+                        interaction: { mode: 'nearest', intersect: false },
+                        plugins: {
+                            legend: { display: !!(spec.stacked || spec.scatter), position: 'bottom', labels: { color: textColor, usePointStyle: true, boxWidth: 8, font: { size: 10 } } },
+                            tooltip: { ...portfolioTooltipTheme(), callbacks: { label: ctx => `${ctx.dataset.label}: ${Number(spec.scatter ? ctx.parsed.x : ctx.parsed[valueAxis]).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${spec.unit}` } },
+                        },
+                        scales: {
+                            x: { stacked: !!spec.stacked, ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } },
+                            y: { stacked: !!spec.stacked, ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } },
+                        },
+                    },
+                };
+                Object.assign(config.options.scales[valueAxis], { beginAtZero: !spec.scatter, min: spec.scatter ? undefined : 0, max: spec.stacked ? 100 : undefined, suggestedMax: spec.reference ? 120 : undefined, ticks: { color: textColor, font: { size: 10 }, callback: format } });
+                if (spec.scatter) config.options.scales.y = { display: false, min: -0.4, max: 0.8 };
+                if (spec.unit === '건') config.options.scales[valueAxis].ticks.precision = 0;
+                if (spec.horizontal) config.plugins = [{ id: 'valueLabels', afterDatasetsDraw(chart) {
+                    const ctx = chart.ctx; ctx.save(); ctx.font = '10px sans-serif'; ctx.textBaseline = 'middle';
+                    chart.data.datasets.forEach((dataset, datasetIndex) => {
+                        chart.getDatasetMeta(datasetIndex).data.forEach((bar, index) => {
+                            const value = dataset.data[index];
+                            if (value === null || (spec.stacked && bar.width < 32)) return;
+                            const label = Number(value).toLocaleString('en-US', { maximumFractionDigits: 1 }) + spec.unit;
+                            const inside = bar.width > ctx.measureText(label).width + 14;
+                            ctx.fillStyle = inside ? (resolvedTheme() === 'light' ? '#ffffff' : '#17212d') : textColor;
+                            ctx.textAlign = spec.stacked ? 'center' : (inside ? 'right' : 'left');
+                            ctx.fillText(label, spec.stacked ? (bar.base + bar.x) / 2 : bar.x + (inside ? -6 : 5), bar.y);
+                        });
+                    });
+                    ctx.restore();
+                } }];
+                if (spec.reference) config.plugins = [...(config.plugins || []), { id: 'referenceLine', afterDatasetsDraw(chart) {
+                    const x = chart.scales.x.getPixelForValue(spec.reference), { top, bottom } = chart.chartArea;
+                    const ctx = chart.ctx; ctx.save(); ctx.strokeStyle = textColor; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke(); ctx.restore();
+                } }];
+                try {
+                    const chart = new Chart(canvas, config);
+                    insightDetailCharts.push(chart);
+                    let focused = -1;
+                    canvas.onkeydown = event => {
+                        if (!['ArrowLeft', 'ArrowRight', 'Escape'].includes(event.key)) return;
+                        event.preventDefault();
+                        const points = chart.data.datasets.flatMap((dataset, datasetIndex) => dataset.data.map((value, index) => value === null ? null : { datasetIndex, index }).filter(Boolean));
+                        if (!points.length) return;
+                        focused = event.key === 'Escape' ? -1 : (focused + (event.key === 'ArrowLeft' ? -1 : 1) + points.length) % points.length;
+                        const active = focused < 0 ? [] : [points[focused]];
+                        chart.setActiveElements(active);
+                        const point = active.length ? chart.getDatasetMeta(active[0].datasetIndex).data[active[0].index].getCenterPoint() : { x: 0, y: 0 };
+                        chart.tooltip?.setActiveElements(active, point);
+                        chart.update('none');
+                    };
+                } catch (error) {
+                    canvas.closest('.st-chart-figure')?.remove();
+                    console.warn('Insight detail chart unavailable:', spec.id);
+                }
             }
         }
 
-        function isActiveScheduledOrderStatus(status) {
-            const normalized = String(status || '').toLowerCase();
-            return normalized === 'scheduled' || normalized === 'submitted' || normalized === 'open' || normalized === 'cancel_requested' || normalized === 'executing';
-        }
-
-        function buildInsightTradeHtml(state) {
-            const isDomestic = state?.marketType === 'KOR';
-            const pdno = normalizeTicker(state?.ticker || '');
-            const fin = state?.data?.financials || {};
-            const defaultPrice = Number.isFinite(Number(fin.currentPrice)) ? String(Math.round(Number(fin.currentPrice))) : '';
-
-            if (!isDomestic) {
-                return `
-                    ${buildInsightIdentityHtml(state)}
-                    <div class="scheduled-order-disabled animate-enter" style="animation-delay:0.05s;">
-                        현재 웹 조건주문은 국내 종목만 지원합니다. ${escapeHtml(getInsightMarketLabel(state?.marketType))} 종목은 정보 보기만 제공됩니다.
-                    </div>
-                `;
+        function buildSaveTickerInsightHtml(state) {
+            const data = state.data || {};
+            const st = data.saveticker || {};
+            const sections = st.sections || {};
+            const h = sections.header || {};
+            const k = sections.key_metrics || {};
+            const money = value => insightFinite(value) === null ? '—' : '$' + insightNumber(value);
+            const text = value => value === null || value === undefined || value === '' ? '—' : escapeHtml(value);
+            const module = (title, body, meta = '') => `<section class="st-section"><div class="st-heading"><h3>${title}</h3>${meta ? `<span>${meta}</span>` : ''}</div>${body}</section>`;
+            const unavailable = '<p class="st-note">이 항목은 현재 제공되지 않습니다.</p>';
+            const exactMoney = value => { const n = insightFinite(value); return n === null ? '—' : (n < 0 ? '-$' : '$') + insightExact(Math.abs(n)); };
+            const table = (id, headings, rows) => `<div class="st-table-wrap"><table class="st-table st-data-table" id="st-table-${id}"><thead><tr>${headings.map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map((cell, i) => i === 0 ? `<th scope="row">${cell}</th>` : `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+            const chartSpecs = saveTickerDetailChartSpecs(state);
+            const chart = id => {
+                const spec = chartSpecs.find(s => s.id === id);
+                if (typeof Chart === 'undefined' || !spec) return '';
+                return `<figure class="st-chart-figure"><figcaption>${escapeHtml(spec.title)}</figcaption><div class="st-chart-wrap${spec.scatter || spec.id === 'consensus' ? ' st-chart-wrap--short' : ''}"><canvas id="st-chart-${id}" role="img" tabindex="0" aria-label="${escapeHtml(spec.title)}. 화살표 키로 값 탐색, Escape로 해제. 정확한 값은 다음 표에 제공됩니다." aria-describedby="st-table-${id}"></canvas></div></figure>`;
+            };
+            const price = insightFinite(h.price) ?? insightFinite(data.financials?.currentPrice);
+            const identityState = { ...state, imgHtml: '', data: { ...data, financials: { ...data.financials, currentPrice: price ?? '—' } } };
+            const statuses = { open: '정규장', closed: '장 마감', pre: '프리마켓', post: '애프터마켓', premarket: '프리마켓', afterhours: '애프터마켓' };
+            let html = `<div class="st-insight">${buildInsightChartHtml()}${buildInsightIdentityHtml(identityState)}
+                <div class="st-source"><strong>SaveTicker${st.status === 'partial' ? ' · 일부 제공' : ''}</strong><span>${text(statuses[h.marketStatus] || h.marketStatus)} · 전일 종가 대비 ${insightNumber(h.changePercent, '%')}</span></div>
+                <p class="st-note st-freshness">시세 ${insightDate(h.asOf)} · 조회 ${insightDate(st.fetched_at)} · 최대 5분 캐시</p>`;
+            const metricRows = [
+                ['PER', insightExact(k.per?.value, '배'), `업종 평균 ${insightExact(k.per?.compare, '배')}`],
+                ['EPS', exactMoney(k.eps?.value), `전년 대비 ${insightExact(k.eps?.compare, '%')}`],
+                ['ROE', insightExact(k.roe?.value, '%'), text(k.roe?.sectorPercentile)],
+                ['매출', exactMoney(k.revenueTtm?.value), `${text(k.periodLabel)} · 전년 대비 ${insightExact(k.revenueTtm?.compare, '%')}`],
+                ['배당 수익률', insightExact(k.dividendYield?.value, '%'), `분기 배당 ${exactMoney(k.dividendYield?.compare)}`],
+                ['시가총액', exactMoney(h.marketCap), `시세 ${insightDate(h.asOf)}`],
+                ['공매도 비중', insightExact(k.shortInterestPct?.value, '%'), `2주 변화 ${insightExact(k.shortInterestPct?.compare, '%p')}${k.shortBasis === 'float' ? ' · 유통주식 기준' : ''}`],
+                ['Days to cover', insightExact(k.daysToCover?.value, '일'), `2주 변화 ${insightExact(k.daysToCover?.compare, '일')}`],
+            ];
+            html += module('핵심 지표', sections.key_metrics ? `<div class="st-core-tables">${table('core-a', ['지표', '값', '비교 · 기준'], metricRows.slice(0, 4))}${table('core-b', ['지표', '값', '비교 · 기준'], metricRows.slice(4))}</div><p class="st-note">지표 기준 ${insightDate(k.asOf)} · 공매도 기준 ${insightDate(k.shortAsOf)}</p>` : unavailable);
+            const range = (label, values) => {
+                const low = insightFinite(values?.low), high = insightFinite(values?.high), current = insightFinite(values?.current) ?? price;
+                const pos = low !== null && high !== null && current !== null && high > low ? Math.min(100, Math.max(0, (current - low) / (high - low) * 100)) : null;
+                return `<div class="st-range"><div><span>${label}</span><strong>${money(low)} — ${money(high)}</strong></div>${pos === null ? '' : `<div class="st-range-track" aria-hidden="true"><i style="left:${pos}%"></i></div>`}</div>`;
+            };
+            html += `<div class="st-ranges">${range('당일 범위', h.dayRange)}${range('52주 범위', h.week52Range)}</div>`;
+            // Keep the existing single chart mount and its disposal/theme lifecycle.
+            html += '<div class="st-details">';
+            const revenue = sections.revenue;
+            const quarters = saveTickerQuarters(revenue);
+            const revenueSection = module('분기 매출', quarters.length ? chart('revenue') + table('revenue', ['회계 분기', '매출 (USD)', '전년 대비'], quarters.map(q => [text(q.label), exactMoney(q.revenue), insightExact(q.yoy, '%')])) : unavailable, text(revenue?.source));
+            const a = sections.analyst;
+            const firms = Array.isArray(a?.recent) ? a.recent.filter(f => f && typeof f === 'object') : [];
+            const analystSection = module('애널리스트', a ? chart('consensus') + table('consensus', ['의견', '인원'], [
+                ['매수', insightExact(a.dist?.buy, '명')], ['보유', insightExact(a.dist?.hold, '명')], ['매도', insightExact(a.dist?.sell, '명')], ['제공 총원', insightExact(a.analystCount, '명')],
+            ]) + chart('targets') + table('targets', ['가격 기준', 'USD'], [
+                ['최저 목표가', exactMoney(a.target?.low)], ['평균 목표가', exactMoney(a.target?.mean)], ['최고 목표가', exactMoney(a.target?.high)], ['현재가', exactMoney(price)],
+            ]) + (firms.length ? table('analysts', ['증권사 / 날짜', '평가', '이전 목표가', '현재 목표가'], firms.map(f => [`${text(f.firmKo || f.firm)}<small>${insightDate(f.at)}</small>`, text(f.rating), exactMoney(f.prevTarget), exactMoney(f.target)])) : '') : unavailable, a ? `${text(a.provider)} · ${insightDate(a.asOf)}` : '');
+            const o = sections.options;
+            let optionsHtml = unavailable;
+            if (o?.optionable === false) optionsHtml = '<p class="st-note">옵션이 제공되지 않는 종목입니다.</p>';
+            else if (o) {
+                optionsHtml = `<p class="st-note">스냅샷 ${insightDate(o.snapshotDate)}${o.snapshotIsPriorDay ? ' · 전일 스냅샷' : ''}<br>시세 기준 ${insightDate(o.asOf)}<br>배치 ${insightDate(o.batchDate)}${o.batchIsPriorDay ? ' · 전일 배치' : ''}${o.batchIsProvisional ? ' · 잠정 집계' : ''}</p>`;
+                optionsHtml += table('option-summary', ['거래 지표', '값'], [
+                    ['당일 거래량 · 전체 만기', insightExact(o.volume, '계약')], ['PCR · 거래량', insightExact(o.putCallRatioVolume)], ['PCR · 미결제약정', insightExact(o.putCallRatioOpenInterest)],
+                ]);
+                optionsHtml += chart('shares') + table('shares', ['구분', '콜', '풋'], [['거래량 비중', o.volumeShare], ['미결제약정 비중', o.openInterestShare], ['프리미엄 비중', o.premiumShare]].map(([label, pair]) => [label, insightExact(pair?.call, '%'), insightExact(pair?.put, '%')]));
+                if (chartSpecs.find(spec => spec.id === 'shares')?.labels.length !== 3) optionsHtml += '<p class="st-note">일부 비중은 데이터가 부족해 차트에서 제외했습니다.</p>';
+                optionsHtml += chart('volume-comparison') + table('volume-comparison', ['동일 시각 평균', '누적 거래량 대비'], ['d3', 'd7', 'd30'].map(key => [`${key.slice(1)}일 평균 대비`, o.optionVolumeVsAvg?.windows?.[key]?.available === true ? insightExact(o.optionVolumeVsAvg.windows[key].ratioPct, '%') : '—']));
+                optionsHtml += `<p class="st-note">현재 시각까지의 누적 거래량 / 과거 동일 시각 평균 · 점선 100%가 평소 수준</p><p class="st-note">최근 만기 ${insightDate(o.nearestExpiry)} · 잔여 ${insightNumber(o.daysToExpiry, '일')}</p>`;
+                optionsHtml += table('option-levels', ['가격 수준', 'USD'], [['옵션 기준 주가', o.referencePrice], ['Max Pain', o.maxPain], ['Call Wall', o.callWall], ['Put Wall', o.putWall], ['Gamma Flip', o.gammaFlip]].map(([label, value]) => [label, exactMoney(value)]));
+                optionsHtml += `<p class="st-gex">Net GEX <strong>${exactMoney(o.gammaPer1Pct)}</strong><small>주가 1% 변동 기준 · USD</small></p>`;
             }
-
-            if (state?.status === 'loading') {
-                return buildInsightLoadingHtml(state);
+            const optionsSection = module('옵션 수급', optionsHtml);
+            const insider = sections.insider;
+            const transactions = Array.isArray(insider?.recent) ? insider.recent.filter(t => t && typeof t === 'object') : [];
+            const insiderSection = module('내부자 거래', insider ? `<p class="st-note">최근 ${insightNumber(insider.window, '일')} · ${text(insider.label)}</p>` + chart('insider-counts') + table('insider-counts', ['거래 집계', '값'], [
+                ['매수 건수', insightExact(insider.buyCount, '건')], ['매도 건수', insightExact(insider.sellCount, '건')], ['기간 순거래 금액 (USD)', exactMoney(insider.netValue)],
+            ]) + (transactions.length ? table('insider-transactions', ['거래일 / 이름', '거래 유형', '금액 (USD)'], transactions.map(t => [`${insightDate(t.transactionDate)}<small>${text(t.name)} · ${text(t.title)}</small>`, text(({ P: '매수 (P)', S: '매도 (S)' })[t.transactionCode] || t.transactionCode), exactMoney(t.value)])) : '') : unavailable, insider ? `SEC · ${insightDate(insider.asOf)}` : '');
+            html += `<div class="st-detail-column">${revenueSection}${optionsSection}</div><div class="st-detail-column">${analystSection}${insiderSection}</div>`;
+            const headlines = Array.isArray(sections.news?.items) ? sections.news.items.filter(n => n && typeof n === 'object').slice(0, 6) : [];
+            if (headlines.length) {
+                html += module('관련 뉴스', `<ul class="st-list st-news">${headlines.map(n => {
+                    let href = '';
+                    try {
+                        const url = new URL(String(n.link));
+                        if (url.origin === 'https://saveticker.com' && !url.username && !url.password && /^\/news\/[^/]+$/.test(url.pathname)) href = escapeHtml(url.href);
+                    } catch (_) { /* Invalid provider links render as plain text. */ }
+                    const title = href ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text(n.title)}</a>` : `<strong>${text(n.title)}</strong>`;
+                    return `<li><div>${title}<small>${text(n.publisher)} · ${insightDate(n.published_at)}</small></div></li>`;
+                }).join('')}</ul>`, 'SaveTicker');
             }
-
-            return `
-                ${buildInsightIdentityHtml(state)}
-                <div class="scheduled-order-trade-stack">
-                    ${buildScheduledOrderNoticeHtml('insight')}
-                    ${buildInsightChartHtml('animate-enter', 'animation-delay:0.1s;')}
-                    <form class="scheduled-order-form animate-enter" style="animation-delay:0.15s;" id="insightScheduledOrderForm" onsubmit="submitInsightScheduledOrder(event)">
-                        <div class="scheduled-order-form-grid">
-                            <label class="scheduled-order-field">
-                                <span>종료 시각</span>
-                                <input type="datetime-local" name="end_at" value="${escapeHtml(getDefaultScheduledExecuteAtValue())}" required>
-                            </label>
-                            <label class="scheduled-order-field">
-                                <span>매매 구분</span>
-                                <select name="side" required>
-                                    <option value="buy">매수</option>
-                                    <option value="sell">매도</option>
-                                </select>
-                            </label>
-                            <label class="scheduled-order-field">
-                                <span>수량</span>
-                                <input type="number" name="ord_qty" min="1" step="1" value="1" required>
-                            </label>
-                            <label class="scheduled-order-field">
-                                <span>주문 단가</span>
-                                <input type="text" name="ord_unpr" inputmode="decimal" value="${escapeHtml(defaultPrice)}" placeholder="예: 70000" required>
-                            </label>
-                        </div>
-                        <input type="hidden" name="pdno" value="${escapeHtml(pdno)}">
-                        <input type="hidden" name="ord_dvsn" value="00">
-                        <input type="hidden" name="excg_id_dvsn_cd" value="SOR">
-                        <input type="hidden" name="sll_type" value="">
-                        <input type="hidden" name="cndt_pric" value="">
-                        <input type="hidden" name="note" value="">
-                        <div class="scheduled-order-form-actions">
-                            <button type="submit" class="btn-modal btn-confirm" id="insightScheduledOrderSubmitBtn">조건주문 등록</button>
-                        </div>
-                    </form>
-                </div>
-            `;
+            return html + '</div></div>';
         }
 
         function buildInsightInfoHtml(state) {
             const data = state.data || {};
+            if (['available', 'partial'].includes(data.saveticker?.status)) return buildSaveTickerInsightHtml(state);
             const fin = data.financials || {};
             const opt = data.options;
             const news = data.news;
             const rc = Number(fin.currentPrice || 0);
-            let html = `${buildInsightIdentityHtml(state)}
+            let html = `<div class="insight-flat">${buildInsightChartHtml()}${buildInsightIdentityHtml(state)}
+                <p class="st-note">출처: Yahoo Finance${data.saveticker ? ' · SaveTicker 미제공' : ''}</p>
                 <div class="fin-grid animate-enter" style="animation-delay: 0.1s;">
                     <div class="fin-card">
                         <span>Forward P/E <span style="text-transform:none; opacity:0.6;">선행 PER</span></span>
@@ -2238,15 +2306,15 @@
                     </div>
                     <div class="fin-card">
                         <span>Short <span style="text-transform:none; opacity:0.6;">공매도비중</span></span>
-                        <span style="color: ${fin.shortPercentOfFloat !== 'N/A' && parseFloat(fin.shortPercentOfFloat) > 0.1 ? 'var(--loss)' : '#fff'}">${fin.shortPercentOfFloat !== 'N/A' ? (parseFloat(fin.shortPercentOfFloat) * 100).toFixed(2) + '%' : 'N/A'}</span>
+                        <span style="color: ${fin.shortPercentOfFloat !== 'N/A' && parseFloat(fin.shortPercentOfFloat) > 0.1 ? 'var(--loss)' : 'var(--text-main)'}">${fin.shortPercentOfFloat !== 'N/A' ? (parseFloat(fin.shortPercentOfFloat) * 100).toFixed(2) + '%' : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
                         <span>Target <span style="text-transform:none; opacity:0.6;">목표가</span></span>
-                        <span style="color: ${fin.targetMeanPrice !== 'N/A' && parseFloat(fin.targetMeanPrice) > rc ? 'var(--profit)' : (fin.targetMeanPrice !== 'N/A' ? 'var(--loss)' : '#fff')}">${fin.targetMeanPrice !== 'N/A' ? fin.currency + ' ' + parseFloat(fin.targetMeanPrice).toFixed(2) : 'N/A'}</span>
+                        <span style="color: ${fin.targetMeanPrice !== 'N/A' && parseFloat(fin.targetMeanPrice) > rc ? 'var(--profit)' : (fin.targetMeanPrice !== 'N/A' ? 'var(--loss)' : 'var(--text-main)')}">${fin.targetMeanPrice !== 'N/A' ? fin.currency + ' ' + parseFloat(fin.targetMeanPrice).toFixed(2) : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
                         <span style="text-transform: none;">Analyst <span style="opacity:0.6;">분석가 평가</span></span>
-                        <span style="text-transform: capitalize; color: ${fin.recommendation === 'buy' || fin.recommendation === 'strong_buy' ? 'var(--profit)' : (fin.recommendation === 'sell' || fin.recommendation === 'strong_sell' ? 'var(--loss)' : '#fff')}">${(fin.recommendation || 'N/A').replace('_', ' ')}</span>
+                        <span style="text-transform: capitalize; color: ${fin.recommendation === 'buy' || fin.recommendation === 'strong_buy' ? 'var(--profit)' : (fin.recommendation === 'sell' || fin.recommendation === 'strong_sell' ? 'var(--loss)' : 'var(--text-main)')}">${(fin.recommendation || 'N/A').replace('_', ' ')}</span>
                     </div>
                 </div>`;
 
@@ -2256,27 +2324,26 @@
                 const range52 = high52 - low52;
                 const pos52 = range52 > 0 ? Math.min(100, Math.max(0, ((rc - low52) / range52) * 100)) : 50;
                 html += `
-                    <div class="animate-enter" style="animation-delay: 0.15s; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 10px 14px;">
+                    <div class="animate-enter" style="animation-delay: 0.15s; padding: 10px 0;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
                             <span style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">52주 범위</span>
                             <span style="font-size:11px; color:var(--text-sub);">${fin.currency} ${low52.toFixed(2)} — ${high52.toFixed(2)}</span>
                         </div>
                         <div style="position:relative; width:100%; height:6px; background: linear-gradient(90deg, var(--loss), var(--accent-gold), var(--profit)); border-radius:3px;">
-                            <div style="position:absolute; top:-3px; left:${pos52}%; transform:translateX(-50%); width:12px; height:12px; background:#fff; border-radius:50%; box-shadow: 0 0 6px rgba(255,255,255,0.5);"></div>
+                            <div style="position:absolute; top:-3px; left:${pos52}%; transform:translateX(-50%); width:12px; height:12px; background:var(--chart-marker); border-radius:50%; box-shadow: 0 0 6px var(--border-subtle);"></div>
                         </div>
                     </div>
                 `;
             }
 
-            html += buildInsightChartHtml('animate-enter', 'animation-delay: 0.2s;');
 
             let newsHtml = '';
             if (news && news.length > 0) {
                 news.forEach((n) => {
                     newsHtml += `
-                        <a href="${n.link}" target="_blank" rel="noopener noreferrer" class="news-item">
-                            <span class="news-title">${n.title}</span>
-                            <span class="news-meta">${n.publisher}</span>
+                        <a href="${insightSafeUrl(n.link)}" target="_blank" rel="noopener noreferrer" class="news-item">
+                            <span class="news-title">${escapeHtml(n.title)}</span>
+                            <span class="news-meta">${escapeHtml(n.publisher)}</span>
                         </a>
                     `;
                 });
@@ -2312,10 +2379,10 @@
                     none: 'rgba(148,163,184,0.16)',
                 };
                 const confidenceTextColors = {
-                    high: '#6ee7b7',
-                    medium: '#fbbf24',
-                    low: '#fca5a5',
-                    none: '#cbd5e1',
+                    high: 'var(--profit)',
+                    medium: 'var(--accent-gold)',
+                    low: 'var(--loss)',
+                    none: 'var(--text-sub)',
                 };
                 const renderConfidenceBadge = (meta) => {
                     const level = meta && meta.level ? meta.level : 'none';
@@ -2332,15 +2399,15 @@
                 const maxPainHint = `<div style="font-size:10px; color:var(--text-muted); line-height:1.45; text-align:right;">${maxPainConfidence.reason || '근월물 OI 기반으로 계산합니다.'}</div>`;
 
                 optHtml = `
-                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 18px;">
+                    <div style="padding: 0; display: flex; flex-direction: column; gap: 18px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
                                 <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 2px;">만기일</div>
-                                <div style="font-size: 15px; font-weight: 700; color: #fff;">${opt.date}</div>
+                                <div style="font-size: 15px; font-weight: 700; color: var(--text-main);">${opt.date}</div>
                             </div>
                             <div style="text-align:right;">
                                 <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 2px;">ATM IV</div>
-                                <div style="font-size: 15px; font-weight: 700; color: ${opt.atm_iv && opt.atm_iv > 50 ? '#eab308' : '#fff'};">${ivText}</div>
+                                <div style="font-size: 15px; font-weight: 700; color: ${opt.atm_iv && opt.atm_iv > 50 ? 'var(--accent-gold)' : 'var(--text-main)'};">${ivText}</div>
                             </div>
                         </div>
                         <div>
@@ -2349,29 +2416,29 @@
                                 <span style="font-size:11px; color:var(--text-muted);">PCR(${pcrBasis}) ${pcr}</span>
                                 <span style="color:var(--loss);">풋 ${putPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(putVol)}계약)</span></span>
                             </div>
-                            <div style="width:100%; height:8px; background:rgba(255,255,255,0.1); border-radius:4px; display:flex; overflow:hidden;">
+                            <div style="width:100%; height:8px; background:var(--surface-subtle); border-radius:4px; display:flex; overflow:hidden;">
                                 <div style="width:${callPct}%; background:var(--profit);"></div>
                                 <div style="width:${putPct}%; background:var(--loss);"></div>
                             </div>
                         </div>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; padding: 10px 0;">
                             <div>
                                 <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Call)</div>
-                                <div style="font-size:14px; font-weight:700; color:#fff;">${oiCallText}</div>
+                                <div style="font-size:14px; font-weight:700; color:var(--text-main);">${oiCallText}</div>
                             </div>
                             <div style="text-align:right;">
                                 <div style="font-size:10px; color:var(--text-muted); margin-bottom: 2px;">OI (Put)</div>
-                                <div style="font-size:14px; font-weight:700; color:#fff;">${oiPutText}</div>
+                                <div style="font-size:14px; font-weight:700; color:var(--text-main);">${oiPutText}</div>
                             </div>
                         </div>
                         ${oiHint}
-                        <div style="display:flex; flex-direction: column; gap:6px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 10px;">
+                        <div style="display:flex; flex-direction: column; gap:6px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <div style="display:flex; align-items:center; gap:8px; min-width:0;">
                                     <div style="font-size:11px; color:var(--text-muted);">Max Pain</div>
                                     ${renderConfidenceBadge(maxPainConfidence)}
                                 </div>
-                                <div style="font-size:13px; font-weight:700; color:${maxPainAvailable ? '#eab308' : '#cbd5e1'};">${maxPainText}</div>
+                                <div style="font-size:13px; font-weight:700; color:${maxPainAvailable ? 'var(--accent-gold)' : 'var(--text-sub)'};">${maxPainText}</div>
                             </div>
                             ${maxPainHint}
                             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -2403,25 +2470,30 @@
                     </div>
                 </div>
             `;
-            return html;
+            return html + '</div>';
         }
 
         function initializeInsightChart(state) {
+            disposeInsightChart();
             if (!state || state.status !== 'success') return;
+            const chartContainer = document.getElementById('tv_chart_container');
+            if (!chartContainer) return;
+            chartContainer.innerHTML = '';
             const { marketType, tvTicker, data } = state;
             if (marketType === 'USA') {
                 try {
-                    new TradingView.widget({
+                    insightChartKind = 'tradingview';
+                    insightChart = new TradingView.widget({
                         autosize: true,
                         symbol: tvTicker,
                         interval: 'D',
                         timezone: 'Asia/Seoul',
-                        theme: 'dark',
+                        theme: resolvedTheme(),
                         style: '1',
                         locale: 'kr',
                         enable_publishing: false,
                         backgroundColor: 'rgba(0,0,0,0)',
-                        gridColor: 'rgba(255,255,255,0.05)',
+                        gridColor: themeColor('--chart-grid'),
                         hide_top_toolbar: false,
                         hide_legend: false,
                         save_image: false,
@@ -2441,51 +2513,30 @@
                 const chart = LightweightCharts.createChart(tvContainer, {
                     width: tvContainer.clientWidth,
                     height: tvContainer.clientHeight,
-                    layout: {
-                        background: { type: 'solid', color: 'transparent' },
-                        textColor: 'rgba(255,255,255,0.6)',
-                        fontSize: 11,
-                    },
-                    grid: {
-                        vertLines: { color: 'rgba(255,255,255,0.04)' },
-                        horzLines: { color: 'rgba(255,255,255,0.04)' },
-                    },
+                    ...insightChartThemeOptions(),
                     crosshair: { mode: 0 },
-                    rightPriceScale: {
-                        borderColor: 'rgba(255,255,255,0.1)',
-                    },
-                    timeScale: {
-                        borderColor: 'rgba(255,255,255,0.1)',
-                        timeVisible: false,
-                    },
                 });
-                const candleSeries = chart.addCandlestickSeries({
-                    upColor: '#26a69a',
-                    downColor: '#ef5350',
-                    borderDownColor: '#ef5350',
-                    borderUpColor: '#26a69a',
-                    wickDownColor: '#ef5350',
-                    wickUpColor: '#26a69a',
-                });
+                insightChart = chart;
+                insightChartKind = 'lightweight';
+                const candleSeries = chart.addCandlestickSeries(candleThemeOptions());
+                insightCandleSeries = candleSeries;
                 candleSeries.setData(historyData);
 
                 const volumeSeries = chart.addHistogramSeries({
-                    color: 'rgba(255,255,255,0.15)',
+                    color: themeColor('--chart-volume-up'),
                     priceFormat: { type: 'volume' },
                     priceScaleId: '',
                 });
                 volumeSeries.priceScale().applyOptions({
                     scaleMargins: { top: 0.85, bottom: 0 },
                 });
-                volumeSeries.setData(historyData.map((d) => ({
-                    time: d.time,
-                    value: d.volume,
-                    color: d.close >= d.open ? 'rgba(38,166,154,0.3)' : 'rgba(239,83,80,0.3)',
-                })));
+                insightVolumeSeries = volumeSeries;
+                volumeSeries.setData(volumeChartData(historyData));
                 chart.timeScale().fitContent();
                 const resizeObserver = new ResizeObserver(() => {
-                    chart.applyOptions({ width: tvContainer.clientWidth });
+                    if (insightChart === chart && tvContainer.isConnected) chart.applyOptions({ width: tvContainer.clientWidth, height: tvContainer.clientHeight });
                 });
+                insightChartObserver = resizeObserver;
                 resizeObserver.observe(tvContainer);
                 return;
             }
@@ -2499,11 +2550,20 @@
             }
         }
 
+        function updateInsightSourceLink(state) {
+            const link = document.getElementById('insightSaveTickerLink');
+            if (!link) return;
+            const available = state?.marketType === 'USA' && !!state.ticker;
+            link.hidden = !available;
+            if (available) link.href = `https://saveticker.com/company/${encodeURIComponent(state.ticker)}`;
+        }
+
         function renderCurrentInsightContent() {
+            updateInsightSourceLink(currentInsightState);
             const insightContainer = document.getElementById('insight_content');
             if (!insightContainer) return;
+            disposeInsightChart();
 
-            updateInsightTradeModeButton();
 
             if (!currentInsightState) {
                 insightContainer.innerHTML = `
@@ -2511,14 +2571,6 @@
                         종목을 선택하면 상세 정보가 표시됩니다.
                     </div>
                 `;
-                return;
-            }
-
-            if (insightTradeMode) {
-                insightContainer.innerHTML = buildInsightTradeHtml(currentInsightState);
-                if (currentInsightState.status === 'success' && currentInsightState.marketType === 'KOR') {
-                    initializeInsightChart(currentInsightState);
-                }
                 return;
             }
 
@@ -2534,491 +2586,7 @@
 
             insightContainer.innerHTML = buildInsightInfoHtml(currentInsightState);
             initializeInsightChart(currentInsightState);
-        }
-
-        function toggleInsightTradeMode() {
-            if (!currentInsightState) {
-                return;
-            }
-            insightTradeMode = !insightTradeMode;
-            updateInsightTradeModeButton();
-            renderCurrentInsightContent();
-        }
-
-        function collectScheduledOrderFormPayload(formElement, fallbackPdno = '') {
-            const formData = new FormData(formElement);
-            const endAt = String(formData.get('end_at') || formData.get('execute_at') || '').trim();
-            const side = String(formData.get('side') || 'buy').trim().toLowerCase() || 'buy';
-            const pdno = normalizeTicker(String(formData.get('pdno') || fallbackPdno || '').trim());
-            const ordQty = Number(formData.get('ord_qty') || 0);
-            const ordUnpr = String(formData.get('ord_unpr') || '').trim();
-
-            if (!endAt) {
-                throw new Error('종료 시각을 입력해 주세요.');
-            }
-            if (!pdno) {
-                throw new Error('종목 정보를 확인해 주세요.');
-            }
-            if (!Number.isFinite(ordQty) || ordQty < 1) {
-                throw new Error('수량은 1주 이상이어야 합니다.');
-            }
-            if (!ordUnpr) {
-                throw new Error('주문 단가를 입력해 주세요.');
-            }
-
-            return {
-                end_at: endAt,
-                execute_at: endAt,
-                side: side === 'sell' ? 'sell' : 'buy',
-                pdno,
-                ord_qty: Math.floor(ordQty),
-                ord_unpr: ordUnpr,
-                ord_dvsn: String(formData.get('ord_dvsn') || '00').trim() || '00',
-                excg_id_dvsn_cd: String(formData.get('excg_id_dvsn_cd') || 'SOR').trim() || 'SOR',
-                sll_type: String(formData.get('sll_type') || '').trim(),
-                cndt_pric: String(formData.get('cndt_pric') || '').trim(),
-                note: String(formData.get('note') || '').trim(),
-            };
-        }
-
-        async function submitInsightScheduledOrder(event) {
-            event.preventDefault();
-            if (!currentInsightState || currentInsightState.marketType !== 'KOR') {
-                setScheduledOrderNotice('insight', '현재 웹 조건주문은 국내 종목만 지원합니다.', 'error');
-                return;
-            }
-
-            const form = event.target;
-            const submitButton = document.getElementById('insightScheduledOrderSubmitBtn');
-            const originalText = submitButton ? submitButton.innerText : '';
-            clearScheduledOrderNotice('insight');
-            if (submitButton) {
-                submitButton.disabled = true;
-                submitButton.innerText = '등록 중...';
-            }
-
-            try {
-                const payload = collectScheduledOrderFormPayload(form, normalizeTicker(currentInsightState.ticker));
-                payload.pdno = normalizeTicker(currentInsightState.ticker);
-                const response = await fetch('/api/scheduled-orders', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                if (response.status === 401) {
-                    window.location.href = '/login';
-                    return;
-                }
-                if (!response.ok) {
-                    throw new Error(await readApiErrorMessage(response, '조건주문 등록에 실패했습니다.'));
-                }
-                const data = await response.json();
-                if (data?.status !== 'success') {
-                    throw new Error(data?.message || '조건주문 등록에 실패했습니다.');
-                }
-                await loadScheduledOrders(true);
-                setScheduledOrderNotice('insight', '조건주문을 등록했습니다. 종료 시각 전까지 앱 안에서 상태를 계속 확인할 수 있습니다.', 'success');
-                renderCurrentInsightContent();
-            } catch (err) {
-                console.error('submitInsightScheduledOrder error', err);
-                setScheduledOrderNotice('insight', err?.message || '조건주문 등록 중 오류가 발생했습니다.', 'error');
-            } finally {
-                if (submitButton) {
-                    submitButton.disabled = false;
-                    submitButton.innerText = originalText || '조건주문 등록';
-                }
-            }
-        }
-
-        function resetScheduledOrderEditForm() {
-            const form = document.getElementById('scheduledOrderEditForm');
-            if (!form) return;
-            form.reset();
-            const pdno = document.getElementById('scheduledOrderEditPdno');
-            const ordDvsn = document.getElementById('scheduledOrderEditOrdDvsn');
-            const excg = document.getElementById('scheduledOrderEditExcg');
-            const symbolValue = document.getElementById('scheduledOrderEditSymbolValue');
-            if (pdno) pdno.value = '';
-            if (ordDvsn) ordDvsn.value = '00';
-            if (excg) excg.value = 'SOR';
-            if (symbolValue) symbolValue.innerText = '-';
-            const summary = document.getElementById('scheduledOrderEditSummary');
-            if (summary) {
-                summary.innerText = '수정할 조건주문을 목록에서 선택해 주세요.';
-            }
-        }
-
-        function getScheduledOrderById(orderId) {
-            return scheduledOrders.find((item) => item.id === orderId) || null;
-        }
-
-        function updateScheduledOrderEditTabButton() {
-            const button = document.getElementById('scheduledOrderEditTabBtn');
-            if (!button) return;
-            button.disabled = !scheduledOrderEditingId;
-        }
-
-        function updateScheduledOrderModalCaption(message = '') {
-            const caption = document.getElementById('scheduledOrderModalCaption');
-            if (!caption) return;
-            if (message) {
-                caption.innerText = message;
-                return;
-            }
-            if (!scheduledOrders.length) {
-                caption.innerText = '등록된 국내 조건주문을 확인하고 관리할 수 있습니다. 활성 주문은 종료 시각 전까지 유지되며, 취소되거나 체결될 때까지 추적됩니다.';
-                return;
-            }
-            const activeCount = scheduledOrders.filter((item) => isActiveScheduledOrderStatus(item.status)).length;
-            caption.innerText = `전체 ${scheduledOrders.length}건 · 활성 주문 ${activeCount}건`;
-        }
-
-        function setScheduledOrderModalTab(tab) {
-            scheduledOrderModalTab = tab === 'edit' && scheduledOrderEditingId ? 'edit' : 'history';
-            document.querySelectorAll('[data-scheduled-order-tab]').forEach((button) => {
-                button.classList.toggle('active', button.dataset.scheduledOrderTab === scheduledOrderModalTab);
-            });
-            document.getElementById('scheduledOrderHistoryPanel').classList.toggle('active', scheduledOrderModalTab === 'history');
-            document.getElementById('scheduledOrderEditPanel').classList.toggle('active', scheduledOrderModalTab === 'edit');
-            updateScheduledOrderEditTabButton();
-            if (scheduledOrderModalTab === 'edit') {
-                const selected = getScheduledOrderById(scheduledOrderEditingId);
-                if (selected) {
-                    updateScheduledOrderModalCaption(`${selected.order?.pdno || selected.id} 조건주문을 수정 중입니다.`);
-                    return;
-                }
-            }
-            updateScheduledOrderModalCaption();
-        }
-
-        function renderScheduledOrderList(emptyMessage = '등록된 조건주문이 없습니다.') {
-            const listEl = document.getElementById('scheduledOrderList');
-            const emptyEl = document.getElementById('scheduledOrderEmpty');
-            if (!listEl || !emptyEl) return;
-
-            if (!scheduledOrders.length) {
-                listEl.innerHTML = '';
-                emptyEl.innerText = emptyMessage;
-                emptyEl.classList.add('active');
-                updateScheduledOrderModalCaption();
-                return;
-            }
-
-            emptyEl.classList.remove('active');
-            listEl.innerHTML = scheduledOrders.map((item) => {
-                const order = item.order || {};
-                const isScheduled = String(item.status || '') === 'scheduled';
-                const canEdit = canEditScheduledOrder(item);
-                const canCancel = isScheduled || canBrokerCancelScheduledOrder(item);
-                const broker = item.broker_order || {};
-                const safeId = escapeAttributeValue(item.id || '');
-                const errorHtml = item.last_error ? `<div class="scheduled-order-card-error">최근 오류 · ${escapeHtml(item.last_error)}</div>` : '';
-                const brokerHtml = (broker.odno || broker.filled_qty || broker.remaining_qty || broker.last_broker_message)
-                    ? `<div class="scheduled-order-card-note">브로커 상태 · 주문번호 ${escapeHtml(String(broker.odno || '-'))} · 체결 ${escapeHtml(String(broker.filled_qty ?? 0))}주 · 잔량 ${escapeHtml(String(broker.remaining_qty ?? order.ord_qty ?? 0))}주${broker.last_broker_message ? ` · ${escapeHtml(String(broker.last_broker_message))}` : ''}</div>`
-                    : '';
-                return `
-                    <div class="scheduled-order-card">
-                        <div class="scheduled-order-card-header">
-                            <div class="scheduled-order-card-title">
-                                <strong>${escapeHtml(order.pdno || '-')} · ${escapeHtml(getScheduledOrderSideLabel(order.side))}</strong>
-                                <span>${escapeHtml(getScheduledOrderLifecycleCopy(item))}</span>
-                            </div>
-                            <span class="scheduled-order-status ${getScheduledOrderStatusClass(item.status)}">${escapeHtml(getScheduledOrderStatusLabel(item.status))}</span>
-                        </div>
-                        <div class="scheduled-order-meta-grid">
-                            <div class="scheduled-order-meta-item">
-                                <span>종료 시각</span>
-                                <strong>${escapeHtml(formatDisplayDateTime(getScheduledOrderDisplayEndAt(item)))}</strong>
-                            </div>
-                            <div class="scheduled-order-meta-item">
-                                <span>수량</span>
-                                <strong>${escapeHtml(formatNumber(Number(order.ord_qty || 0)))}주</strong>
-                            </div>
-                            <div class="scheduled-order-meta-item">
-                                <span>주문 단가</span>
-                                <strong>${escapeHtml(formatPlainKrw(order.ord_unpr || 0))}</strong>
-                            </div>
-                        </div>
-                        ${brokerHtml}
-                        ${errorHtml}
-                        <div class="scheduled-order-card-actions">
-                            <button type="button" class="scheduled-order-action-primary" data-order-id="${safeId}" onclick="startScheduledOrderEdit(this.dataset.orderId)" ${canEdit ? '' : 'disabled'}>수정</button>
-                            <button type="button" class="scheduled-order-action-primary" data-order-id="${safeId}" onclick="syncSingleScheduledOrder(this.dataset.orderId)" ${canBrokerCancelScheduledOrder(item) ? '' : 'disabled'}>상태 동기화</button>
-                            <button type="button" class="scheduled-order-action-danger" data-order-id="${safeId}" onclick="confirmCancelScheduledOrder(this.dataset.orderId)" ${canCancel ? '' : 'disabled'}>취소</button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            const selected = getScheduledOrderById(scheduledOrderEditingId);
-            if (scheduledOrderEditingId && (!selected || !canEditScheduledOrder(selected))) {
-                closeScheduledOrderEdit();
-                return;
-            }
-            if (selected && scheduledOrderModalTab === 'edit') {
-                updateScheduledOrderModalCaption(`${selected.order?.pdno || selected.id} 조건주문을 수정 중입니다.`);
-            } else {
-                updateScheduledOrderModalCaption();
-            }
-        }
-
-        async function loadScheduledOrders(force = false) {
-            const loadingEl = document.getElementById('scheduledOrderLoading');
-            if (loadingEl) {
-                loadingEl.classList.add('active');
-            }
-            try {
-                const response = await fetch('/api/scheduled-orders', { cache: force ? 'no-store' : 'default' });
-                if (response.status === 401) {
-                    window.location.href = '/login';
-                    return null;
-                }
-                if (!response.ok) {
-                    throw new Error(await readApiErrorMessage(response, '조건주문 목록을 불러오지 못했습니다.'));
-                }
-                const data = await response.json();
-                scheduledOrders = Array.isArray(data?.orders) ? data.orders : [];
-                renderScheduledOrderList();
-                return data;
-            } catch (err) {
-                console.error('loadScheduledOrders error', err);
-                scheduledOrders = [];
-                setScheduledOrderNotice('modal', err?.message || '조건주문 목록을 불러오지 못했습니다.', 'error');
-                renderScheduledOrderList(err?.message || '조건주문 목록을 불러오지 못했습니다.');
-                return null;
-            } finally {
-                if (loadingEl) {
-                    loadingEl.classList.remove('active');
-                }
-            }
-        }
-
-        async function syncScheduledOrders(forceRender = true, showSuccessNotice = false) {
-            const response = await fetch('/api/scheduled-orders/sync', { method: 'POST' });
-            if (response.status === 401) {
-                window.location.href = '/login';
-                return null;
-            }
-            if (!response.ok) {
-                throw new Error(await readApiErrorMessage(response, '조건주문 상태 동기화에 실패했습니다.'));
-            }
-            const data = await response.json();
-            scheduledOrders = Array.isArray(data?.orders) ? data.orders : [];
-            if (forceRender) {
-                renderScheduledOrderList();
-            }
-            if (showSuccessNotice) {
-                setScheduledOrderNotice('modal', '조건주문 상태를 동기화했습니다.', 'success');
-            }
-            return data;
-        }
-
-        function fillScheduledOrderEditForm(item) {
-            const order = item?.order || {};
-            const summary = document.getElementById('scheduledOrderEditSummary');
-            const symbolValue = document.getElementById('scheduledOrderEditSymbolValue');
-            const liveEditable = isLiveEditableScheduledOrder(item);
-            if (summary) {
-                summary.innerText = liveEditable
-                    ? `${order.pdno || '-'} · ${getScheduledOrderSideLabel(order.side)} · 제출된 조건주문입니다. 종료 시각만 수정할 수 있으며 수량과 가격은 브로커 제출 이후 변경할 수 없습니다.`
-                    : `${order.pdno || '-'} · ${getScheduledOrderSideLabel(order.side)} · ${formatDisplayDateTime(getScheduledOrderDisplayEndAt(item))} 종료 조건주문을 수정합니다.`;
-            }
-            if (symbolValue) {
-                symbolValue.innerText = normalizeTicker(order.pdno || '-') || '-';
-            }
-            const endAtField = document.getElementById('scheduledOrderEditEndAt');
-            const sideField = document.getElementById('scheduledOrderEditSide');
-            const qtyField = document.getElementById('scheduledOrderEditQty');
-            const priceField = document.getElementById('scheduledOrderEditPrice');
-            endAtField.value = formatDateTimeLocalValue(getScheduledOrderDisplayEndAt(item));
-            sideField.value = String(order.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
-            document.getElementById('scheduledOrderEditPdno').value = normalizeTicker(order.pdno || '');
-            qtyField.value = String(Number(order.ord_qty || 1));
-            priceField.value = String(order.ord_unpr || '');
-            document.getElementById('scheduledOrderEditOrdDvsn').value = String(order.ord_dvsn || '00');
-            document.getElementById('scheduledOrderEditExcg').value = String(order.excg_id_dvsn_cd || 'SOR');
-            document.getElementById('scheduledOrderEditSellType').value = String(order.sll_type || '');
-            document.getElementById('scheduledOrderEditConditionPrice').value = String(order.cndt_pric || '');
-            document.getElementById('scheduledOrderEditNote').value = String(item.note || '');
-            sideField.disabled = liveEditable;
-            qtyField.disabled = liveEditable;
-            priceField.disabled = liveEditable;
-        }
-
-        function startScheduledOrderEdit(orderId) {
-            const selected = getScheduledOrderById(orderId);
-            if (!selected) {
-                setScheduledOrderNotice('modal', '수정할 조건주문을 찾을 수 없습니다.', 'error');
-                return;
-            }
-            if (!canEditScheduledOrder(selected)) {
-                setScheduledOrderNotice('modal', '현재 상태에서는 조건주문을 수정할 수 없습니다.', 'error');
-                return;
-            }
-            clearScheduledOrderNotice('modal');
-            scheduledOrderEditingId = orderId;
-            updateScheduledOrderEditTabButton();
-            fillScheduledOrderEditForm(selected);
-            setScheduledOrderModalTab('edit');
-        }
-
-        async function syncSingleScheduledOrder(_orderId) {
-            try {
-                await syncScheduledOrders(true, true);
-            } catch (err) {
-                console.error('syncSingleScheduledOrder error', err);
-                setScheduledOrderNotice('modal', err?.message || '조건주문 상태 동기화 중 오류가 발생했습니다.', 'error');
-            }
-        }
-
-        function closeScheduledOrderEdit() {
-            scheduledOrderEditingId = '';
-            updateScheduledOrderEditTabButton();
-            resetScheduledOrderEditForm();
-            const sideField = document.getElementById('scheduledOrderEditSide');
-            const qtyField = document.getElementById('scheduledOrderEditQty');
-            const priceField = document.getElementById('scheduledOrderEditPrice');
-            if (sideField) sideField.disabled = false;
-            if (qtyField) qtyField.disabled = false;
-            if (priceField) priceField.disabled = false;
-            setScheduledOrderModalTab('history');
-        }
-
-        async function submitScheduledOrderEdit(event) {
-            event.preventDefault();
-            const selected = getScheduledOrderById(scheduledOrderEditingId);
-            if (!selected) {
-                setScheduledOrderNotice('modal', '수정할 조건주문을 다시 선택해 주세요.', 'error');
-                closeScheduledOrderEdit();
-                return;
-            }
-
-            const submitButton = document.getElementById('scheduledOrderEditSubmitBtn');
-            const originalText = submitButton ? submitButton.innerText : '';
-            clearScheduledOrderNotice('modal');
-            if (submitButton) {
-                submitButton.disabled = true;
-                submitButton.innerText = '저장 중...';
-            }
-
-            try {
-                let payload;
-                if (isLiveEditableScheduledOrder(selected)) {
-                    const formData = new FormData(event.target);
-                    const endAt = String(formData.get('end_at') || '').trim();
-                    if (!endAt) {
-                        throw new Error('종료 시각을 입력해 주세요.');
-                    }
-                    payload = {
-                        end_at: endAt,
-                        execute_at: endAt,
-                        side: String(selected.order?.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy',
-                        pdno: normalizeTicker(String(selected.order?.pdno || '')),
-                        ord_qty: Math.max(1, Math.floor(Number(selected.order?.ord_qty || 1))),
-                        ord_unpr: String(selected.order?.ord_unpr || '').trim(),
-                        ord_dvsn: String(selected.order?.ord_dvsn || '00').trim() || '00',
-                        excg_id_dvsn_cd: String(selected.order?.excg_id_dvsn_cd || 'SOR').trim() || 'SOR',
-                        sll_type: String(selected.order?.sll_type || '').trim(),
-                        cndt_pric: String(selected.order?.cndt_pric || '').trim(),
-                        note: String(selected.note || '').trim(),
-                    };
-                } else {
-                    payload = collectScheduledOrderFormPayload(event.target);
-                }
-                const response = await fetch(`/api/scheduled-orders/${encodeURIComponent(selected.id)}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                if (response.status === 401) {
-                    window.location.href = '/login';
-                    return;
-                }
-                if (!response.ok) {
-                    throw new Error(await readApiErrorMessage(response, '조건주문 수정에 실패했습니다.'));
-                }
-                const data = await response.json();
-                if (data?.status !== 'success') {
-                    throw new Error(data?.message || '조건주문 수정에 실패했습니다.');
-                }
-                const loaded = await loadScheduledOrders(true);
-                closeScheduledOrderEdit();
-                setScheduledOrderNotice('modal', loaded ? '조건주문을 수정했습니다.' : '조건주문은 수정했지만 목록을 새로고침하지 못했습니다.', loaded ? 'success' : 'error');
-            } catch (err) {
-                console.error('submitScheduledOrderEdit error', err);
-                setScheduledOrderNotice('modal', err?.message || '조건주문 수정 중 오류가 발생했습니다.', 'error');
-            } finally {
-                if (submitButton) {
-                    submitButton.disabled = false;
-                    submitButton.innerText = originalText || '수정 저장';
-                }
-            }
-        }
-
-        function confirmCancelScheduledOrder(orderId) {
-            const selected = getScheduledOrderById(orderId);
-            if (!selected) {
-                setScheduledOrderNotice('modal', '취소할 조건주문을 찾을 수 없습니다.', 'error');
-                return;
-            }
-            if (!(String(selected.status || '') === 'scheduled' || canBrokerCancelScheduledOrder(selected))) {
-                setScheduledOrderNotice('modal', '현재 상태에서는 취소할 수 없습니다.', 'error');
-                return;
-            }
-
-            showModal({
-                title: '조건주문 취소',
-                desc: `${selected.order?.pdno || selected.id} ${getScheduledOrderSideLabel(selected.order?.side)} 조건주문을 취소하시겠습니까?${canBrokerCancelScheduledOrder(selected) ? ' 이미 제출된 주문이면 브로커 취소를 시도합니다.' : ''}`,
-                confirmText: '취소 실행',
-                isDanger: true,
-                iconHtml: `<svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path><circle cx="12" cy="12" r="9"></circle></svg>`,
-                onConfirm: async () => {
-                    try {
-                        const response = await fetch(`/api/scheduled-orders/${encodeURIComponent(orderId)}`, { method: 'DELETE' });
-                        if (response.status === 401) {
-                            window.location.href = '/login';
-                            return;
-                        }
-                        if (!response.ok) {
-                            throw new Error(await readApiErrorMessage(response, '조건주문 취소에 실패했습니다.'));
-                        }
-                        if (scheduledOrderEditingId === orderId) {
-                            closeScheduledOrderEdit();
-                        }
-                        const loaded = await loadScheduledOrders(true);
-                        setScheduledOrderNotice('modal', loaded ? '조건주문을 취소했습니다.' : '조건주문은 취소했지만 목록을 새로고침하지 못했습니다.', loaded ? 'success' : 'error');
-                    } catch (err) {
-                        console.error('confirmCancelScheduledOrder error', err);
-                        setScheduledOrderNotice('modal', err?.message || '조건주문 취소 중 오류가 발생했습니다.', 'error');
-                    }
-                },
-            });
-        }
-
-        function openScheduledOrderModal(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-            clearScheduledOrderNotice('modal');
-            document.getElementById('scheduledOrderModal').classList.add('active');
-            setScheduledOrderModalTab('history');
-            loadScheduledOrders(true).then(() => syncScheduledOrders(true, false)).catch(() => null);
-        }
-
-        function closeScheduledOrderModal() {
-            document.getElementById('scheduledOrderModal').classList.remove('active');
-            clearScheduledOrderNotice('modal');
-            closeScheduledOrderEdit();
-        }
-
-        function handleScheduledOrderOverlayClick(event) {
-            if (event.target.id === 'scheduledOrderModal') {
-                closeScheduledOrderModal();
-            }
-        }
-
-        function handleScheduledOrderModalClick(_event) {
+            initializeInsightDetailCharts(currentInsightState);
         }
 
         // Asset Insight Fetcher
@@ -3037,7 +2605,6 @@
                 tvTicker = 'KRX:' + ticker.split('.')[0];
             }
 
-            clearScheduledOrderNotice('insight');
             currentInsightState = {
                 status: 'loading',
                 ticker,
@@ -3068,11 +2635,11 @@
                     const fallbackAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(fin.shortName || ticker)}&background=random&color=fff&size=64`;
                     let imgHtml = '';
                     if (tvLogoUrl) {
-                        imgHtml = `<img src="${tvLogoUrl}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=function(){this.onerror=null; this.src='${fallbackAvatar}';}; this.src='${fin.logo_url ? fin.logo_url : fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
+                        imgHtml = `<img src="${tvLogoUrl}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=function(){this.onerror=null; this.src='${fallbackAvatar}';}; this.src='${fin.logo_url ? fin.logo_url : fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: var(--logo-background); padding: 2px;">`;
                     } else if (fin.logo_url) {
-                        imgHtml = `<img src="${fin.logo_url}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=null; this.src='${fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
+                        imgHtml = `<img src="${fin.logo_url}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=null; this.src='${fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: var(--logo-background); padding: 2px;">`;
                     } else {
-                        imgHtml = `<img src="${fallbackAvatar}" alt="${escapeHtml(fin.shortName || ticker)} 로고" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; padding: 2px;">`;
+                        imgHtml = `<img src="${fallbackAvatar}" alt="${escapeHtml(fin.shortName || ticker)} 로고" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: var(--logo-background); padding: 2px;">`;
                     }
 
                     currentInsightState = {
@@ -3483,8 +3050,8 @@
             const notice = document.getElementById('accountModalNotice');
             if (!notice) return;
             notice.textContent = message || '';
-            notice.classList.toggle('scheduled-order-notice--error', !!isError);
-            notice.classList.toggle('scheduled-order-notice--success', !isError);
+            notice.classList.toggle('form-notice--error', !!isError);
+            notice.classList.toggle('form-notice--success', !isError);
             notice.classList.add('active');
         }
 
@@ -3492,7 +3059,7 @@
             const notice = document.getElementById('accountModalNotice');
             if (!notice) return;
             notice.textContent = '';
-            notice.className = 'scheduled-order-notice';
+            notice.className = 'form-notice';
         }
 
         async function submitAddAccount(event) {
@@ -3588,7 +3155,7 @@
             const errEl = document.getElementById('accountDeleteError');
             if (!errEl) return;
             errEl.textContent = '';
-            errEl.className = 'scheduled-order-notice';
+            errEl.className = 'form-notice';
         }
 
         async function confirmDeleteAccount() {
@@ -3598,7 +3165,7 @@
             const confirmBtn = document.getElementById('accountDeleteConfirmBtn');
             if (!/^\d{4,6}$/.test(pin)) {
                 errEl.textContent = 'PIN은 4~6자리 숫자로 입력하세요.';
-                errEl.classList.add('scheduled-order-notice--error', 'active');
+                errEl.classList.add('form-notice--error', 'active');
                 return;
             }
             clearAccountDeleteError();
@@ -3619,12 +3186,12 @@
                     syncData(true);
                 } else {
                     errEl.textContent = data.detail || '계좌 삭제에 실패했습니다.';
-                    errEl.classList.add('scheduled-order-notice--error', 'active');
+                    errEl.classList.add('form-notice--error', 'active');
                 }
             } catch (err) {
                 console.error('confirmDeleteAccount error', err);
                 errEl.textContent = '계좌 삭제에 실패했습니다.';
-                errEl.classList.add('scheduled-order-notice--error', 'active');
+                errEl.classList.add('form-notice--error', 'active');
             } finally {
                 confirmBtn.disabled = false;
                 confirmBtn.innerText = originalText;
@@ -3708,14 +3275,14 @@
             const errEl = document.getElementById('accountEditError');
             if (!errEl) return;
             errEl.textContent = '';
-            errEl.className = 'scheduled-order-notice';
+            errEl.className = 'form-notice';
         }
 
         function showAccountEditError(message) {
             const errEl = document.getElementById('accountEditError');
             if (!errEl) return;
             errEl.textContent = message || '';
-            errEl.classList.add('scheduled-order-notice--error', 'active');
+            errEl.classList.add('form-notice--error', 'active');
         }
 
         function setAccountEditCanoHint(text) {
@@ -3820,7 +3387,9 @@
 
         // 앱 초기화
         window.addEventListener('DOMContentLoaded', async () => {
-            const savedLayoutMode = localStorage.getItem(LAYOUT_STORAGE_KEY) || 'mode2';
+            const defaultLayoutMode = window.matchMedia('(min-width: 2000px) and (min-aspect-ratio: 21/9)').matches ? 'mode1' : 'mode2';
+            let savedLayoutMode = defaultLayoutMode;
+            try { savedLayoutMode = localStorage.getItem(LAYOUT_STORAGE_KEY) || defaultLayoutMode; } catch (_err) { /* Storage is optional. */ }
             applyLayoutMode(savedLayoutMode, false);
             setRightPaneState('widgets');
 
@@ -3836,4 +3405,21 @@
 
             await syncData(false);
             scheduleDeferredBootTasks();
+        });
+
+        window.addEventListener('pagehide', () => {
+            disposeInsightChart();
+            stopUsQuotePolling();
+            clearTimeout(marketOverviewMountTimer);
+            clearTimeout(marketOverviewVerifyTimer);
+            clearTimeout(marketOverviewLoadTimer);
+            marketOverviewGeneration += 1;
+        });
+
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                initializeInsightChart(currentInsightState);
+                initializeInsightDetailCharts(currentInsightState);
+                scheduleMarketOverviewMount(true);
+            }
         });

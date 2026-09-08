@@ -27,7 +27,7 @@ bun run build
 python3 -m app.main  # or run platform targets in app/ and android-app/
 ```
 
-Configure KIS and Google Sheets credentials via env (see `app/config.py` and `android-app/` docs). Without credentials the dashboard runs in demo mode with no live orders.
+Configure account credentials through the app setup screen. The dashboard reads portfolio, balance, market and historical execution data.
 
 ## Use cases for portfolio-tracking and stock-dashboard
 
@@ -35,17 +35,14 @@ Configure KIS and Google Sheets credentials via env (see `app/config.py` and `an
 - Monitor finance positions on a stock-dashboard with KRW/USD switching and 300s TTL insight cache.
 - Drive ops workflows where Google Sheets acts as the source of truth for watchlists and allocation notes.
 
-Order execution is gated: central reservation is off by default and requires `CENTRAL_ORDER_EXECUTION_ENABLED=true`.
+This dashboard is read-only for broker operations. Order registration, submission, scheduling, modification and cancellation are not supported.
 
 ## Architecture: kis-api and monitoring pipeline
 
 ```mermaid
 flowchart LR
-    A[Desktop / Web app] --> C[Central reservation server - gated]
-    B[Android app] --> C
-    C -- "CENTRAL_ORDER_EXECUTION_ENABLED=true" --> D[KIS Open API]
-    A --> D
-    B --> D
+    A[Desktop / Web app] --> D[KIS Open API - read only]
+    B[Android app] --> D
     A --> E[Toss Open API]
     B --> E
     F[Google Sheets ops] --- A
@@ -65,7 +62,7 @@ The repository includes TypeScript surfaces for the dashboard front-end and Goog
 
 ## Finance and korea-investment scope
 
-Finance coverage is limited to the two brokers in scope: KIS and Toss Securities. Korea-investment specific fields (realized profit, reservation orders, overseas holdings) are normalized to a common model; Toss cash is excluded from totals because the provider does not expose it. Trading decisions remain with the user; the dashboard surfaces calculations with `high/medium/low/none` confidence labels.
+Finance coverage is limited to the two brokers in scope: KIS and Toss Securities. Korea-investment specific fields (realized profit, trade history, overseas holdings) are normalized to a common model; Toss cash is excluded from totals because the provider does not expose it. Trading decisions remain with the user; the dashboard surfaces calculations with `high/medium/low/none` confidence labels.
 
 ## License
 

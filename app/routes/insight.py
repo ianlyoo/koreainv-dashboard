@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import math
 import threading
 import time
 import urllib.parse
 
 import yfinance as yf
 from fastapi import APIRouter
+
+from app.services.saveticker_service import saveticker_service
 
 
 router = APIRouter()
@@ -30,7 +33,13 @@ def _get_cached_insight(cache_key: str):
                 cached_ts_value = float(cached_ts)
             except ValueError:
                 cached_ts_value = 0.0
-        if cached and (time.time() - cached_ts_value) < _INSIGHT_CACHE_TTL_SECONDS:
+        cache_ttl = _INSIGHT_CACHE_TTL_SECONDS
+        cached_payload = cached.get("data") if isinstance(cached, dict) else None
+        if isinstance(cached_payload, dict):
+            provider = cached_payload.get("data", {}).get("saveticker") or {}
+            if provider.get("status") == "unavailable" or "error" in provider.get("section_status", {}).values():
+                cache_ttl = 60
+        if cached and (time.time() - cached_ts_value) < cache_ttl:
             return cached.get("data")
     return None
 
@@ -38,6 +47,8 @@ def _get_cached_insight(cache_key: str):
 def _set_cached_insight(cache_key: str, data: object):
     with _insight_cache_lock:
         _insight_cache[cache_key] = {"ts": time.time(), "data": data}
+        while len(_insight_cache) > 128:
+            _insight_cache.pop(next(iter(_insight_cache)))
 
 
 def _as_str(value: object, default: str = "") -> str:
@@ -130,6 +141,39 @@ def _build_financials(info: dict[str, object], fallback_ticker: str) -> tuple[di
         else "N/A",
     }
     return financials, float(current_price or 0)
+
+
+def _build_saveticker_financials(snapshot: dict, ticker: str) -> dict:
+    financials, _ = _build_financials({}, ticker)
+    financials["currency"] = "USD"
+    sections = snapshot["sections"]
+    header = sections.get("header") or {}
+    metrics = sections.get("key_metrics") or {}
+    analyst = sections.get("analyst") or {}
+
+    def number(value, scale=1):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            return value / scale
+        return "N/A"
+
+    def nested(data, key, field):
+        obj = data.get(key)
+        return obj.get(field) if isinstance(obj, dict) else None
+
+    financials.update({
+        "currentPrice": number(header.get("price")),
+        "marketCap": number(header.get("marketCap")),
+        "fiftyTwoWeekLow": number(nested(header, "week52Range", "low")),
+        "fiftyTwoWeekHigh": number(nested(header, "week52Range", "high")),
+        "returnOnEquity": number(nested(metrics, "roe", "value"), 100),
+        "shortPercentOfFloat": number(nested(metrics, "shortInterestPct", "value"), 100),
+        "dividendYield": number(nested(metrics, "dividendYield", "value"), 100),
+        "targetMeanPrice": number(nested(analyst, "target", "mean")),
+        "targetHighPrice": number(nested(analyst, "target", "high")),
+        "targetLowPrice": number(nested(analyst, "target", "low")),
+    })
+    # SaveTicker PER has no verified forward basis; leave forwardPE unavailable.
+    return financials
 
 
 def _fetch_options_data(yf_ticker: str, current_price: float):
@@ -457,6 +501,16 @@ async def get_asset_insight(ticker: str, market_type: str = "USA"):
         if cached is not None:
             return cached
 
+        saveticker = await asyncio.to_thread(saveticker_service.fetch, ticker, market_type)
+        if saveticker["status"] in {"available", "partial"}:
+            payload = {"status": "success", "data": {
+                "source": "saveticker", "saveticker": saveticker,
+                "financials": _build_saveticker_financials(saveticker, ticker),
+                "options": None, "news": (saveticker["sections"].get("news") or {}).get("items", []), "history": [],
+            }}
+            _set_cached_insight(cache_key, payload)
+            return payload
+
         yf_ticker, info = await asyncio.to_thread(_resolve_yf_ticker, ticker, market_type)
         financials, current_price = await asyncio.to_thread(_build_financials, info, ticker)
         options_task = asyncio.to_thread(_fetch_options_data, yf_ticker, current_price)
@@ -471,6 +525,8 @@ async def get_asset_insight(ticker: str, market_type: str = "USA"):
         payload = {
             "status": "success",
             "data": {
+                "source": "yahoo",
+                "saveticker": saveticker,
                 "financials": financials,
                 "options": options_data,
                 "news": news_data,
@@ -480,5 +536,6 @@ async def get_asset_insight(ticker: str, market_type: str = "USA"):
         _set_cached_insight(cache_key, payload)
         return payload
     except Exception as exc:
-        logger.exception("Insight info error: %s", exc)
-        return {"status": "error", "message": str(exc)}
+        logger.warning("Insight info error (%s)", type(exc).__name__)
+        return {"status": "error", "message": "종목 인사이트를 불러오지 못했습니다.",
+                "data": {"source": "yahoo", "saveticker": locals().get("saveticker")}}

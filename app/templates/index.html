@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <!-- saved from url=(0022)http://localhost:8000/ -->
-<html lang="ko">
+<html lang="ko" data-theme="dark">
 
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard</title>
+    <script src="/static/js/theme.js?v=__ASSET_VERSION__"></script>
+    <script src="/static/js/glass.js?v=__ASSET_VERSION__" defer></script>
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="/img/fa82e0f8872e03ff459435036237a46d.ico">
 
@@ -26,7 +28,7 @@
     <!-- Loading Overlay -->
     <div class="loader-overlay" id="loading">
         <div class="spinner"></div>
-        <div style="color: #fff; font-weight: 600; letter-spacing: 1px;">자산 동기화 중...</div>
+        <div style="color: var(--text-main); font-weight: 600; letter-spacing: 1px;">자산 동기화 중...</div>
     </div>
 
         <div class="header animate-enter">
@@ -38,13 +40,21 @@
             </div>
 
             <div class="controls">
+                <label class="appearance-control" for="appearanceMode">
+                    <span class="sr-only">화면 테마</span>
+                    <select id="appearanceMode" aria-label="화면 테마">
+                        <option value="system">시스템</option>
+                        <option value="light">라이트</option>
+                        <option value="dark">다크</option>
+                    </select>
+                </label>
                 <!-- 종목 검색 -->
                 <div class="layout-mode-switch" id="layoutModeToggle">
                     <button class="layout-mode-btn" id="layoutModeBtn1" type="button" onclick="applyLayoutMode('mode1')">확장</button>
                     <button class="layout-mode-btn" id="layoutModeBtn2" type="button" onclick="applyLayoutMode('mode2')">기본</button>
                 </div>
                 <div style="position:relative;">
-                    <div style="display:flex; align-items:center; height:40px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:0 12px; gap:6px; transition:border-color 0.2s;"
+                    <div style="display:flex; align-items:center; height:40px; background:var(--surface-subtle); border:1px solid var(--panel-border); border-radius:10px; padding:0 12px; gap:6px; transition:border-color 0.2s;"
                         id="searchWrapper">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted); flex-shrink:0;">
@@ -52,15 +62,15 @@
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    <input type="text" id="stockSearchInput" placeholder="종목 검색..." autocomplete="off"
-                        style="background:transparent; border:none; outline:none; color:#fff; font-size:13px; width:140px; padding:0;"
+                    <input type="text" id="stockSearchInput" aria-label="종목 검색" placeholder="종목 검색..." autocomplete="off"
+                        style="background:transparent; border:none; outline:none; color:var(--text-main); font-size:13px; width:140px; padding:0;"
                         oninput="searchStock(this.value)"
                         onkeydown="handleSearchKeydown(event)"
                         onfocus="document.getElementById('searchWrapper').style.borderColor='var(--accent-gold)'"
-                        onblur="setTimeout(()=>{document.getElementById('searchWrapper').style.borderColor='rgba(255,255,255,0.1)'; document.getElementById('searchDropdown').style.display='none';}, 200)">
+                        onblur="setTimeout(()=>{document.getElementById('searchWrapper').style.borderColor='var(--panel-border)'; document.getElementById('searchDropdown').style.display='none';}, 200)">
                 </div>
                 <div id="searchDropdown"
-                    style="display:none; position:absolute; top:100%; left:0; right:0; margin-top:4px; background:rgba(7, 11, 20, 0.98); border:1px solid rgba(255,255,255,0.14); border-radius:10px; max-height:240px; overflow-y:auto; z-index:100; box-shadow:0 12px 36px rgba(0,0,0,0.65); backdrop-filter: blur(12px);">
+                    style="display:none; position:absolute; top:100%; left:0; right:0; margin-top:4px; background:var(--glass-bg); border:1px solid var(--panel-border); border-radius:10px; max-height:240px; overflow-y:auto; z-index:100; box-shadow:var(--glass-shadow); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);">
                 </div>
             </div>
             <button class="btn-history" type="button" onclick="openRealizedProfitModal()">
@@ -70,18 +80,6 @@
                     <path d="M7 14l4-4 3 3 5-6"></path>
                 </svg>
                 거래내역
-            </button>
-            <button class="btn-history" type="button" onclick="openScheduledOrderModal()">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <title>조건주문</title>
-                    <path d="M8 2v4"></path>
-                    <path d="M16 2v4"></path>
-                    <rect x="3" y="4" width="18" height="18" rx="2"></rect>
-                    <path d="M3 10h18"></path>
-                    <path d="M12 14v4"></path>
-                    <path d="M10 16h4"></path>
-                </svg>
-                조건주문
             </button>
 
             <button class="btn-history btn-account" type="button" onclick="openAccountModal()">
@@ -282,7 +280,7 @@
                     <div class="portfolio-table-title">
                         <span class="portfolio-table-heading">보유 자산 상세</span>
                         <span id="sync-status-badge"
-                            style="font-size: 12px; color: var(--text-muted); font-weight: 400; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 20px; transition: all 0.3s ease;">
+                            style="font-size: 12px; color: var(--text-muted); font-weight: 400; background: var(--surface-subtle); padding: 4px 10px; border-radius: 20px; transition: all 0.3s ease;">
                             <span id="last-sync-text">마지막 동기화: -</span>
                         </span>
                     </div>
@@ -379,7 +377,7 @@
                              종목정보
                          </h2>
                          <div class="insight-header-actions">
-                             <button class="btn-insight-trade" id="insightTradeModeBtn" type="button" onclick="toggleInsightTradeMode()" disabled>조건주문</button>
+                             <a class="insight-source-link" id="insightSaveTickerLink" href="https://saveticker.com/" target="_blank" rel="noopener noreferrer" hidden>SaveTicker 원문 ↗</a>
                              <button class="btn-insight-close" id="insightCloseBtn" type="button" onclick="closeInsightPane()">닫기</button>
                          </div>
                      </div>
@@ -533,76 +531,6 @@
         </div>
     </div>
 
-    <div class="profit-detail-overlay scheduled-order-overlay" id="scheduledOrderModal" onclick="handleScheduledOrderOverlayClick(event)">
-        <div class="profit-detail-modal scheduled-order-modal" onclick="handleScheduledOrderModalClick(event)">
-            <div class="profit-detail-header">
-                <div class="profit-detail-title-wrap">
-                    <h2>조건주문</h2>
-                    <p id="scheduledOrderModalCaption">등록된 국내 조건주문을 확인하고 관리할 수 있습니다. 활성 주문은 취소되거나 체결될 때까지 유지될 수 있습니다.</p>
-                </div>
-                <div class="profit-detail-header-actions">
-                    <button class="profit-detail-close" type="button" onclick="closeScheduledOrderModal()" aria-label="조건주문 상세 닫기">&times;</button>
-                </div>
-            </div>
-            <div class="profit-detail-body scheduled-order-body">
-                <div class="profit-detail-tabs scheduled-order-tabs">
-                    <button class="profit-detail-tab active" type="button" data-scheduled-order-tab="history" onclick="setScheduledOrderModalTab('history')">주문 목록</button>
-                    <button class="profit-detail-tab" type="button" data-scheduled-order-tab="edit" id="scheduledOrderEditTabBtn" onclick="setScheduledOrderModalTab('edit')" disabled>주문 수정</button>
-                </div>
-
-                <div class="profit-detail-loading" id="scheduledOrderLoading">조건주문 목록을 불러오는 중입니다...</div>
-                <div class="scheduled-order-notice" id="scheduledOrderModalNotice" aria-live="polite"></div>
-
-                <div class="profit-detail-panel scheduled-order-panel active" id="scheduledOrderHistoryPanel">
-                    <div class="scheduled-order-list" id="scheduledOrderList"></div>
-                    <div class="profit-detail-empty" id="scheduledOrderEmpty">등록된 조건주문이 없습니다.</div>
-                </div>
-
-                <div class="profit-detail-panel scheduled-order-panel" id="scheduledOrderEditPanel">
-                    <div class="scheduled-order-edit-summary" id="scheduledOrderEditSummary">수정할 조건주문을 목록에서 선택해 주세요.</div>
-                    <form class="scheduled-order-form" id="scheduledOrderEditForm" onsubmit="submitScheduledOrderEdit(event)">
-                        <div class="scheduled-order-symbol-context">
-                            <span>종목</span>
-                            <strong id="scheduledOrderEditSymbolValue">-</strong>
-                            <p>선택한 조건주문의 종목으로 고정됩니다.</p>
-                        </div>
-                        <div class="scheduled-order-form-grid scheduled-order-form-grid--compact">
-                            <label class="scheduled-order-field">
-                                <span>종료 시각</span>
-                                <input type="datetime-local" id="scheduledOrderEditEndAt" name="end_at" required>
-                            </label>
-                            <label class="scheduled-order-field">
-                                <span>매매 구분</span>
-                                <select id="scheduledOrderEditSide" name="side" required>
-                                    <option value="buy">매수</option>
-                                    <option value="sell">매도</option>
-                                </select>
-                            </label>
-                            <label class="scheduled-order-field">
-                                <span>수량</span>
-                                <input type="number" id="scheduledOrderEditQty" name="ord_qty" min="1" step="1" required>
-                            </label>
-                            <label class="scheduled-order-field">
-                                <span>주문 단가</span>
-                                <input type="text" id="scheduledOrderEditPrice" name="ord_unpr" inputmode="decimal" required>
-                            </label>
-                        </div>
-                        <input type="hidden" id="scheduledOrderEditPdno" name="pdno" value="">
-                        <input type="hidden" id="scheduledOrderEditOrdDvsn" name="ord_dvsn" value="00">
-                        <input type="hidden" id="scheduledOrderEditExcg" name="excg_id_dvsn_cd" value="SOR">
-                        <input type="hidden" id="scheduledOrderEditSellType" name="sll_type" value="">
-                        <input type="hidden" id="scheduledOrderEditConditionPrice" name="cndt_pric" value="">
-                        <input type="hidden" id="scheduledOrderEditNote" name="note" value="">
-                        <div class="scheduled-order-form-actions">
-                            <button type="button" class="btn-modal btn-cancel" onclick="closeScheduledOrderEdit()">목록으로</button>
-                            <button type="submit" class="btn-modal btn-confirm" id="scheduledOrderEditSubmitBtn">수정 저장</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Account Management -->
     <div class="profit-detail-overlay account-overlay" id="accountModal" onclick="handleAccountOverlayClick(event)">
         <div class="profit-detail-modal account-modal" onclick="handleAccountModalClick(event)">
@@ -619,36 +547,36 @@
                 <div class="profit-detail-loading" id="accountListLoading">계좌 목록을 불러오는 중입니다...</div>
                 <div class="account-list" id="accountList"></div>
                 <div class="profit-detail-empty" id="accountListEmpty">등록된 계좌가 없습니다.</div>
-                <div class="scheduled-order-notice" id="accountModalNotice" role="alert" aria-live="assertive"></div>
+                <div class="form-notice" id="accountModalNotice" role="alert" aria-live="assertive"></div>
 
                 <div class="account-add-section">
                     <div class="account-add-title">새 계좌 추가</div>
-                    <form class="scheduled-order-form account-add-form" id="accountAddForm" onsubmit="submitAddAccount(event)" novalidate>
-                        <div class="scheduled-order-form-grid">
-                            <label class="scheduled-order-field">
+                    <form class="account-form account-add-form" id="accountAddForm" onsubmit="submitAddAccount(event)" novalidate>
+                        <div class="account-form-grid">
+                            <label class="account-field">
                                 <span>증권사</span>
                                 <select id="new_account_broker" name="broker" onchange="handleAccountBrokerChange('new')">
                                     <option value="kis">한국투자증권 (KIS)</option>
                                     <option value="toss">토스증권</option>
                                 </select>
                             </label>
-                            <label class="scheduled-order-field">
+                            <label class="account-field">
                                 <span>계좌 이름</span>
                                 <input type="text" id="new_account_label" name="label" required autocomplete="off"
                                     placeholder="예: 주식 계좌">
                             </label>
-                            <label class="scheduled-order-field">
+                            <label class="account-field">
                                 <span id="new_account_key_label">APP KEY</span>
                                 <input type="text" id="new_account_app_key" name="app_key" required autocomplete="off"
                                     placeholder="한국투자증권 APP KEY" oninput="scheduleDashboardTossLookup('new')">
                             </label>
-                            <label class="scheduled-order-field">
+                            <label class="account-field">
                                 <span id="new_account_secret_label">APP SECRET</span>
                                 <input type="password" id="new_account_app_secret" name="app_secret" required
                                     autocomplete="new-password" placeholder="한국투자증권 APP SECRET"
                                     oninput="scheduleDashboardTossLookup('new')" onblur="scheduleDashboardTossLookup('new', 0)">
                             </label>
-                            <label class="scheduled-order-field">
+                            <label class="account-field">
                                 <span id="new_account_ref_label">계좌번호 (8자리 + 상품코드 2자리)</span>
                                 <input type="text" id="new_account_cano" name="cano" required autocomplete="off"
                                     inputmode="numeric" maxlength="10" placeholder="예: 1234567801"
@@ -663,12 +591,12 @@
                                 </div>
                             </label>
                         </div>
-                        <label class="scheduled-order-field account-field-pin">
+                        <label class="account-field account-field-pin">
                             <span>간편비밀번호 (PIN)</span>
                             <input type="password" id="new_account_pin" name="pin" class="pin-input" required
                                 autocomplete="new-password" inputmode="numeric" maxlength="6" placeholder="••••••">
                         </label>
-                        <div class="scheduled-order-form-actions">
+                        <div class="account-form-actions">
                             <button type="submit" class="btn-modal btn-confirm" id="accountAddSubmitBtn">계좌 추가</button>
                         </div>
                     </form>
@@ -692,13 +620,13 @@
             </div>
             <div class="profit-detail-body account-delete-body">
                 <p class="account-delete-desc">삭제한 계좌는 되돌릴 수 없습니다. 삭제하려면 간편비밀번호(PIN)를 입력하세요.</p>
-                <label class="scheduled-order-field">
+                <label class="account-field">
                     <span>간편비밀번호 (PIN)</span>
                     <input type="password" id="accountDeletePin" class="pin-input" required
                         autocomplete="new-password" inputmode="numeric" maxlength="6" placeholder="••••••">
                 </label>
-                <div class="scheduled-order-notice" id="accountDeleteError" role="alert" aria-live="assertive"></div>
-                <div class="scheduled-order-form-actions">
+                <div class="form-notice" id="accountDeleteError" role="alert" aria-live="assertive"></div>
+                <div class="account-form-actions">
                     <button type="button" class="btn-modal btn-cancel" onclick="closeAccountDeleteModal()">취소</button>
                     <button type="button" class="btn-modal btn-danger" id="accountDeleteConfirmBtn"
                         onclick="confirmDeleteAccount()">삭제</button>
@@ -721,22 +649,22 @@
                 </div>
             </div>
             <div class="profit-detail-body account-edit-body">
-                <form class="scheduled-order-form account-edit-form" id="accountEditForm"
+                <form class="account-form account-edit-form" id="accountEditForm"
                     onsubmit="submitEditAccount(event)" novalidate>
-                        <div class="scheduled-order-form-grid">
-                        <label class="scheduled-order-field">
+                        <div class="account-form-grid">
+                        <label class="account-field">
                             <span>증권사</span>
                             <select id="edit_account_broker" name="broker" onchange="handleAccountBrokerChange('edit')">
                                 <option value="kis">한국투자증권 (KIS)</option>
                                 <option value="toss">토스증권</option>
                             </select>
                         </label>
-                        <label class="scheduled-order-field">
+                        <label class="account-field">
                             <span>계좌 이름</span>
                             <input type="text" id="edit_account_label" name="label" required autocomplete="off"
                                 placeholder="예: 주식 계좌">
                         </label>
-                        <label class="scheduled-order-field">
+                        <label class="account-field">
                             <span id="edit_account_ref_label">계좌번호 (8자리 + 상품코드 2자리)</span>
                             <input type="text" id="edit_account_cano" name="cano" autocomplete="off"
                                 inputmode="numeric" maxlength="10" placeholder="변경 시에만 새 계좌번호 입력"
@@ -751,13 +679,13 @@
                                 <span class="account-field-hint" id="edit_toss_account_status" aria-live="polite"></span>
                             </div>
                         </label>
-                        <label class="scheduled-order-field">
+                        <label class="account-field">
                             <span id="edit_account_key_label">APP KEY</span>
                             <input type="text" id="edit_account_app_key" name="app_key" autocomplete="off"
                                 placeholder="변경 시에만 입력" oninput="scheduleDashboardTossLookup('edit')">
                             <span class="account-field-hint">빈 값이면 기존 키 유지</span>
                         </label>
-                        <label class="scheduled-order-field">
+                        <label class="account-field">
                             <span id="edit_account_secret_label">APP SECRET</span>
                             <input type="password" id="edit_account_app_secret" name="app_secret"
                                 autocomplete="new-password" placeholder="변경 시에만 입력"
@@ -765,13 +693,13 @@
                             <span class="account-field-hint">빈 값이면 기존 키 유지</span>
                         </label>
                     </div>
-                    <label class="scheduled-order-field account-field-pin">
+                    <label class="account-field account-field-pin">
                         <span>간편비밀번호 (PIN)</span>
                         <input type="password" id="edit_account_pin" name="pin" class="pin-input" required
                             autocomplete="new-password" inputmode="numeric" maxlength="6" placeholder="••••••">
                     </label>
-                    <div class="scheduled-order-notice" id="accountEditError" role="alert" aria-live="assertive"></div>
-                    <div class="scheduled-order-form-actions">
+                    <div class="form-notice" id="accountEditError" role="alert" aria-live="assertive"></div>
+                    <div class="account-form-actions">
                         <button type="button" class="btn-modal btn-cancel" onclick="closeAccountEditModal()">취소</button>
                         <button type="submit" class="btn-modal btn-confirm" id="accountEditSaveBtn">저장</button>
                     </div>
@@ -782,7 +710,7 @@
 
     <!-- Footer -->
     <div
-        style="position: fixed; bottom: 12px; width: 100%; text-align: center; color: rgba(255,255,255,0.3); font-size: 11px; z-index: 9999; pointer-events: none;">
+        style="position: fixed; bottom: 12px; width: 100%; text-align: center; color: var(--text-muted); font-size: 11px; z-index: 9999; pointer-events: none;">
         © Youngin all rights reserved.
     </div>
 
