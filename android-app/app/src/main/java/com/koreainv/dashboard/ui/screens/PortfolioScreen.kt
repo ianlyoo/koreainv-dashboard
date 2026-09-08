@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -61,8 +59,6 @@ import com.koreainv.dashboard.ui.theme.MarketKoreaFg
 import com.koreainv.dashboard.ui.theme.MarketUsaBg
 import com.koreainv.dashboard.ui.theme.MarketUsaFg
 import com.koreainv.dashboard.ui.theme.Success
-import com.koreainv.dashboard.ui.theme.SurfaceBorder
-import com.koreainv.dashboard.ui.theme.SurfaceGlassLight
 import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
@@ -79,9 +75,7 @@ import kotlinx.coroutines.Job
 fun PortfolioScreen(
     repository: DashboardDataSource,
     accountFilters: List<HoldingAccountFilter>,
-    onManageAccountsClick: () -> Unit,
-    onCheckUpdatesClick: () -> Unit,
-    onLogoutClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     onHoldingClick: (String, String?) -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -176,15 +170,11 @@ fun PortfolioScreen(
                             onClick = { loadDashboard(forceRefresh = true) },
                         )
                     }
-                    DashboardUtilityMenu(
-                        onManageAccounts = onManageAccountsClick,
-                        onCheckUpdates = onCheckUpdatesClick,
-                        onLogout = onLogoutClick,
-                    )
+                    DashboardSettingsButton(onClick = onSettingsClick)
                 },
             )
         },
-        containerColor = Background,
+        containerColor = Color.Transparent,
     ) { paddingValues ->
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
@@ -425,23 +415,6 @@ internal fun filterAndSortHoldings(
 
 internal fun compactAccountFilterLabel(label: String): String =
     if (label.length <= 8) label else "${label.take(7)}…"
-
-@Composable
-internal fun ScreenFilterMenu(
-    expanded: Boolean,
-    onDismissRequest: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismissRequest,
-        modifier = Modifier
-            .clip(RoundedCornerShape(24.dp))
-            .background(SurfaceGlassLight)
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(24.dp)),
-        content = content,
-    )
-}
 
 @Composable
 private fun HoldingSortMode.label(): String = when (this) {

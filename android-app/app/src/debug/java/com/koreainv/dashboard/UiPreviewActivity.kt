@@ -3,12 +3,14 @@ package com.koreainv.dashboard
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
@@ -21,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.network.*
 import com.koreainv.dashboard.ui.screens.*
 import com.koreainv.dashboard.ui.theme.KoreaInvDashboardTheme
+import com.koreainv.dashboard.ui.appearance.AppearancePreference
+import com.koreainv.dashboard.ui.appearance.ThemeMode
 import kotlinx.coroutines.awaitCancellation
 
 /** Debug-only screen host. Never creates a repository, transport, or order client. */
@@ -31,15 +35,17 @@ class UiPreviewActivity : ComponentActivity() {
         val fixture = intent.getStringExtra("fixture") ?: "normal"
         val source = SyntheticDashboardSource(fixture)
         // Run only on the fresh review emulator; setup is displayed without entering credentials.
+        val appearance = AppearancePreference(applicationContext)
+        intent.getStringExtra("theme")?.let { appearance.setThemeMode(ThemeMode.fromStoredValue(it)) }
         setContent {
-            KoreaInvDashboardTheme {
+            KoreaInvDashboardTheme(darkTheme = appearance.themeMode.isDark(isSystemInDarkTheme())) {
                 val bottomBarHeight = remember { mutableStateOf(116.dp) }
                 val currencyPreference = rememberCurrencyPreference()
                 CompositionLocalProvider(
                     LocalDashboardBottomBarHeight provides bottomBarHeight,
                     LocalCurrencyPreference provides currencyPreference,
                 ) {
-                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    DashboardGlassHost {
                         var screen by rememberSaveable { mutableStateOf(initialScreen) }
                         var detailSymbol by rememberSaveable { mutableStateOf("005930") }
                         var detailAccount by rememberSaveable { mutableStateOf<String?>("demo-kis") }
@@ -48,20 +54,24 @@ class UiPreviewActivity : ComponentActivity() {
                         var tradeSession by remember { mutableStateOf(TradeHistorySessionState()) }
                         val back = { screen = "portfolio" }
                         val accounts = { screen = "accounts" }
+                        val settings = { screen = "settings" }
+                        var updateNotice by remember { mutableStateOf(false) }
                         val logout = { screen = "unlock" }
                         val tabs = listOf(
                             DashboardTabItem("portfolio", stringResource(R.string.portfolio), Icons.Default.Home),
                             DashboardTabItem("assets", stringResource(R.string.asset_status), Icons.Default.AccountBox),
                             DashboardTabItem("trades", stringResource(R.string.trade_history_title), Icons.Default.List),
+                            DashboardTabItem("settings", "설정", Icons.Default.Settings),
                         )
                         Box(Modifier.fillMaxSize()) {
+                            Box(Modifier.fillMaxSize().recordNavigationBackdrop()) {
                             screenStateHolder.SaveableStateProvider(screen) {
                                 when (screen) {
-                                    "portfolio" -> PortfolioScreen(source, source.filters, accounts, {}, logout) { symbol, account ->
+                                    "portfolio" -> PortfolioScreen(source, source.filters, settings) { symbol, account ->
                                         detailSymbol = symbol; detailAccount = account; screen = "details"
                                     }
-                                    "assets" -> AssetStatusScreen(source, accounts, {}, logout)
-                                    "trades" -> TradeHistoryScreen(source, source.filters, accounts, {}, logout,
+                                    "assets" -> AssetStatusScreen(source, settings)
+                                    "trades" -> TradeHistoryScreen(source, source.filters, settings,
                                         { trade, _, _ -> detailTrade = trade; screen = "trade-details" },
                                         tradeSession, { tradeSession = it })
                                     "details" -> HoldingDetailScreen(source, detailSymbol, detailAccount, back)
@@ -71,8 +81,19 @@ class UiPreviewActivity : ComponentActivity() {
                                     "accounts" -> AccountManagementScreen(source.profile, fixture == "loading",
                                         if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
                                     "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
+                                    "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
+                                        "1.8.1-preview", false, false, { updateNotice = true }, accounts, logout, back)
                                     else -> error("Unknown preview screen: $screen")
                                 }
+                            }
+                            }
+                            if (updateNotice) {
+                                androidx.compose.material3.AlertDialog(onDismissRequest = { updateNotice = false },
+                                    title = { androidx.compose.material3.Text("업데이트 확인") },
+                                    text = { androidx.compose.material3.Text("가상 데이터 미리보기입니다.") },
+                                    confirmButton = { androidx.compose.material3.TextButton(onClick = { updateNotice = false }) {
+                                        androidx.compose.material3.Text("확인")
+                                    } })
                             }
                             if (screen in tabs.map { it.route }) {
                                 Box(Modifier.align(Alignment.BottomCenter)) {

@@ -7,8 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.focusable
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -130,7 +130,7 @@ internal fun TossAccountPicker(
                     color = if (selected != null) TextGold else TextSecondary,
                 )
             }
-            DropdownMenu(
+            ScreenFilterMenu(
                 expanded = expanded && isEnabled && !isLoading,
                 onDismissRequest = { expanded = false },
             ) {
@@ -165,7 +165,7 @@ internal fun TossAccountPicker(
                 text = message,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 color = if (hasError) {
-                    Color(0xFFEF4444)
+                    MaterialTheme.colorScheme.error
                 } else {
                     TextSecondary
                 },

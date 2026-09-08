@@ -161,7 +161,7 @@ fun AccountManagementScreen(
                 },
             )
         },
-        containerColor = Background,
+        containerColor = Color.Transparent,
     ) { paddingValues ->
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             Column(
@@ -253,7 +253,7 @@ fun AccountManagementScreen(
                 ) {
                     Text(
                         text = stringResource(R.string.save_accounts),
-                        color = Color.Black,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -476,6 +476,7 @@ private fun ManagementField(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     OutlinedTextField(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
         value = value,
         onValueChange = onValueChange,
         enabled = isEnabled,

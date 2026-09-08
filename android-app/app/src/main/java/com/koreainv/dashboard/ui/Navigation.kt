@@ -16,6 +16,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
+import com.koreainv.dashboard.ui.appearance.ThemeMode
+import com.koreainv.dashboard.ui.screens.SettingsScreen
+import com.koreainv.dashboard.ui.screens.DashboardGlassHost
+import com.koreainv.dashboard.ui.screens.recordNavigationBackdrop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -76,6 +81,7 @@ sealed class Screen(val route: String) {
     data object TradeHistory : Screen("trade_history")
     data object TradeDetail : Screen("trade_detail")
     data object AssetStatus : Screen("asset_status")
+    data object Settings : Screen("settings")
     data object AccountManagement : Screen("account_management")
     data object HoldingDetail : Screen("holding_detail/{symbol}?accountId={accountId}") {
         fun createRoute(symbol: String, accountId: String?): String =
@@ -84,22 +90,29 @@ sealed class Screen(val route: String) {
 }
 
 @Composable
-fun KoreaInvApp() {
+fun KoreaInvApp(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val currencyPreference = rememberCurrencyPreference()
     val bottomBarHeight = remember { mutableStateOf(116.dp) }
     CompositionLocalProvider(
         LocalCurrencyPreference provides currencyPreference,
         LocalDashboardBottomBarHeight provides bottomBarHeight,
     ) {
-        KoreaInvAppContent()
+        DashboardGlassHost {
+            KoreaInvAppContent(themeMode, onThemeModeChange)
+        }
     }
 }
 
 @Composable
-private fun KoreaInvAppContent() {
+private fun KoreaInvAppContent(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val upToDateText = stringResource(R.string.update_up_to_date)
+    val updateFailedText = stringResource(R.string.update_check_failed)
+    val invalidPinText = stringResource(R.string.invalid_pin)
+    val installPermissionText = stringResource(R.string.install_permission_required)
+    val downloadFailedText = stringResource(R.string.download_update_failed)
     val settingsManager = remember { SettingsManager(context) }
     val updateManager = remember { AppUpdateManager() }
     var unlockedProfile by remember { mutableStateOf<AccountProfile?>(null) }
@@ -123,6 +136,7 @@ private fun KoreaInvAppContent() {
         DashboardTabItem(route = Screen.Portfolio.route, label = stringResource(R.string.portfolio), icon = Icons.Default.Home),
         DashboardTabItem(route = Screen.AssetStatus.route, label = stringResource(R.string.asset_status), icon = Icons.Default.AccountBox),
         DashboardTabItem(route = Screen.TradeHistory.route, label = stringResource(R.string.trade_history_title), icon = Icons.Default.List),
+        DashboardTabItem(route = Screen.Settings.route, label = "설정", icon = Icons.Default.Settings),
     )
     val primaryRoutes = remember(primaryTabs) { primaryTabs.map { it.route }.toSet() }
 
@@ -140,13 +154,19 @@ private fun KoreaInvAppContent() {
             .first { it }
         hasAutoCheckedUpdate = true
         delay(900L)
-        availableUpdate = try {
-            updateManager.checkForUpdate(context, includeRecommended = false) ?: run {
+        if (isCheckingUpdate || isDownloadingUpdate || availableUpdate != null) return@LaunchedEffect
+        isCheckingUpdate = true
+        try {
+            availableUpdate = updateManager.checkForUpdate(context, includeRecommended = false) ?: run {
                 delay(1200L)
                 updateManager.checkForUpdate(context, includeRecommended = false)
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
-            null
+            // Automatic checks stay quiet; Settings provides the explicit retry action.
+        } finally {
+            isCheckingUpdate = false
         }
     }
 
@@ -159,18 +179,21 @@ private fun KoreaInvAppContent() {
     }
 
     fun checkForUpdates() {
+        if (isCheckingUpdate || isDownloadingUpdate || availableUpdate != null) return
+        isCheckingUpdate = true
+        updateMessage = null
         scope.launch {
-            isCheckingUpdate = true
-            updateMessage = null
-            availableUpdate = try {
-                updateManager.checkForUpdate(context).also {
-                    if (it == null) updateMessage = context.getString(R.string.update_up_to_date)
+            try {
+                availableUpdate = updateManager.checkForUpdate(context).also {
+                    if (it == null) updateMessage = upToDateText
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
-                updateMessage = context.getString(R.string.update_check_failed)
-                null
+                updateMessage = updateFailedText
+            } finally {
+                isCheckingUpdate = false
             }
-            isCheckingUpdate = false
         }
     }
 
@@ -192,11 +215,12 @@ private fun KoreaInvAppContent() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Background),
+            .background(Color.Transparent),
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize(),
+                .fillMaxSize()
+                .recordNavigationBackdrop(),
         ) {
             NavHost(
                 navController = navController,
@@ -263,7 +287,7 @@ private fun KoreaInvAppContent() {
                                             popUpTo(Screen.Unlock.route) { inclusive = true }
                                         }
                                     } else {
-                                        errorMessage = context.getString(R.string.invalid_pin)
+                                        errorMessage = invalidPinText
                                     }
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
@@ -289,12 +313,7 @@ private fun KoreaInvAppContent() {
                         PortfolioScreen(
                             repository = activeRepository,
                             accountFilters = unlockedProfile.orEmptyAccountFilters(),
-                            onManageAccountsClick = {
-                                accountManagementError = null
-                                navController.navigate(Screen.AccountManagement.route)
-                            },
-                            onCheckUpdatesClick = ::checkForUpdates,
-                            onLogoutClick = ::logout,
+                            onSettingsClick = { navigateToPrimaryTab(Screen.Settings.route) },
                             onHoldingClick = { symbol, accountId ->
                                 navController.navigate(Screen.HoldingDetail.createRoute(symbol, accountId))
                             },
@@ -309,12 +328,7 @@ private fun KoreaInvAppContent() {
                     } else {
                         AssetStatusScreen(
                             repository = activeRepository,
-                            onManageAccountsClick = {
-                                accountManagementError = null
-                                navController.navigate(Screen.AccountManagement.route)
-                            },
-                            onCheckUpdatesClick = ::checkForUpdates,
-                            onLogoutClick = ::logout,
+                            onSettingsClick = { navigateToPrimaryTab(Screen.Settings.route) },
                         )
                     }
                 }
@@ -327,12 +341,7 @@ private fun KoreaInvAppContent() {
                         TradeHistoryScreen(
                             repository = activeRepository,
                             accountFilters = unlockedProfile.orEmptyAccountFilters(),
-                            onManageAccountsClick = {
-                                accountManagementError = null
-                                navController.navigate(Screen.AccountManagement.route)
-                            },
-                            onCheckUpdatesClick = ::checkForUpdates,
-                            onLogoutClick = ::logout,
+                            onSettingsClick = { navigateToPrimaryTab(Screen.Settings.route) },
                             sessionState = tradeHistorySessionState,
                             onSessionStateChange = { tradeHistorySessionState = it },
                             onTradeClick = { trade, usdRate, lastSynced ->
@@ -359,6 +368,33 @@ private fun KoreaInvAppContent() {
                     }
                 }
 
+                composable(Screen.Settings.route) {
+                    if (unlockedProfile == null) {
+                        LaunchedEffect(Unit) {
+                            navController.navigate(Screen.Unlock.route) {
+                                popUpTo(Screen.Portfolio.route) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    } else {
+                        SettingsScreen(
+                            themeMode = themeMode,
+                            onThemeModeChange = onThemeModeChange,
+                            versionName = remember(context) {
+                                context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+                            },
+                            isCheckingUpdate = isCheckingUpdate,
+                            isDownloadingUpdate = isDownloadingUpdate,
+                            onCheckUpdatesClick = ::checkForUpdates,
+                            onManageAccountsClick = {
+                                accountManagementError = null
+                                navController.navigate(Screen.AccountManagement.route) { launchSingleTop = true }
+                            },
+                            onLogoutClick = ::logout,
+                            onBackClick = { navController.popBackStack() },
+                        )
+                    }
+                }
                 composable(Screen.AccountManagement.route) {
                     val profile = unlockedProfile
                     if (profile == null) {
@@ -376,7 +412,7 @@ private fun KoreaInvAppContent() {
                                     try {
                                         val updatedProfile = settingsManager.updateProfile(accounts, pin)
                                         if (updatedProfile == null) {
-                                            accountManagementError = context.getString(R.string.invalid_pin)
+                                            accountManagementError = invalidPinText
                                         } else {
                                             unlockedProfile = updatedProfile
                                             tradeHistorySessionState = TradeHistorySessionState()
@@ -462,15 +498,17 @@ private fun KoreaInvAppContent() {
             },
             confirmButton = {
                 TextButton(
+                    enabled = !isDownloadingUpdate,
                     onClick = {
+                        if (isDownloadingUpdate) return@TextButton
+                        isDownloadingUpdate = true
                         scope.launch {
-                            isDownloadingUpdate = true
                             var launchedInstaller = false
                             try {
                                 when (val result = updateManager.downloadUpdate(context, release)) {
                                     InstallPreparationResult.PermissionRequired -> {
                                         updateManager.requestInstallPermission(context)
-                                        updateMessage = context.getString(R.string.install_permission_required)
+                                        updateMessage = installPermissionText
                                     }
 
                                     is InstallPreparationResult.Ready -> {
@@ -479,7 +517,7 @@ private fun KoreaInvAppContent() {
                                     }
                                 }
                             } catch (_: Exception) {
-                                updateMessage = context.getString(R.string.download_update_failed)
+                                updateMessage = downloadFailedText
                             }
                             isDownloadingUpdate = false
                             if (shouldCloseUpdateDialog(release.policy, launchedInstaller)) {
@@ -514,7 +552,7 @@ private fun KoreaInvAppContent() {
         )
     }
 
-    if (isCheckingUpdate || isDownloadingUpdate) {
+    if (isDownloadingUpdate) {
         Box(
             modifier = Modifier
                 .fillMaxSize()

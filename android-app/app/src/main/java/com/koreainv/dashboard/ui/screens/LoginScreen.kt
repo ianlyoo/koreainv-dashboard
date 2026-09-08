@@ -104,7 +104,7 @@ fun PinUnlockScreen(
                     modifier = Modifier
                         .size(12.dp)
                         .clip(CircleShape)
-                        .background(if (isFilled) TextGold else Color.White.copy(alpha = 0.2f)),
+                        .background(if (isFilled) TextGold else TextSecondary.copy(alpha = 0.25f)),
                 )
             }
         }
@@ -190,9 +190,7 @@ fun CredentialShell(
                     .fillMaxWidth()
                     .then(
                         if (centered) Modifier
-                            .clip(RoundedCornerShape(32.dp))
-                            .background(Surface.copy(alpha = 0.94f))
-                            .border(1.dp, SurfaceBorder, RoundedCornerShape(32.dp))
+                            .liquidGlass(radius = 32.dp)
                             .padding(horizontal = 24.dp, vertical = 28.dp)
                         else Modifier,
                     ),
@@ -286,7 +284,7 @@ fun NumpadButton(text: String, onClick: () -> Unit, isAction: Boolean = false, e
         modifier = Modifier.size(64.dp),
         shape = CircleShape,
         colors = ButtonDefaults.textButtonColors(
-            contentColor = if (isAction) TextGold else Color.White,
+            contentColor = if (isAction) TextGold else TextPrimary,
         ),
     ) {
         Text(

@@ -203,7 +203,7 @@ fun SetupScreen(
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = TextGold),
         ) {
-            Text(text = stringResource(R.string.complete_setup), color = Color.Black, style = MaterialTheme.typography.titleMedium)
+            Text(text = stringResource(R.string.complete_setup), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -446,6 +446,7 @@ private fun SetupField(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     OutlinedTextField(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
         value = value,
         onValueChange = onValueChange,
         enabled = isEnabled,

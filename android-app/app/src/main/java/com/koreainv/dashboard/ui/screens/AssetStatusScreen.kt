@@ -32,6 +32,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -58,9 +59,7 @@ import java.util.Locale
 @Composable
 fun AssetStatusScreen(
     repository: DashboardDataSource,
-    onManageAccountsClick: () -> Unit,
-    onCheckUpdatesClick: () -> Unit,
-    onLogoutClick: () -> Unit,
+    onSettingsClick: () -> Unit,
 ) {
     val coroutineScope = rememberCoroutineScope()
 
@@ -114,15 +113,11 @@ fun AssetStatusScreen(
                             onClick = { loadDashboard(forceRefresh = true) },
                         )
                     }
-                    DashboardUtilityMenu(
-                        onManageAccounts = onManageAccountsClick,
-                        onCheckUpdates = onCheckUpdatesClick,
-                        onLogout = onLogoutClick,
-                    )
+                    DashboardSettingsButton(onClick = onSettingsClick)
                 },
             )
         },
-        containerColor = Background,
+        containerColor = Color.Transparent,
     ) { paddingValues ->
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {

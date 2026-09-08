@@ -33,6 +33,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Install Android build SDK
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
       - name: Prepare Android signing keystore
         env:
           ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}

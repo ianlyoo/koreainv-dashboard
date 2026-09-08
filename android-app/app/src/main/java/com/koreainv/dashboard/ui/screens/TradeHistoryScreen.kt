@@ -33,6 +33,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -61,9 +62,7 @@ import java.util.Locale
 fun TradeHistoryScreen(
     repository: DashboardDataSource,
     accountFilters: List<HoldingAccountFilter>,
-    onManageAccountsClick: () -> Unit,
-    onCheckUpdatesClick: () -> Unit,
-    onLogoutClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     onTradeClick: (Trade, Double, String?) -> Unit,
     sessionState: TradeHistorySessionState,
     onSessionStateChange: (TradeHistorySessionState) -> Unit,
@@ -199,15 +198,11 @@ fun TradeHistoryScreen(
                             onClick = { loadTradeHistory(range = selectedRange, forceRefresh = true) },
                         )
                     }
-                    DashboardUtilityMenu(
-                        onManageAccounts = onManageAccountsClick,
-                        onCheckUpdates = onCheckUpdatesClick,
-                        onLogout = onLogoutClick,
-                    )
+                    DashboardSettingsButton(onClick = onSettingsClick)
                 },
             )
         },
-        containerColor = Background,
+        containerColor = Color.Transparent,
     ) { paddingValues ->
         ScreenBackground(modifier = Modifier.padding(paddingValues)) {
             when {
@@ -603,12 +598,13 @@ fun TradeItemCard(
             AdaptiveListAmounts(
                 amount = formatTradeAmount(trade, currencyMode, usdRate),
                 secondary = profitText,
-                secondaryColor = realizedProfit?.let(::profitColorForAmount) ?: TextSecondary,
+                secondaryColor = if (realizedProfit != null) profitColorForAmount(realizedProfit) else TextSecondary,
             )
         }
     }
 }
 
+@Composable
 private fun profitColorForAmount(amount: Double) = when {
     amount > 0 -> Success
     amount < 0 -> Error

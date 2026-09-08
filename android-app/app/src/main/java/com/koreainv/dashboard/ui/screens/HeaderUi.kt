@@ -1,5 +1,10 @@
 package com.koreainv.dashboard.ui.screens
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,18 +20,20 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -119,13 +126,7 @@ fun ScreenBackground(
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(Background, BackgroundRaised),
-                ),
-            ),
+        modifier = modifier.fillMaxSize(),
         content = content,
     )
 }
@@ -138,22 +139,9 @@ fun PremiumCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(30.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        SurfaceElevated.copy(alpha = 0.94f),
-                        Surface.copy(alpha = 0.9f),
-                    ),
-                ),
-            )
-            .border(1.dp, SurfaceBorderPrimary, RoundedCornerShape(30.dp))
+            .liquidGlass(radius = 30.dp)
             .padding(24.dp),
     ) {
-        GlassCornerSheen(
-            topRightAlpha = 0.12f,
-            bottomLeftAlpha = 0.05f,
-        )
         content()
     }
 }
@@ -166,22 +154,9 @@ fun PremiumGlassCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        SurfaceGlassLight.copy(alpha = 0.9f),
-                        SurfaceGlass.copy(alpha = 0.82f),
-                    ),
-                ),
-            )
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(28.dp))
+            .liquidGlass()
             .padding(20.dp),
     ) {
-        GlassCornerSheen(
-            topRightAlpha = 0.1f,
-            bottomLeftAlpha = 0.045f,
-        )
         content()
     }
 }
@@ -194,56 +169,13 @@ fun HeroTopSection(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(34.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(SurfacePrimary, SurfaceElevated),
-                ),
-            )
-            .border(1.dp, SurfaceBorderPrimary, RoundedCornerShape(34.dp))
+            .liquidGlass(radius = 32.dp)
             .padding(horizontal = 24.dp, vertical = 28.dp),
     ) {
-        GlassCornerSheen(
-            topRightAlpha = 0.13f,
-            bottomLeftAlpha = 0.06f,
-        )
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(18.dp),
             content = content,
-        )
-    }
-}
-
-@Composable
-private fun GlassCornerSheen(
-    topRightAlpha: Float,
-    bottomLeftAlpha: Float,
-) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = topRightAlpha),
-                    Color.Transparent,
-                ),
-                center = Offset(size.width * 0.92f, size.height * 0.1f),
-                radius = size.minDimension * 0.55f,
-            ),
-            radius = size.minDimension * 0.55f,
-            center = Offset(size.width * 0.92f, size.height * 0.1f),
-        )
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = bottomLeftAlpha),
-                    Color.Transparent,
-                ),
-                center = Offset(size.width * 0.08f, size.height * 0.92f),
-                radius = size.minDimension * 0.48f,
-            ),
-            radius = size.minDimension * 0.48f,
-            center = Offset(size.width * 0.08f, size.height * 0.92f),
         )
     }
 }
@@ -391,20 +323,15 @@ fun HeaderIconButton(
     enabled: Boolean = true,
 ) {
     val palette = tonePalette(tone)
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .size(48.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        palette.container.copy(alpha = 0.94f),
-                        SurfaceGlass.copy(alpha = 0.74f),
-                    ),
-                ),
-            )
-            .border(1.dp, palette.border, RoundedCornerShape(18.dp))
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+            .glassPressFeedback(interactionSource)
+            .liquidGlass(radius = 24.dp, role = GlassRole.Control)
+            .clip(RoundedCornerShape(24.dp))
+            .clickable(interactionSource = interactionSource, indication = LocalIndication.current,
+                enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -420,13 +347,7 @@ fun HeaderLoadingIndicator() {
     Box(
         modifier = Modifier
             .size(48.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(SurfaceElevated, SurfacePrimary),
-                ),
-            )
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(18.dp)),
+            .liquidGlass(radius = 24.dp, role = GlassRole.Control),
         contentAlignment = Alignment.Center,
     ) {
         CircularProgressIndicator(
@@ -475,21 +396,18 @@ fun PremiumListItem(
     onClick: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     var rowModifier = modifier
         .fillMaxWidth()
-        .clip(RoundedCornerShape(26.dp))
-        .background(SurfaceGlassLight)
-        .border(1.dp, SurfaceBorder, RoundedCornerShape(26.dp))
+        .glassPressFeedback(interactionSource)
+        .liquidGlass(radius = 24.dp)
+        .clip(RoundedCornerShape(24.dp))
 
     if (onClick != null) {
-        rowModifier = rowModifier.clickable(onClick = onClick)
+        rowModifier = rowModifier.clickable(interactionSource = interactionSource, indication = LocalIndication.current, onClick = onClick)
     }
 
     Box(modifier = rowModifier) {
-        GlassCornerSheen(
-            topRightAlpha = 0.09f,
-            bottomLeftAlpha = 0.04f,
-        )
         Row(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -533,16 +451,7 @@ fun CompactCurrencyToggle(
     Row(
         modifier = Modifier
             .selectableGroup()
-            .clip(RoundedCornerShape(22.dp))
-            .background(
-                Brush.horizontalGradient(
-                    colors = listOf(
-                        SurfaceGlassLight.copy(alpha = 0.92f),
-                        SurfaceGlass.copy(alpha = 0.82f),
-                    ),
-                ),
-            )
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(22.dp))
+            .liquidGlass(radius = 28.dp, role = GlassRole.Control)
             .padding(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -571,19 +480,13 @@ fun DashboardPillButton(
     compact: Boolean = false,
 ) {
     val palette = tonePalette(tone)
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                Brush.horizontalGradient(
-                    colors = listOf(
-                        palette.container.copy(alpha = 0.92f),
-                        SurfaceGlass.copy(alpha = 0.76f),
-                    ),
-                ),
-            )
-            .border(1.dp, palette.border, RoundedCornerShape(18.dp))
-            .clickable(role = Role.Button, onClick = onClick)
+            .glassPressFeedback(interactionSource)
+            .liquidGlass(radius = 24.dp, role = GlassRole.Control)
+            .clip(RoundedCornerShape(24.dp))
+            .clickable(interactionSource = interactionSource, indication = LocalIndication.current, role = Role.Button, onClick = onClick)
             .heightIn(min = 48.dp)
             .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -609,53 +512,29 @@ fun DashboardPillButton(
 }
 
 @Composable
-fun DashboardUtilityMenu(
-    onManageAccounts: () -> Unit,
-    onCheckUpdates: () -> Unit,
-    onLogout: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
+fun DashboardSettingsButton(onClick: () -> Unit) {
+    HeaderIconButton(Icons.Default.Settings, "설정", onClick)
+}
 
-    Box {
-        HeaderIconButton(
-            imageVector = Icons.Default.MoreVert,
-            contentDescription = stringResource(R.string.menu),
-            onClick = { expanded = true },
-        )
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .clip(RoundedCornerShape(24.dp))
-                .background(SurfaceGlassLight)
-                .border(1.dp, SurfaceBorder, RoundedCornerShape(24.dp)),
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.account_management_title), color = TextPrimary) },
-                colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                onClick = {
-                    expanded = false
-                    onManageAccounts()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.check_for_updates), color = TextPrimary) },
-                colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                onClick = {
-                    expanded = false
-                    onCheckUpdates()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.logout), color = TextPrimary) },
-                colors = MenuDefaults.itemColors(textColor = TextPrimary),
-                onClick = {
-                    expanded = false
-                    onLogout()
-                },
-            )
-        }
-    }
+@Composable
+internal fun ScreenFilterMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val shape = RoundedCornerShape(24.dp)
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        shape = shape,
+        containerColor = Color.Transparent,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+        // Like the floating bar, popups sample content rather than the plain canvas.
+        modifier = Modifier.liquidGlass(radius = 24.dp, role = GlassRole.Navigation,
+            tint = SurfacePrimary.copy(alpha = 0.94f)),
+        content = content,
+    )
 }
 
 @Composable
@@ -664,53 +543,60 @@ fun DashboardBottomTabBar(
     currentRoute: String?,
     onTabSelected: (DashboardTabItem) -> Unit,
 ) {
+    if (items.isEmpty()) return
     val density = LocalDensity.current
     val measuredHeight = LocalDashboardBottomBarHeight.current
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
+        Modifier.fillMaxWidth()
             .onSizeChanged { size -> measuredHeight?.value = with(density) { size.height.toDp() } }
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .selectableGroup()
-                .clip(RoundedCornerShape(30.dp))
-                .background(SurfaceGlassLight)
-                .border(1.dp, SurfaceBorder.copy(alpha = 0.74f), RoundedCornerShape(30.dp))
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        BoxWithConstraints(
+            Modifier.fillMaxWidth()
+                .liquidGlass(radius = 34.dp, role = GlassRole.Navigation)
+                .padding(6.dp),
         ) {
-            items.forEach { item ->
-                val selected = currentRoute == item.route
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(if (selected) SurfaceAccent else SurfaceGlassLight.copy(alpha = 0.56f))
-                        .border(
-                            width = 1.dp,
-                            color = if (selected) SurfaceBorderPrimary else SurfaceBorder.copy(alpha = 0.55f),
-                            shape = RoundedCornerShape(22.dp),
-                        )
-                        .selectable(selected = selected, role = Role.Tab) { onTabSelected(item) }
-                        .heightIn(min = 56.dp)
-                        .padding(horizontal = 4.dp, vertical = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
-                ) {
-                    item.icon?.let { icon ->
-                        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (selected) TextPrimary else TextSecondary)
-                    }
-                    Text(
-                        text = item.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (selected) TextGold else TextPrimary.copy(alpha = 0.86f),
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                        textAlign = TextAlign.Center,
+            val tabWidth = maxWidth / items.size
+            val selectedIndex = items.indexOfFirst { it.route == currentRoute }
+            val indicatorOffset by animateDpAsState(
+                targetValue = tabWidth * selectedIndex.coerceAtLeast(0),
+                animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+                label = "selected tab position",
+            )
+            if (selectedIndex >= 0) {
+                Box(Modifier.matchParentSize()) {
+                    Box(Modifier.offset(x = indicatorOffset).width(tabWidth).fillMaxHeight()
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(SurfaceAccent.copy(alpha = 0.78f))
+                        .border(0.75.dp, SurfaceBorderPrimary.copy(alpha = 0.45f), RoundedCornerShape(28.dp)))
+                }
+            }
+            Row(Modifier.fillMaxWidth().selectableGroup()) {
+                items.forEach { item ->
+                    val selected = currentRoute == item.route
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val foreground by animateColorAsState(
+                        if (selected) TextGold else TextSecondary,
+                        label = "tab foreground",
                     )
+                    Column(
+                        Modifier.weight(1f)
+                            .glassPressFeedback(interactionSource)
+                            .clip(RoundedCornerShape(28.dp))
+                            .selectable(selected = selected, role = Role.Tab,
+                                interactionSource = interactionSource, indication = LocalIndication.current,
+                                onClick = { onTabSelected(item) })
+                            .heightIn(min = 60.dp)
+                            .padding(horizontal = 2.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+                    ) {
+                        item.icon?.let { Icon(it, null, Modifier.size(22.dp), tint = foreground) }
+                        Text(item.label, style = MaterialTheme.typography.labelSmall,
+                            color = foreground, textAlign = TextAlign.Center,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium)
+                    }
                 }
             }
         }
@@ -916,6 +802,7 @@ private data class TonePalette(
     val border: Color,
 )
 
+@Composable
 private fun tonePalette(tone: AccentTone): TonePalette = when (tone) {
     AccentTone.Neutral -> TonePalette(SurfacePrimary, TextPrimary, SurfaceBorder)
     AccentTone.Accent -> TonePalette(SurfaceAccent, TextGold, SurfaceBorderPrimary)
