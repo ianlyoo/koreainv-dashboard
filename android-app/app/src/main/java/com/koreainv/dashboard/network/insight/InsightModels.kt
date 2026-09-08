@@ -1,0 +1,31 @@
+package com.koreainv.dashboard.network.insight
+
+/** Percent fields are already percentages; PCR fields are put/call ratios. */
+data class InsightRange(val low: Double? = null, val high: Double? = null, val current: Double? = null)
+data class InsightExtendedHours(val price: Double? = null, val changePercent: Double? = null, val asOf: String? = null, val session: String? = null)
+data class InsightHeader(val marketStatus: String? = null, val asOf: String? = null, val price: Double? = null, val changePercent: Double? = null, val changeBasis: String? = null, val turnover: Double? = null, val dayRange: InsightRange? = null, val week52Range: InsightRange? = null, val extendedHours: InsightExtendedHours? = null, val marketCap: Double? = null, val marketCapRank: Double? = null, val turnoverRank: Double? = null)
+data class InsightMetric(val value: Double? = null, val compare: Double? = null, val replaceText: String? = null, val direction: String? = null, val sectorPercentile: String? = null)
+data class InsightKeyMetrics(val per: InsightMetric? = null, val eps: InsightMetric? = null, val revenueTtm: InsightMetric? = null, val dividendYield: InsightMetric? = null, val roe: InsightMetric? = null, val shortInterestPct: InsightMetric? = null, val daysToCover: InsightMetric? = null, val shortAsOf: String? = null, val shortBasis: String? = null, val asOf: String? = null, val periodLabel: String? = null)
+data class InsightQuarter(val label: String? = null, val revenue: Double? = null, val yoy: Double? = null, val replaceText: String? = null, val direction: String? = null)
+data class InsightRevenue(val source: String? = null, val quarters: List<InsightQuarter> = emptyList())
+data class InsightDistribution(val buy: Double? = null, val hold: Double? = null, val sell: Double? = null)
+data class InsightTarget(val mean: Double? = null, val low: Double? = null, val high: Double? = null)
+data class InsightAnalystRow(val firm: String? = null, val firmKo: String? = null, val target: Double? = null, val prevTarget: Double? = null, val rating: String? = null, val prevRating: String? = null, val action: String? = null, val at: String? = null, val prevSource: String? = null, val upsidePct: Double? = null, val isNew: Boolean? = null)
+data class InsightAnalyst(val analystCount: Double? = null, val dist: InsightDistribution? = null, val label: String? = null, val target: InsightTarget? = null, val upsidePct: Double? = null, val recent: List<InsightAnalystRow> = emptyList(), val provider: String? = null, val asOf: String? = null)
+data class InsightInsiderRow(val name: String? = null, val title: String? = null, val value: Double? = null, val transactionDate: String? = null, val transactionCode: String? = null)
+data class InsightInsider(val window: Double? = null, val buyCount: Double? = null, val sellCount: Double? = null, val netValue: Double? = null, val label: String? = null, val recent: List<InsightInsiderRow> = emptyList(), val asOf: String? = null)
+data class InsightShare(val call: Double? = null, val put: Double? = null)
+data class InsightAverageWindow(val available: Boolean = false, val ratioPct: Double? = null, val baselineCumVolume: Double? = null)
+data class InsightVolumeAverage(val roundSeq: Double? = null, val asOfMinute: Double? = null, val currentCumVolume: Double? = null, val windows: Map<String, InsightAverageWindow> = emptyMap())
+data class InsightOptions(val optionable: Boolean? = null, val asOf: String? = null, val snapshotDate: String? = null, val snapshotIsPriorDay: Boolean? = null, val snapshotUpdatedAt: String? = null, val batchDate: String? = null, val batchIsPriorDay: Boolean? = null, val batchUpdatedAt: String? = null, val batchIsProvisional: Boolean? = null, val nearestExpiry: String? = null, val daysToExpiry: Double? = null, val maxPain: Double? = null, val volume: Double? = null, val putCallRatioVolume: Double? = null, val putCallRatioOpenInterest: Double? = null, val volumeShare: InsightShare? = null, val openInterestShare: InsightShare? = null, val premiumShare: InsightShare? = null, val optionVolumeVsAvg: InsightVolumeAverage? = null, val referencePrice: Double? = null, val netGammaExposure: Double? = null, val gammaPer1Pct: Double? = null, val callWall: Double? = null, val putWall: Double? = null, val gammaFlip: Double? = null)
+data class InsightNewsItem(val title: String, val publisher: String? = null, val link: String, val publishedAt: String? = null)
+data class InsightNews(val items: List<InsightNewsItem> = emptyList())
+/** time is epoch milliseconds, date is the provider UTC date; adjustment/session status is unverified. */
+data class PriceBar(val time: Long, val date: String, val open: Double, val high: Double, val low: Double, val close: Double, val volume: Double)
+enum class InsightSectionStatus { AVAILABLE, EMPTY, ERROR, UNSUPPORTED, RATE_LIMITED }
+data class InsightSectionInfo(val status: InsightSectionStatus, val source: String = "SaveTicker", val asOf: String? = null, val provisional: Boolean? = null, val message: String? = null)
+enum class InsightSnapshotStatus { AVAILABLE, PARTIAL, EMPTY, UNAVAILABLE, UNSUPPORTED, OFFLINE, RATE_LIMITED }
+data class InsightSnapshot(val ticker: String, val marketType: String = "USA", val header: InsightHeader? = null, val keyMetrics: InsightKeyMetrics? = null, val revenue: InsightRevenue? = null, val analyst: InsightAnalyst? = null, val insider: InsightInsider? = null, val options: InsightOptions? = null, val news: InsightNews? = null, val bars: List<PriceBar> = emptyList(), val sections: Map<String, InsightSectionInfo> = emptyMap(), val fetchedAtMillis: Long = 0L, val status: InsightSnapshotStatus = InsightSnapshotStatus.UNAVAILABLE, val isStale: Boolean = false, val message: String? = null, val retryAtMillis: Long? = null)
+enum class InsightConnectionStatus { LOCKED, DISCONNECTED, READY, CONNECTING, CONNECTED, EXPIRED, ERROR, RATE_LIMITED }
+data class InsightConnectionState(val isUnlocked: Boolean = false, val hasCredentials: Boolean = false, val isConnected: Boolean = false, val remember: Boolean = false, val emailMasked: String? = null, val status: InsightConnectionStatus = InsightConnectionStatus.LOCKED, val message: String? = null)
+data class InsightConnectResult(val success: Boolean, val message: String? = null)

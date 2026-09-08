@@ -58,6 +58,8 @@ python3 -m PyInstaller --noconfirm --clean --windowed \
   --add-data "app/img:app/img" \
   --collect-submodules passlib.handlers \
   --hidden-import passlib.handlers.bcrypt \
+  --hidden-import keyring.backends.macOS \
+  --copy-metadata keyring \
   --add-binary "$UPDATER_BIN:." \
   launcher_mac.py
 

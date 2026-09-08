@@ -32,6 +32,9 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.Shadow
 import com.koreainv.dashboard.ui.theme.LocalDashboardColors
+import com.koreainv.dashboard.ui.LocalDevicePerformancePolicy
+import com.koreainv.dashboard.ui.rememberDevicePerformancePolicy
+import androidx.compose.material3.LocalContentColor
 
 internal val LocalGlassNavigation = staticCompositionLocalOf<DashboardNavigationBackdrop?> { null }
 // Provided only around floating top controls, never around their recorded source.
@@ -47,7 +50,12 @@ fun DashboardGlassHost(
 ) {
     val navigation = remember { DashboardNavigationBackdrop() }
     val colors = LocalDashboardColors.current
-    CompositionLocalProvider(LocalGlassNavigation provides navigation) {
+    val performance = rememberDevicePerformancePolicy()
+    CompositionLocalProvider(
+        LocalGlassNavigation provides navigation,
+        LocalDevicePerformancePolicy provides performance,
+        LocalContentColor provides colors.textPrimary,
+    ) {
         Box(Modifier.fillMaxSize().background(colors.background)) {
             background()
             // Paint through the status bar, while keeping controls clear of system UI/cutouts.
@@ -67,6 +75,7 @@ internal fun Modifier.liquidGlass(
     tint: Color = Color.Unspecified,
 ): Modifier {
     val colors = LocalDashboardColors.current
+    val liveGlass = LocalDevicePerformancePolicy.current.liveGlass
     val backdrop: Backdrop? = when (role) {
         GlassRole.Navigation -> LocalGlassNavigation.current
         GlassRole.Control -> LocalGlassControls.current
@@ -84,8 +93,8 @@ internal fun Modifier.liquidGlass(
         listOf(colors.glassHighlight, colors.surfaceBorder.copy(alpha = 0.28f), colors.surfaceBorder.copy(alpha = 0.65f)),
     )
     // Body controls remain cheap; only scoped top controls and navigation get effects.
-    if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-        val fill = if (role == GlassRole.Navigation || backdrop != null) {
+    if (!liveGlass || backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        val fill = if (!liveGlass || role == GlassRole.Navigation || backdrop != null) {
             (if (tint != Color.Unspecified) tint else colors.surfaceGlassLight).copy(alpha = 1f)
         } else surface
         val flat = this.clip(shape).background(fill)

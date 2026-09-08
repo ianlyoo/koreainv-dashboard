@@ -15,3 +15,4 @@ bcrypt
 pystray
 Pillow
 websocket-client
+keyring>=25,<26

@@ -112,6 +112,9 @@ jobs:
         shell: cmd
         run: build_windows.bat
 
+      - name: Verify Windows credential store
+        run: python scripts/check_secure_store.py
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -143,6 +146,9 @@ jobs:
 
       - name: Build macOS distribution
         run: ./scripts/build_mac_app.sh
+
+      - name: Verify macOS credential store
+        run: python scripts/check_secure_store.py
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

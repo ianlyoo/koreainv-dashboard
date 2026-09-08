@@ -32,6 +32,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.koreainv.dashboard.ui.theme.LocalDashboardColors
 import com.koreainv.dashboard.ui.LocalDashboardNavigationSource
+import com.koreainv.dashboard.ui.LocalDevicePerformancePolicy
 
 /**
  * A floating header above a scrolling body. Apply [content]'s padding inside the
@@ -52,8 +53,9 @@ fun DashboardScaffold(
     val bodyBackdrop = remember(recording) { DashboardBodyBackdrop(recording) }
     val navigationBackdrop = LocalGlassNavigation.current
     val isNavigationSource = LocalDashboardNavigationSource.current
+    val liveGlass = LocalDevicePerformancePolicy.current.liveGlass
     SideEffect {
-        if (isNavigationSource) navigationBackdrop?.publish(bodyBackdrop)
+        if (liveGlass && isNavigationSource) navigationBackdrop?.publish(bodyBackdrop)
         else navigationBackdrop?.clear(bodyBackdrop)
     }
     DisposableEffect(navigationBackdrop, bodyBackdrop) {
@@ -72,8 +74,9 @@ fun DashboardScaffold(
         CompositionLocalProvider(LocalGlassControls provides null) {
             Box(
                 Modifier.fillMaxSize()
-                    .onGloballyPositioned { bodyBackdrop.sourceCoordinates = it }
-                    .layerBackdrop(recording)
+                    .then(if (liveGlass) Modifier
+                        .onGloballyPositioned { bodyBackdrop.sourceCoordinates = it }
+                        .layerBackdrop(recording) else Modifier)
                     .background(colors.background),
             ) {
                 content(PaddingValues(top = topBarHeight, bottom = bottomPadding))
@@ -98,7 +101,7 @@ fun DashboardScaffold(
                 }
             }
         })
-        CompositionLocalProvider(LocalGlassControls provides bodyBackdrop) {
+        CompositionLocalProvider(LocalGlassControls provides if (liveGlass) bodyBackdrop else null) {
             Box(Modifier.fillMaxWidth().onSizeChanged {
                 topBarHeight = with(density) { it.height.toDp() }
             }) {

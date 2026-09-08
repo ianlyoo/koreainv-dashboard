@@ -12,6 +12,10 @@ The dashboard is read-only for broker operations. It supports portfolio, balance
 market and historical execution queries. Order registration, submission, scheduling,
 modification and cancellation are not supported.
 
+## Stock insights
+
+Android holding details open native US stock charts and analysis through a separate SaveTicker connection. Configure it in Settings; no PC backend is needed. Optional saved credentials use Android Keystore, and backgrounding locks the app. Desktop SaveTicker connections use session storage by default or the OS credential store when saving is selected. See the [validation record](docs/android-insight-validation.md).
+
 ## Architecture
 
 ```mermaid

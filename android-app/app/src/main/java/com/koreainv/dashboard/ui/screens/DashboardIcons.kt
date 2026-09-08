@@ -12,6 +12,9 @@ import androidx.compose.ui.unit.dp
 
 /** Small, consistent outline symbols keep navigation quieter than the financial values. */
 object DashboardIcons {
+    val ChevronRight = outline("ChevronRight") {
+        moveTo(9f, 5f); lineTo(16f, 12f); lineTo(9f, 19f)
+    }
     val Portfolio = outline("Portfolio") {
         moveTo(4f, 20f); lineTo(4f, 13f)
         moveTo(9.3f, 20f); lineTo(9.3f, 9f)

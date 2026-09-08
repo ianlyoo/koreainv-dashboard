@@ -20,9 +20,12 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.max
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -37,6 +40,7 @@ class KisRepository(
     private val accounts: List<AccountCredential>,
     private val settingsManager: SettingsManager,
     private val primaryIndex: Int = 0,
+    maxConcurrentAccounts: Int = 3,
 ) : DashboardDataSource {
     constructor(credentials: AppCredentials, settingsManager: SettingsManager) :
         this(listOf(credentials.toAccountCredential()), settingsManager, 0)
@@ -70,21 +74,34 @@ class KisRepository(
         .callTimeout(90, TimeUnit.SECONDS)
         .build()
 
-    private val dashboardCacheMutex = Mutex()
+    private val session = RepositoryRequestSession(DashboardCache())
+    private val accountSemaphore = Semaphore(maxConcurrentAccounts.coerceAtLeast(1))
     private val dashboardLoadMutex = Mutex()
     private val quoteRefreshMutex = Mutex()
-    private val tradeHistoryCacheMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
     private val tokenAliases = AuthTokenAliases(accounts)
     private val tokenCoordinator = AuthTokenCoordinator(
-        load = { settingsManager.loadAuthToken(tokenAliases.scopesFor(it)) },
-        save = { account, token -> settingsManager.saveAuthToken(tokenAliases.scopesFor(account), token) },
-        invalidate = { settingsManager.clearAuthToken(tokenAliases.scopesFor(it)) },
+        load = { account ->
+            ensureActiveSession()
+            settingsManager.loadAuthToken(tokenAliases.scopesFor(account)).also { ensureActiveSession() }
+        },
+        save = { account, token ->
+            ensureActiveSession()
+            settingsManager.saveAuthToken(tokenAliases.scopesFor(account), token)
+            ensureActiveSession()
+        },
+        invalidate = { account ->
+            ensureActiveSession()
+            settingsManager.clearAuthToken(tokenAliases.scopesFor(account))
+            ensureActiveSession()
+        },
         issue = ::issueToken,
     )
-    private var cachedBaseDashboard: Pair<Long, DashboardResponse>? = null
-    private var cachedDashboard: Pair<Long, DashboardResponse>? = null
-    private var cachedTradeHistory: MutableMap<String, Pair<Long, TradeHistoryResponse>> = mutableMapOf()
+    private data class DashboardCache(
+        val base: Pair<Long, DashboardResponse>? = null,
+        val dashboard: Pair<Long, DashboardResponse>? = null,
+        val tradeHistory: Map<String, Pair<Long, TradeHistoryResponse>> = emptyMap(),
+    )
     private var lastKnownUsdRate: Double = 1350.0
 
     /** Dashboard balances and trade history are aggregated across [accounts]. */
@@ -97,60 +114,68 @@ class KisRepository(
 
     private val usQuoteService = primaryKisAccount?.let { KisUsQuoteService(it.toAppCredentials(), client) }
 
-    override fun peekDashboard(): DashboardResponse? = cachedDashboard?.second?.withRebuiltAssetDistribution()
+    override fun peekDashboard(): DashboardResponse? = session.read()?.dashboard?.second?.withRebuiltAssetDistribution()
     override fun peekTradeHistory(range: String, accountId: String?): TradeHistoryResponse? {
         val cacheKey = tradeHistoryCacheKey(range, accountId)
-        val cached = cachedTradeHistory[cacheKey] ?: return null
+        val cached = session.read()?.tradeHistory?.get(cacheKey) ?: return null
         return cached.second.takeIf { System.currentTimeMillis() - cached.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }
     }
 
     private fun tradeHistoryCacheKey(range: String, accountId: String?): String =
         "${range.lowercase(Locale.US)}:${accountId?.takeIf(String::isNotBlank) ?: "all"}"
 
-    override suspend fun fetchDashboard(forceRefresh: Boolean): DashboardResponse = withContext(Dispatchers.IO) {
-        dashboardLoadMutex.withLock {
-            if (!forceRefresh) {
-                val cachedBase = dashboardCacheMutex.withLock {
-                    cachedBaseDashboard?.takeIf { System.currentTimeMillis() - it.first <= DASHBOARD_CACHE_TTL_MILLIS }?.second
-                }
-                if (cachedBase != null) {
-                    val refreshed = refreshDashboardFromBase(cachedBase, forceRetry = false)
-                    dashboardCacheMutex.withLock {
-                        cachedDashboard = System.currentTimeMillis() to refreshed
+    override suspend fun fetchDashboard(forceRefresh: Boolean): DashboardResponse = session.run {
+        withContext(Dispatchers.IO) {
+            dashboardLoadMutex.withLock {
+                ensureActiveSession()
+                if (!forceRefresh) {
+                    val cachedBase = session.read()?.base
+                        ?.takeIf { System.currentTimeMillis() - it.first <= DASHBOARD_CACHE_TTL_MILLIS }?.second
+                    if (cachedBase != null) {
+                        val refreshed = refreshDashboardFromBase(cachedBase, forceRetry = false)
+                        ensureActiveSession()
+                        session.update { it.copy(dashboard = System.currentTimeMillis() to refreshed) }
+                        return@withLock refreshed
                     }
-                    return@withLock refreshed
                 }
-            }
 
-            val accountPayloads = coroutineScope {
-                accounts.map { account ->
-                    async { loadAccountDashboard(account) }
-                }.awaitAll()
+                val accountPayloads = coroutineScope {
+                    accounts.map { account ->
+                        async { accountSemaphore.withPermit { loadAccountDashboard(account) } }
+                    }.awaitAll()
+                }
+                val baseDashboard = buildDashboard(accountPayloads)
+                val refreshed = refreshDashboardFromBase(baseDashboard, forceRetry = forceRefresh)
+                val cachedAt = System.currentTimeMillis()
+                ensureActiveSession()
+                session.update { it.copy(base = cachedAt to baseDashboard, dashboard = cachedAt to refreshed) }
+                refreshed
             }
-            val baseDashboard = buildDashboard(accountPayloads)
-            val refreshed = refreshDashboardFromBase(baseDashboard, forceRetry = forceRefresh)
-            val cachedAt = System.currentTimeMillis()
-            dashboardCacheMutex.withLock {
-                cachedBaseDashboard = cachedAt to baseDashboard
-                cachedDashboard = cachedAt to refreshed
-            }
-            refreshed
         }
     }
 
-    override suspend fun refreshDashboardQuotes(): DashboardResponse? = withContext(Dispatchers.IO) {
-        quoteRefreshMutex.withLock {
-            val baseDashboard = dashboardCacheMutex.withLock { cachedBaseDashboard?.second } ?: return@withLock null
-            val refreshed = refreshDashboardFromBase(baseDashboard, forceRetry = false)
-            dashboardCacheMutex.withLock {
-                cachedDashboard = System.currentTimeMillis() to refreshed
+    override suspend fun refreshDashboardQuotes(): DashboardResponse? = session.run {
+        withContext(Dispatchers.IO) {
+            quoteRefreshMutex.withLock {
+                ensureActiveSession()
+                val baseDashboard = session.read()?.base?.second ?: return@withLock null
+                val refreshed = refreshDashboardFromBase(baseDashboard, forceRetry = false)
+                ensureActiveSession()
+                session.update { it.copy(dashboard = System.currentTimeMillis() to refreshed) }
+                refreshed
             }
-            refreshed
         }
     }
 
     fun close() {
+        if (!session.close()) return
         usQuoteService?.close()
+        client.dispatcher.cancelAll()
+    }
+
+    private suspend fun ensureActiveSession() {
+        coroutineContext.ensureActive()
+        session.ensureOpen()
     }
 
     private suspend fun loadAccountDashboard(account: AccountCredential): AccountDashboardPayload = coroutineScope {
@@ -190,7 +215,7 @@ class KisRepository(
                         token = token,
                         includeAccount = false,
                     )
-                }.getOrNull()
+                }.onFailure { if (it is CancellationException) throw it }.getOrNull()
             }
             holdingsDeferred.await() to exchangeDeferred.await()
         }
@@ -252,7 +277,7 @@ class KisRepository(
         )
     }
 
-    private fun getTossProxyDashboard(account: AccountCredential): Pair<JsonObject?, JsonObject?> {
+    private suspend fun getTossProxyDashboard(account: AccountCredential): Pair<JsonObject?, JsonObject?> {
         val baseUrl = account.centralServerBaseUrl.trim().trimEnd('/')
         val proxyToken = account.centralServerApiToken.trim()
         val payload = JsonObject().apply {
@@ -266,8 +291,10 @@ class KisRepository(
             .header("Accept", "application/json")
             .header("Authorization", "Bearer $proxyToken")
             .build()
-        client.newCall(request).execute().use { response ->
-            val body = parseObject(response.body?.string().orEmpty()) ?: JsonObject()
+        ensureActiveSession()
+        client.newCall(request).awaitTextResponse().let { response ->
+            ensureActiveSession()
+            val body = parseObject(response.text) ?: JsonObject()
             if (!response.isSuccessful) {
                 throw IllegalStateException(
                     "TOSS_PROXY_HTTP_ERROR code=${response.code} detail=${string(body, "detail")}",
@@ -294,8 +321,10 @@ class KisRepository(
             .header("Accept", "application/json")
             .header("Authorization", "Bearer $token")
         if (includeAccount) builder.header("X-Tossinvest-Account", account.cano)
-        client.newCall(builder.build()).execute().use { response ->
-            val payload = parseObject(response.body?.string().orEmpty()) ?: JsonObject()
+        ensureActiveSession()
+        client.newCall(builder.build()).awaitTextResponse().let { response ->
+            ensureActiveSession()
+            val payload = parseObject(response.text) ?: JsonObject()
             if (response.code == 401 && retryOnTokenError) {
                 val refreshed = tokenCoordinator.refreshToken(account, token)
                     ?: throw IllegalStateException("TOSS_TOKEN_REFRESH_FAILED path=$path")
@@ -337,7 +366,7 @@ class KisRepository(
         )
     }
 
-    private fun getTossProxyTradeHistory(
+    private suspend fun getTossProxyTradeHistory(
         account: AccountCredential,
         startDate: String,
         endDate: String,
@@ -356,8 +385,10 @@ class KisRepository(
             .header("Accept", "application/json")
             .header("Authorization", "Bearer ${account.centralServerApiToken.trim()}")
             .build()
-        client.newCall(request).execute().use { response ->
-            val body = parseObject(response.body?.string().orEmpty()) ?: JsonObject()
+        ensureActiveSession()
+        client.newCall(request).awaitTextResponse().let { response ->
+            ensureActiveSession()
+            val body = parseObject(response.text) ?: JsonObject()
             if (!response.isSuccessful) {
                 throw IllegalStateException(
                     "TOSS_PROXY_TRADE_HISTORY_ERROR code=${response.code} detail=${string(body, "detail")}",
@@ -428,6 +459,8 @@ class KisRepository(
                 token = token,
                 includeAccount = false,
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             null
         }
@@ -550,73 +583,80 @@ class KisRepository(
         accountId: String?,
         forceRefresh: Boolean,
         onSummaryReady: (suspend (TradeHistoryResponse) -> Unit)?,
-    ): TradeHistoryResponse = withContext(Dispatchers.IO) {
-        tradeHistoryLoadMutex.withLock {
-            val normalizedRange = range.lowercase(Locale.US)
-            val cacheKey = tradeHistoryCacheKey(normalizedRange, accountId)
-            if (!forceRefresh) {
-                tradeHistoryCacheMutex.withLock {
-                    cachedTradeHistory[cacheKey]?.takeIf { System.currentTimeMillis() - it.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }?.let {
-                        return@withContext it.second
-                    }
+    ): TradeHistoryResponse = session.run {
+        withContext(Dispatchers.IO) {
+            tradeHistoryLoadMutex.withLock {
+                ensureActiveSession()
+                val normalizedRange = range.lowercase(Locale.US)
+                val cacheKey = tradeHistoryCacheKey(normalizedRange, accountId)
+                if (!forceRefresh) {
+                    session.read()?.tradeHistory?.get(cacheKey)
+                        ?.takeIf { System.currentTimeMillis() - it.first <= TRADE_HISTORY_CACHE_TTL_MILLIS }?.let {
+                            return@withContext it.second
+                        }
                 }
-            }
-            val resolved = resolveTradeRange(normalizedRange)
-            val startDate = resolved.first.format(JSON_FORMAT)
-            val endDate = resolved.second.format(JSON_FORMAT)
+                val resolved = resolveTradeRange(normalizedRange)
+                val startDate = resolved.first.format(JSON_FORMAT)
+                val endDate = resolved.second.format(JSON_FORMAT)
 
-            val selectedAccounts = accountId?.takeIf(String::isNotBlank)?.let { selected ->
-                accounts.filter { it.id == selected }
-            } ?: accounts
-            require(selectedAccounts.isNotEmpty()) { "UNKNOWN_ACCOUNT_ID" }
+                val selectedAccounts = accountId?.takeIf(String::isNotBlank)?.let { selected ->
+                    accounts.filter { it.id == selected }
+                } ?: accounts
+                require(selectedAccounts.isNotEmpty()) { "UNKNOWN_ACCOUNT_ID" }
 
-            val accountResults = coroutineScope {
-                selectedAccounts.map { account ->
-                    async {
-                        account to runCatching {
-                            if (Broker.normalize(account.broker) == Broker.TOSS) {
-                                loadTossTradeHistory(account, startDate, endDate)
-                            } else {
-                                loadKisTradeHistory(account, startDate, endDate)
+                val accountResults = coroutineScope {
+                    selectedAccounts.map { account ->
+                        async {
+                            accountSemaphore.withPermit {
+                                account to runCatching {
+                                    if (Broker.normalize(account.broker) == Broker.TOSS) {
+                                        loadTossTradeHistory(account, startDate, endDate)
+                                    } else {
+                                        loadKisTradeHistory(account, startDate, endDate)
+                                    }
+                                }.onFailure { if (it is CancellationException) throw it }
                             }
                         }
-                    }
-                }.awaitAll()
-            }
-            val loaded = accountResults.mapNotNull { it.second.getOrNull() }
-            val errors = accountResults.mapNotNull { (account, result) ->
-                result.exceptionOrNull()?.let { error ->
-                    "${account.label}: ${error.message?.takeIf(String::isNotBlank) ?: error::class.simpleName.orEmpty()}"
+                    }.awaitAll()
                 }
-            }
-            if (loaded.isEmpty()) {
-                throw accountResults.firstNotNullOfOrNull { it.second.exceptionOrNull() }
-                    ?: IllegalStateException("TRADE_HISTORY_EMPTY")
-            }
+                ensureActiveSession()
+                val loaded = accountResults.mapNotNull { it.second.getOrNull() }
+                val errors = accountResults.mapNotNull { (account, result) ->
+                    result.exceptionOrNull()?.let { error ->
+                        "${account.label}: ${error.message?.takeIf(String::isNotBlank) ?: error::class.simpleName.orEmpty()}"
+                    }
+                }
+                if (loaded.isEmpty()) {
+                    throw accountResults.firstNotNullOfOrNull { it.second.exceptionOrNull() }
+                        ?: IllegalStateException("TRADE_HISTORY_EMPTY")
+                }
 
-            val summaryOnly = buildTradeHistoryResponse(
-                resolved = resolved,
-                accountPayloads = loaded,
-                includeTrades = false,
-                accountErrors = errors,
-                selectedAccounts = selectedAccounts,
-            )
-            onSummaryReady?.let { callback ->
-                withContext(Dispatchers.Main) { callback(summaryOnly) }
-            }
+                val summaryOnly = buildTradeHistoryResponse(
+                    resolved = resolved,
+                    accountPayloads = loaded,
+                    includeTrades = false,
+                    accountErrors = errors,
+                    selectedAccounts = selectedAccounts,
+                )
+                onSummaryReady?.let { callback ->
+                    withContext(Dispatchers.Main) {
+                        ensureActiveSession()
+                        callback(summaryOnly)
+                    }
+                }
 
-            val built = buildTradeHistoryResponse(
-                resolved = resolved,
-                accountPayloads = loaded,
-                includeTrades = true,
-                accountErrors = errors,
-                selectedAccounts = selectedAccounts,
-            )
+                val built = buildTradeHistoryResponse(
+                    resolved = resolved,
+                    accountPayloads = loaded,
+                    includeTrades = true,
+                    accountErrors = errors,
+                    selectedAccounts = selectedAccounts,
+                )
 
-            tradeHistoryCacheMutex.withLock {
-                cachedTradeHistory[cacheKey] = System.currentTimeMillis() to built
+                ensureActiveSession()
+                session.update { it.copy(tradeHistory = it.tradeHistory + (cacheKey to (System.currentTimeMillis() to built))) }
+                built
             }
-            built
         }
     }
 
@@ -1022,6 +1062,7 @@ class KisRepository(
                     normalizeOverseasTradeRows(rows, exchange)
                 }
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 Log.w("KisRepository", "overseas ccnl inquiry failed for $exchange", error)
                 emptyList()
             }
@@ -1291,6 +1332,7 @@ class KisRepository(
         baseDashboard: DashboardResponse,
         forceRetry: Boolean,
     ): DashboardResponse {
+        ensureActiveSession()
         val usHoldings = baseDashboard.holdings.filter { it.market == "USA" }
         val quoteService = usQuoteService ?: return baseDashboard.withRebuiltAssetDistribution()
         quoteService.syncHoldings(usHoldings, forceRetry = forceRetry)
@@ -1324,9 +1366,12 @@ class KisRepository(
         )
     }
 
-    private suspend fun requireToken(account: AccountCredential): String? = tokenCoordinator.requireToken(account)
+    private suspend fun requireToken(account: AccountCredential): String? {
+        ensureActiveSession()
+        return tokenCoordinator.requireToken(account).also { ensureActiveSession() }
+    }
 
-    private fun issueToken(account: AccountCredential): AuthToken? {
+    private suspend fun issueToken(account: AccountCredential): AuthToken? {
         val now = System.currentTimeMillis()
 
         val isToss = Broker.normalize(account.broker) == Broker.TOSS
@@ -1354,14 +1399,16 @@ class KisRepository(
                 .build()
         }
 
-        return client.newCall(request).execute().use { response: okhttp3.Response ->
+        ensureActiveSession()
+        return client.newCall(request).awaitTextResponse().let { response ->
+            ensureActiveSession()
             if (!response.isSuccessful) {
-                return@use null
+                return@let null
             }
-            val bodyString = response.body?.string().orEmpty()
-            val json = parseObject(bodyString) ?: return@use null
+            val bodyString = response.text
+            val json = parseObject(bodyString) ?: return@let null
             val accessToken = string(json, "access_token")
-            if (accessToken.isBlank()) return@use null
+            if (accessToken.isBlank()) return@let null
             val expiresIn = number(json, "expires_in").takeIf { it > 0.0 }?.toLong()
                 ?: if (isToss) 86400L else 43200L
             AuthToken(accessToken, now, now + expiresIn * 1000)
@@ -1396,8 +1443,10 @@ class KisRepository(
         }
         val request = requestBuilder.build()
 
-        client.newCall(request).execute().use { response ->
-            val bodyString = response.body?.string().orEmpty()
+        ensureActiveSession()
+        client.newCall(request).awaitTextResponse().let { response ->
+            ensureActiveSession()
+            val bodyString = response.text
             val json = parseObject(bodyString) ?: JsonObject()
             when (kisRetryAction(response.code, string(json, "msg_cd"), string(json, "msg1"), retryOnTokenError, retryOnRateLimit)) {
                 KisRetryAction.REFRESH_TOKEN -> {

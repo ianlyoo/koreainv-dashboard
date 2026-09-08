@@ -6,6 +6,12 @@ Korea Investment Securities dashboard — track portfolio and market monitoring 
 
 > **Social preview:** `https://ianlyoo.github.io/koreainv-dashboard/assets/social-preview.png` (1280×640) — see `docs/OWNER_ACTIONS.md` for manual GitHub Settings upload.
 
+## Android stock insights
+
+Version 1.9.6 adds native US stock price charts, financials, analyst opinions, options, insider activity, and news from holding details. Configure your SaveTicker account under **Settings → Connection → SaveTicker**; no desktop server is required. Saving credentials is optional and uses Android Keystore. Returning from the background requires the app PIN.
+
+Constrained devices automatically use less expensive glass effects, smaller caches, and fewer simultaneous account requests. See the [implementation and validation record](docs/android-insight-validation.md) for measurements and limitations. Desktop credentials are also managed through Settings and the OS store, not `.env`.
+
 ## Quick start — dashboard for Korea Investment with Google Sheets
 
 koreainv-dashboard aggregates Korea Investment and Toss accounts and surfaces portfolio and market data with an ops layer on Google Sheets.

@@ -20,7 +20,9 @@ The current website's client uses `POST https://saveticker.com/api/auth/login` w
 
 ## Configuration
 
-Set `SAVETICKER_EMAIL` and `SAVETICKER_PASSWORD` in the local ignored `.env`, then restart the dashboard process. `SAVETICKER_ENABLED=false` explicitly disables this source. The supplied account was configured locally with `.env` permissions 0600; values are omitted here. No account credentials belong in `.env.example`, fixtures or a release package.
+Connect from dashboard **Settings → SaveTicker**. Credentials remain in the unlocked dashboard session by default; optional persistence uses macOS Keychain or Windows Credential Manager. Disconnect removes the stored connection. Android connects independently through **Settings → Connection → SaveTicker**, with optional Android Keystore encryption after app PIN unlock and a configured device lock.
+
+Legacy `.env` credentials are no longer loaded into application configuration. The explicit migration helper writes and verifies the protected OS item before removing only the two legacy bindings; it preserves other settings and does not create a plaintext backup. The authorized local migration was verified on 2026-09-09. No actual account identifiers or credentials belong in `.env.example`, fixtures, logs, or release packages.
 
 This uses the current site's authenticated web API. No public versioning or third-party API stability guarantee was found; failures retain an explicit Yahoo fallback. The old `api.saveticker.com` news API returns a legacy-service notice and is not used.
 

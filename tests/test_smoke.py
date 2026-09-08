@@ -62,6 +62,7 @@ class DashboardSmokeTests(unittest.TestCase):
         "app.routes.auth_pages.auth.load_settings",
         return_value={"setup_complete": True, "pin_hash": "hashed"},
     )
+    @patch("app.insight_context.credential_store.read", new=lambda: None)
     def test_login_sets_session_cookie(
         self, _load_settings, _verify_pin, _decrypt_credentials
     ):

@@ -1,7 +1,16 @@
 import os
-from dotenv import load_dotenv
+from dotenv import dotenv_values, find_dotenv
 
-load_dotenv()
+def _load_environment():
+    # Legacy SaveTicker values are excluded from both config and process environment.
+    for key, value in dotenv_values(find_dotenv()).items():
+        if key not in {"SAVETICKER_EMAIL", "SAVETICKER_PASSWORD"} and value is not None:
+            os.environ.setdefault(key, value)
+    for key in ("SAVETICKER_EMAIL", "SAVETICKER_PASSWORD"):
+        os.environ.pop(key, None)
+
+
+_load_environment()
 
 
 def _as_bool(name: str, default: bool = False) -> bool:
@@ -23,8 +32,3 @@ TOSS_PROXY_SERVER_ENABLED = _as_bool("TOSS_PROXY_SERVER_ENABLED", False)
 TOSS_PROXY_SERVER_TOKEN = os.getenv("TOSS_PROXY_SERVER_TOKEN", "").strip()
 TOSS_PROXY_REMOTE_URL = os.getenv("TOSS_PROXY_REMOTE_URL", "").strip().rstrip("/")
 TOSS_PROXY_REMOTE_TOKEN = os.getenv("TOSS_PROXY_REMOTE_TOKEN", "").strip()
-
-# Server-only credentials. Session cookies are kept in process memory.
-SAVETICKER_EMAIL = os.getenv("SAVETICKER_EMAIL", "").strip()
-SAVETICKER_PASSWORD = os.getenv("SAVETICKER_PASSWORD", "")
-SAVETICKER_ENABLED = _as_bool("SAVETICKER_ENABLED", True)

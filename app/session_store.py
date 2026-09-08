@@ -79,6 +79,7 @@ class SessionData:
     cano: str
     acnt_prdt_cd: str
     accounts: list[AccountCredential] = field(default_factory=list)
+    insight: object = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         # Backward compatibility: existing callers construct SessionData with
@@ -200,13 +201,17 @@ def require_session(request: Request) -> SessionData:
 
 def create_session(session_data: SessionData) -> str:
     session_id = str(uuid.uuid4())
+    from app.insight_context import InsightContext
+    session_data.insight = InsightContext()
     active_sessions[session_id] = session_data
     return session_id
 
 
 def destroy_session(session_id: str | None) -> None:
     if session_id and session_id in active_sessions:
-        del active_sessions[session_id]
+        session = active_sessions.pop(session_id)
+        if session.insight is not None:
+            session.insight.revoke()
 
 
 def update_session_accounts(
@@ -229,7 +234,8 @@ def update_session_accounts(
 
 
 def clear_all_sessions() -> None:
-    active_sessions.clear()
+    for session_id in tuple(active_sessions):
+        destroy_session(session_id)
 
 
 def set_session_cookie(response: Response, session_id: str) -> None:

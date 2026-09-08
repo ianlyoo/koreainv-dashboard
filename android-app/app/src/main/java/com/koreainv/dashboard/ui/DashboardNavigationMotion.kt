@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.IntOffset
 /** Shared by the real NavHost and the offline motion preview. */
 object DashboardNavigationMotion {
     private val tabs = listOf("portfolio", "asset_status", "trade_history", "settings")
-    private val details = setOf("holding_detail", "trade_detail", "account_management")
+    private val details = setOf("holding_detail", "trade_detail", "account_management", "stock_insight", "insight_connection")
 
     private fun routeKey(route: String?): String? = route?.substringBefore('/')?.substringBefore('?')
 

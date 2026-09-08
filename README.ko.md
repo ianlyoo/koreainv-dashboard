@@ -6,6 +6,12 @@ Korea Investment Securities dashboard — track portfolio and market monitoring 
 
 > **소셜 프리뷰:** `https://ianlyoo.github.io/koreainv-dashboard/assets/social-preview.png` (1280×640) — GitHub Settings 수동 업로드는 `docs/OWNER_ACTIONS.md` 참조.
 
+## Android 종목 인사이트
+
+v1.9.6부터 보유 상세에서 미국 주식의 가격 차트·재무·애널리스트·옵션·내부자·뉴스를 확인할 수 있다. PC 없이 직접 연결하며 `설정 → 연결 → SaveTicker`에서 계정을 설정한다. 저장 기본값은 꺼짐이고, 저장을 선택하면 Android Keystore를 사용한다. 백그라운드 복귀 시 앱 PIN을 다시 확인한다.
+
+저사양 기기에서는 유리 효과 비용과 캐시·동시 요청 수를 자동으로 줄인다. [구현·보안·성능 검증](docs/android-insight-validation.md)에 측정 조건과 한계를 정리했다. 데스크톱 연결도 설정 화면에서 관리하며 비밀번호를 `.env`에 추가하지 않는다.
+
 ## 빠른 시작 — Google Sheets와 연결된 Korea Investment 대시보드
 
 koreainv-dashboard는 KIS와 Toss 계좌를 집계해 포트폴리오와 마켓 데이터를 보여주고 Google Sheets로 운영을 연결한다.

@@ -10,6 +10,8 @@ from unittest.mock import Mock, patch
 import requests
 
 from app.routes import insight
+from app.session_store import SessionData, active_sessions, create_session, clear_all_sessions
+from starlette.requests import Request
 from app.services.saveticker_service import HEADERS, SECTIONS, SaveTickerService, empty_snapshot
 
 PAYLOADS = {
@@ -147,15 +149,18 @@ class SaveTickerTests(unittest.TestCase):
 
 class InsightSaveTickerTests(unittest.TestCase):
     def setUp(self):
-        insight._insight_cache.clear()
+        clear_all_sessions()
+        sid = create_session(SessionData('key', 'secret', '12345678', '01'))
+        self.context = active_sessions[sid].insight
+        self.request = Request({'type': 'http', 'headers': [(b'cookie', ('session=' + sid).encode())]})
 
     def test_partial_skips_yahoo_preserves_zero_and_missing_semantics(self):
         snapshot = empty_snapshot('partial')
         snapshot['sections'].update(copy.deepcopy(PAYLOADS))
         snapshot['sections']['news'] = {'items': [{'title': 'Headline', 'publisher': 'reuters', 'link': 'https://saveticker.com/news/42', 'published_at': None}]}
-        with patch.object(insight.saveticker_service, 'fetch', return_value=snapshot), patch.object(insight, '_resolve_yf_ticker') as yahoo:
-            result = asyncio.run(insight.get_asset_insight('AVGO'))
-            self.assertEqual(asyncio.run(insight.get_asset_insight('AVGO')), result)
+        with patch.object(self.context.service, 'fetch', return_value=snapshot), patch.object(insight, '_resolve_yf_ticker') as yahoo:
+            result = asyncio.run(insight.get_asset_insight(self.request, 'AVGO'))
+            self.assertEqual(asyncio.run(insight.get_asset_insight(self.request, 'AVGO')), result)
         yahoo.assert_not_called()
         data = result['data']
         self.assertEqual(data['source'], 'saveticker')
@@ -172,8 +177,8 @@ class InsightSaveTickerTests(unittest.TestCase):
 
     def test_unavailable_and_non_us_fallback_explicit_source(self):
         for market, status in [('USA', 'unavailable'), ('KOR', 'unsupported')]:
-            with patch.object(insight.saveticker_service, 'fetch', return_value=empty_snapshot(status)), patch.object(insight, '_resolve_yf_ticker', return_value=('X', {'currentPrice': 10})), patch.object(insight, '_fetch_options_data', return_value=None), patch.object(insight, '_fetch_news_data', return_value=[]), patch.object(insight, '_fetch_history_data', return_value=[]):
-                result = asyncio.run(insight.get_asset_insight('X', market))
+            with patch.object(self.context.service, 'fetch', return_value=empty_snapshot(status)), patch.object(insight, '_resolve_yf_ticker', return_value=('X', {'currentPrice': 10})), patch.object(insight, '_fetch_options_data', return_value=None), patch.object(insight, '_fetch_news_data', return_value=[]), patch.object(insight, '_fetch_history_data', return_value=[]):
+                result = asyncio.run(insight.get_asset_insight(self.request, 'X', market))
             self.assertEqual(result['data']['source'], 'yahoo')
             self.assertEqual(result['data']['saveticker']['status'], status)
 
@@ -182,17 +187,17 @@ class InsightSaveTickerTests(unittest.TestCase):
         snapshot['sections']['header'] = PAYLOADS['header']
         snapshot['section_status']['header'] = 'available'
         snapshot['section_status']['revenue'] = 'error'
-        with patch.object(insight.saveticker_service, 'fetch', return_value=snapshot) as fetch:
-            asyncio.run(insight.get_asset_insight('AVGO'))
-            asyncio.run(insight.get_asset_insight('AVGO'))
+        with patch.object(self.context.service, 'fetch', return_value=snapshot) as fetch:
+            asyncio.run(insight.get_asset_insight(self.request, 'AVGO'))
+            asyncio.run(insight.get_asset_insight(self.request, 'AVGO'))
             self.assertEqual(fetch.call_count, 1)
-            insight._insight_cache['USA:AVGO']['ts'] = time.time() - 61
-            asyncio.run(insight.get_asset_insight('AVGO'))
+            self.context.cache['USA:AVGO']['ts'] = time.time() - 61
+            asyncio.run(insight.get_asset_insight(self.request, 'AVGO'))
             self.assertEqual(fetch.call_count, 2)
 
     def test_both_providers_fail_with_safe_error_and_provider_status(self):
-        with patch.object(insight.saveticker_service, 'fetch', return_value=empty_snapshot('unavailable')), patch.object(insight, '_resolve_yf_ticker', side_effect=RuntimeError('private error')):
-            result = asyncio.run(insight.get_asset_insight('AVGO'))
+        with patch.object(self.context.service, 'fetch', return_value=empty_snapshot('unavailable')), patch.object(insight, '_resolve_yf_ticker', side_effect=RuntimeError('private error')):
+            result = asyncio.run(insight.get_asset_insight(self.request, 'AVGO'))
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['data']['saveticker']['status'], 'unavailable')
         self.assertNotIn('private error', str(result))

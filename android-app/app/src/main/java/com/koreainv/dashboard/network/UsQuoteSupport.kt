@@ -143,6 +143,7 @@ internal class KisUsQuoteService(
 
     private var approvalKey: String? = null
     private var webSocket: WebSocketClient? = null
+    private var connectingSocket: WebSocketClient? = null
     private var reconnectJob: Job? = null
     private var opening = false
     private var closed = false
@@ -158,6 +159,7 @@ internal class KisUsQuoteService(
         val filtered = usHoldings.filter { it.market == "USA" && !it.exchangeCode.isNullOrBlank() }
         val sessionInfo = getUsMarketSession()
         val socket = synchronized(lock) {
+            if (closed) return
             trackedHoldings = filtered
             recomputeTargetsLocked(sessionInfo)
             if (forceRetry) {
@@ -176,6 +178,7 @@ internal class KisUsQuoteService(
         scope.launch {
             runCatching { ensureConnected() }
                 .onFailure { error ->
+                    if (error is CancellationException) throw error
                     Log.w(
                         "KisUsQuoteService",
                         "Unable to start U.S. quote stream; using balance-price fallback",
@@ -250,7 +253,12 @@ internal class KisUsQuoteService(
 
     override fun close() {
         synchronized(lock) {
+            if (closed) return
             closed = true
+            approvalKey = null
+            trackedHoldings = emptyList()
+            desiredKeys = emptyMap()
+            quoteCache.clear()
         }
         reconnectJob?.cancel()
         closeSocket()
@@ -279,9 +287,19 @@ internal class KisUsQuoteService(
             val listener = object : WebSocketClient(URI(WS_REAL_URL)) {
                 override fun onOpen(handshakedata: ServerHandshake?) {
                     runCatching {
-                        synchronized(lock) {
-                            this@KisUsQuoteService.webSocket = this
-                            reconnectAttempt = 0
+                        val accepted = synchronized(lock) {
+                            if (closed) {
+                                false
+                            } else {
+                                connectingSocket = null
+                                this@KisUsQuoteService.webSocket = this
+                                reconnectAttempt = 0
+                                true
+                            }
+                        }
+                        if (!accepted) {
+                            close(1000, "session closed")
+                            return
                         }
                         Log.d("KisUsQuoteService", "KIS U.S. quote websocket connected")
                         sendSubscriptions(this)
@@ -314,10 +332,14 @@ internal class KisUsQuoteService(
                     }
                 }
             }
-            synchronized(lock) {
-                approvalKey = approval
+            runCatching {
+                synchronized(lock) {
+                    if (closed) return
+                    approvalKey = approval
+                    connectingSocket = listener
+                    listener.connect()
+                }
             }
-            runCatching { listener.connect() }
                 .onFailure { error ->
                     Log.e("KisUsQuoteService", "KIS U.S. quote connect start failed", error)
                     throw error
@@ -331,6 +353,7 @@ internal class KisUsQuoteService(
 
     private suspend fun getApprovalKey(): String {
         synchronized(lock) {
+            if (closed) throw CancellationException("Quote service closed")
             approvalKey?.let { return it }
         }
         val body = JsonObject().apply {
@@ -345,24 +368,25 @@ internal class KisUsQuoteService(
             .build()
 
         val fetched = withContext(Dispatchers.IO) {
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).awaitTextResponse().let { response ->
                 if (!response.isSuccessful) {
                     throw IllegalStateException("KIS approval key request failed: ${response.code}")
                 }
-                val payload = response.body?.string().orEmpty()
+                val payload = response.text
                 val json = JsonParser().parse(payload).asJsonObject
                 json.get("approval_key")?.asString.orEmpty().takeIf { it.isNotBlank() }
                     ?: throw IllegalStateException("KIS approval key missing")
             }
         }
         synchronized(lock) {
+            if (closed) throw CancellationException("Quote service closed")
             approvalKey = fetched
         }
         return fetched
     }
 
     private fun sendSubscriptions(webSocket: WebSocketClient) {
-        val approval = synchronized(lock) { approvalKey } ?: return
+        val approval = synchronized(lock) { if (closed) null else approvalKey } ?: return
         val desired = synchronized(lock) { desiredKeys }
         val subscribed = synchronized(lock) { subscribedKeys }
         val removed = subscribed - desired.keys
@@ -419,7 +443,7 @@ internal class KisUsQuoteService(
     }
 
     private fun handleMessage(webSocket: WebSocketClient, data: String) {
-        if (data.isBlank()) return
+        if (data.isBlank() || synchronized(lock) { closed }) return
         if (data[0] == '0' || data[0] == '1') {
             val parts = data.split('|')
             if (parts.size >= 4) {
@@ -473,6 +497,7 @@ internal class KisUsQuoteService(
             val last = toDouble(row[11])
             if (ticker.isBlank() || last <= 0.0) return@repeat
             synchronized(lock) {
+                if (closed) return
                 quoteCache[ticker] = UsQuoteSnapshot(
                     ticker = ticker,
                     trKey = trKey,
@@ -500,6 +525,7 @@ internal class KisUsQuoteService(
         val now = ZonedDateTime.now(KST_ZONE)
 
         synchronized(lock) {
+            if (closed) return
             val existing = quoteCache[ticker]
             if (existing?.updatedAt != null && Duration.between(existing.updatedAt, now).seconds < 5) {
                 return
@@ -546,13 +572,14 @@ internal class KisUsQuoteService(
     }
 
     private fun closeSocket() {
-        val socket = synchronized(lock) {
-            val current = webSocket
+        val sockets = synchronized(lock) {
+            val current = listOfNotNull(webSocket, connectingSocket).distinct()
             webSocket = null
+            connectingSocket = null
             subscribedKeys = emptySet()
             current
         }
-        socket?.close(1000, "closing")
+        sockets.forEach { it.close(1000, "closing") }
     }
 
     private fun backoffDelayMillis(): Long {

@@ -4,53 +4,16 @@ import asyncio
 import datetime
 import logging
 import math
-import threading
-import time
 import urllib.parse
 
 import yfinance as yf
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, HTTPException
 
-from app.services.saveticker_service import saveticker_service
+from app.session_store import require_session
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-_INSIGHT_CACHE_TTL_SECONDS = 300
-_insight_cache: dict[str, dict[str, object]] = {}
-_insight_cache_lock = threading.RLock()
-
-
-def _get_cached_insight(cache_key: str):
-    with _insight_cache_lock:
-        cached = _insight_cache.get(cache_key)
-        cached_ts = cached.get("ts", 0.0) if isinstance(cached, dict) else 0.0
-        cached_ts_value = 0.0
-        if isinstance(cached_ts, (int, float)):
-            cached_ts_value = float(cached_ts)
-        elif isinstance(cached_ts, str):
-            try:
-                cached_ts_value = float(cached_ts)
-            except ValueError:
-                cached_ts_value = 0.0
-        cache_ttl = _INSIGHT_CACHE_TTL_SECONDS
-        cached_payload = cached.get("data") if isinstance(cached, dict) else None
-        if isinstance(cached_payload, dict):
-            provider = cached_payload.get("data", {}).get("saveticker") or {}
-            if provider.get("status") == "unavailable" or "error" in provider.get("section_status", {}).values():
-                cache_ttl = 60
-        if cached and (time.time() - cached_ts_value) < cache_ttl:
-            return cached.get("data")
-    return None
-
-
-def _set_cached_insight(cache_key: str, data: object):
-    with _insight_cache_lock:
-        _insight_cache[cache_key] = {"ts": time.time(), "data": data}
-        while len(_insight_cache) > 128:
-            _insight_cache.pop(next(iter(_insight_cache)))
-
-
 def _as_str(value: object, default: str = "") -> str:
     if isinstance(value, str):
         return value
@@ -491,31 +454,34 @@ def _fetch_history_data(yf_ticker: str) -> list[dict[str, object]]:
 
 
 @router.get("/api/asset-insight")
-async def get_asset_insight(ticker: str, market_type: str = "USA"):
+async def get_asset_insight(request: Request, ticker: str, market_type: str = "USA"):
+    context = require_session(request).insight
+    context.check()
+    generation = context.generation
     try:
         if not ticker:
             return {"status": "error", "message": "Ticker not provided."}
 
         cache_key = f"{str(market_type or 'USA').upper()}:{str(ticker).strip().upper()}"
-        cached = _get_cached_insight(cache_key)
+        cached = context.cached(cache_key)
         if cached is not None:
             return cached
 
-        saveticker = await asyncio.to_thread(saveticker_service.fetch, ticker, market_type)
+        saveticker = await context.run(context.service.fetch, ticker, market_type, generation=generation)
         if saveticker["status"] in {"available", "partial"}:
             payload = {"status": "success", "data": {
                 "source": "saveticker", "saveticker": saveticker,
                 "financials": _build_saveticker_financials(saveticker, ticker),
                 "options": None, "news": (saveticker["sections"].get("news") or {}).get("items", []), "history": [],
             }}
-            _set_cached_insight(cache_key, payload)
+            context.save(cache_key, payload, generation)
             return payload
 
-        yf_ticker, info = await asyncio.to_thread(_resolve_yf_ticker, ticker, market_type)
-        financials, current_price = await asyncio.to_thread(_build_financials, info, ticker)
-        options_task = asyncio.to_thread(_fetch_options_data, yf_ticker, current_price)
-        news_task = asyncio.to_thread(_fetch_news_data, yf_ticker)
-        history_task = asyncio.to_thread(_fetch_history_data, yf_ticker)
+        yf_ticker, info = await context.run(_resolve_yf_ticker, ticker, market_type, generation=generation)
+        financials, current_price = await context.run(_build_financials, info, ticker, generation=generation)
+        options_task = context.run(_fetch_options_data, yf_ticker, current_price, generation=generation)
+        news_task = context.run(_fetch_news_data, yf_ticker, generation=generation)
+        history_task = context.run(_fetch_history_data, yf_ticker, generation=generation)
         options_data, news_data, history_data = await asyncio.gather(
             options_task,
             news_task,
@@ -533,9 +499,16 @@ async def get_asset_insight(ticker: str, market_type: str = "USA"):
                 "history": history_data,
             },
         }
-        _set_cached_insight(cache_key, payload)
+        context.save(cache_key, payload, generation)
         return payload
+    except HTTPException:
+        raise
     except Exception as exc:
+        context.check(generation)
         logger.warning("Insight info error (%s)", type(exc).__name__)
         return {"status": "error", "message": "종목 인사이트를 불러오지 못했습니다.",
                 "data": {"source": "yahoo", "saveticker": locals().get("saveticker")}}
+
+
+from app.routes.insight_connection import router as connection_router
+router.include_router(connection_router)

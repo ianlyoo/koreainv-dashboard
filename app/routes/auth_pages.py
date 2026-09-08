@@ -25,6 +25,8 @@ from app.session_store import (
     upsert_account,
 )
 from app.template_utils import render_template_html
+from app.credential_store import credential_store, CredentialStoreError
+from app.session_store import active_sessions
 
 
 router = APIRouter()
@@ -447,6 +449,7 @@ async def setup_api(
                 accounts=decrypted,
             )
         )
+        await active_sessions[session_id].insight.restore()
         response = JSONResponse(
             {"status": "success", "message": "Setup successful"}
         )
@@ -492,6 +495,7 @@ async def login(pin: str = Form(...)):
             accounts=accounts,
         )
     )
+    await active_sessions[session_id].insight.restore()
     response = JSONResponse({"status": "success", "message": "Login successful"})
     set_session_cookie(response, session_id)
     return response
@@ -761,6 +765,11 @@ async def reset_settings(request: Request):
     if not has_active_session(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
+    clear_all_sessions()
+    try:
+        await run_in_threadpool(credential_store.delete)
+    except CredentialStoreError:
+        raise HTTPException(503, "저장된 SaveTicker 연결 삭제에 실패했습니다. 다시 시도하세요.") from None
     if auth.delete_settings():
         _remove_quote_session(request)
         api_client.clear_persisted_token_cache()

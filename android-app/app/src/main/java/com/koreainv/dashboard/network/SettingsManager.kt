@@ -18,6 +18,8 @@ import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -255,29 +257,33 @@ class SettingsManager(private val context: Context) {
         }
     }
 
-    private fun encryptCredentials(
+    private suspend fun encryptCredentials(
         accounts: List<AccountCredential>,
         pin: String,
         salt: ByteArray,
         iv: ByteArray,
-    ): String {
+    ): String = withContext(Dispatchers.Default) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, deriveAesKey(pin, salt), GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
         val encryptedBytes = cipher.doFinal(AccountProfileCodec.serialize(accounts).toByteArray(Charsets.UTF_8))
-        return encodeBase64(encryptedBytes)
+        encodeBase64(encryptedBytes)
     }
 
-    private fun decryptCredentials(
+    private suspend fun decryptCredentials(
         encrypted: String,
         pin: String,
         salt: ByteArray,
         iv: ByteArray,
-    ): List<AccountCredential>? {
-        return try {
+    ): List<AccountCredential>? = withContext(Dispatchers.Default) {
+        try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, deriveAesKey(pin, salt), GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
             val decryptedBytes = cipher.doFinal(decodeBase64(encrypted))
-            AccountProfileCodec.parse(String(decryptedBytes, Charsets.UTF_8))
+            try {
+                AccountProfileCodec.parse(String(decryptedBytes, Charsets.UTF_8))
+            } finally {
+                decryptedBytes.fill(0)
+            }
         } catch (_: Exception) {
             null
         }
@@ -286,7 +292,12 @@ class SettingsManager(private val context: Context) {
     private fun deriveAesKey(pin: String, salt: ByteArray): SecretKeySpec {
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
         val spec = PBEKeySpec(pin.toCharArray(), salt, KDF_ITERATIONS, KEY_LENGTH_BITS)
-        return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+        return try {
+            val bytes = factory.generateSecret(spec).encoded
+            try { SecretKeySpec(bytes, "AES") } finally { bytes.fill(0) }
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     private fun encodeBase64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)

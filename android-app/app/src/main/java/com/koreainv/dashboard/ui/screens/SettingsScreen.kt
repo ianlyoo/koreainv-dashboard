@@ -43,6 +43,8 @@ fun SettingsScreen(
     onManageAccountsClick: () -> Unit,
     onLogoutClick: () -> Unit,
     onBackClick: () -> Unit,
+    onInsightSettingsClick: () -> Unit = {},
+    insightConnectionLabel: String = "연결 필요",
 ) {
     DashboardScaffold(
         topBar = {
@@ -85,6 +87,28 @@ fun SettingsScreen(
                                     ThemeMode.DARK -> "다크 모드"
                                 }, color = MaterialTheme.colorScheme.onSurface)
                             }
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    SettingsHeading("연결")
+                    TextButton(
+                        onClick = onInsightSettingsClick,
+                        contentPadding = PaddingValues(vertical = 12.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+                    ) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Text("SaveTicker", color = MaterialTheme.colorScheme.onSurface,
+                                    style = MaterialTheme.typography.titleMedium)
+                                Text("종목 인사이트 연결", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Text(insightConnectionLabel, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall)
+                            Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

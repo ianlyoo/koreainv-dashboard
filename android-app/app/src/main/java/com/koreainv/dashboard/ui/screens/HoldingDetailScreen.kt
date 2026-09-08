@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -52,6 +56,7 @@ fun HoldingDetailScreen(
     symbol: String,
     accountId: String?,
     onBackClick: () -> Unit,
+    onInsightClick: (Holding) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var holding by remember(repository, symbol, accountId) { mutableStateOf<Holding?>(null) }
@@ -259,6 +264,21 @@ fun HoldingDetailScreen(
                                     valueColor = profitColor,
                                 )
                             }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                                .clickable { onInsightClick(data) },
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Text("종목 인사이트", style = MaterialTheme.typography.titleLarge,
+                                    color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                                Text("가격 차트 · 재무 · 시장 분석", style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary)
+                            }
+                            Icon(DashboardIcons.ChevronRight, contentDescription = null, tint = TextSecondary)
                         }
                     }
                 }

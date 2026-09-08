@@ -23,6 +23,8 @@ python -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --add-data "app/img;app/img" ^
   --collect-submodules passlib.handlers ^
   --hidden-import passlib.handlers.bcrypt ^
+  --hidden-import keyring.backends.Windows ^
+  --copy-metadata keyring ^
   launcher_windows.py
 if errorlevel 1 exit /b 1
 

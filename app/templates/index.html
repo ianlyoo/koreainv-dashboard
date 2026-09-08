@@ -89,7 +89,7 @@
                     <line x1="2" y1="10" x2="22" y2="10"></line>
                     <line x1="6" y1="15" x2="10" y2="15"></line>
                 </svg>
-                계좌 관리
+                설정
             </button>
 
             <button class="btn-sync" type="button" onclick="syncData(true)" id="syncBtn">
@@ -536,7 +536,7 @@
         <div class="profit-detail-modal account-modal" onclick="handleAccountModalClick(event)">
             <div class="profit-detail-header">
                 <div class="profit-detail-title-wrap">
-                    <h2>계좌 관리</h2>
+                    <h2>설정 · 계좌 관리</h2>
                     <p id="accountModalCaption">등록된 투자 계좌를 확인하고 계좌를 추가하거나 삭제할 수 있습니다.</p>
                 </div>
                 <div class="profit-detail-header-actions">
@@ -548,6 +548,11 @@
                 <div class="account-list" id="accountList"></div>
                 <div class="profit-detail-empty" id="accountListEmpty">등록된 계좌가 없습니다.</div>
                 <div class="form-notice" id="accountModalNotice" role="alert" aria-live="assertive"></div>
+
+                <div class="account-add-section">
+                    <div class="account-add-title">연결</div>
+                    <button type="button" class="btn-modal btn-cancel" onclick="openSaveTickerSettings()">SaveTicker 연결 설정 ›</button>
+                </div>
 
                 <div class="account-add-section">
                     <div class="account-add-title">새 계좌 추가</div>
@@ -714,6 +719,30 @@
         © Youngin all rights reserved.
     </div>
 
+
+    <div class="profit-detail-overlay account-overlay" id="saveTickerSettings" role="dialog" aria-modal="true" aria-labelledby="stSettingsTitle">
+        <div class="profit-detail-modal account-modal">
+            <div class="profit-detail-header">
+                <div class="profit-detail-title-wrap"><h2 id="stSettingsTitle">SaveTicker 연결</h2><p>종목 인사이트에 사용할 연결을 관리합니다.</p></div>
+                <button class="profit-detail-close" type="button" onclick="closeSaveTickerSettings()" aria-label="연결 설정 닫기">&times;</button>
+            </div>
+            <div class="profit-detail-body account-body">
+                <p id="stConnectionStatus" role="status" aria-live="polite"></p>
+                <form class="account-form" id="stConnectionForm" onsubmit="connectSaveTicker(event)" autocomplete="off">
+                    <label class="account-field"><span>이메일</span><input id="stEmail" type="email" maxlength="320" autocomplete="off" required></label>
+                    <label class="account-field"><span>비밀번호</span><input id="stPassword" type="password" maxlength="4096" autocomplete="off" required></label>
+                    <label><input id="stRemember" type="checkbox"> 이 기기에 연결 정보 저장</label>
+                    <p>저장을 끄면 화면 잠금 후 다시 입력해야 합니다. 저장을 켜면 macOS Keychain 또는 Windows 자격 증명 관리자에 보관합니다.</p>
+                    <button class="btn-modal btn-confirm" type="submit">연결</button>
+                </form>
+                <div class="account-add-section">
+                    <button class="btn-modal btn-cancel" type="button" onclick="manageSaveTicker('cache')">인사이트 캐시 삭제</button>
+                    <button class="btn-modal btn-danger" type="button" onclick="manageSaveTicker('connection')">연결 해제 및 저장 정보 삭제</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/static/js/insight-settings.js?v=__ASSET_VERSION__" defer></script>
 
 </body>
 

@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import requests
 
-from app import config
+from app.services.insight_schema import normalize_section
 from app.version import APP_VERSION
 
 SECTIONS = {
@@ -97,85 +97,138 @@ def _normalize_news(data: object) -> dict | None:
     return {"items": items}
 
 
+class InsightRevoked(Exception):
+    """The request no longer has a valid credential lease."""
+
+
 class SaveTickerService:
     CACHE_TTL = 300
     MAX_CACHE = 128
     BACKOFF = 60
     TIMEOUT = (3.05, 8)
 
-    def __init__(self, email: str = "", password: str = "", enabled: bool = True, session=None):
-        self._email = email
-        self._password = password
-        self.enabled = enabled and bool(email and password)
+    def __init__(self, email="", password="", enabled=True, session=None):
+        self._credentials = (email, password) if email and password else None
+        self.enabled = enabled and bool(self._credentials)
         self._session = session if session is not None else requests.Session()
         self._session.headers.update(HEADERS)
-        # One lock owns cookie mutation, refresh and cache population (singleflight).
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # Serializes network work, never acquired by revoke.
+        self._state_lock = threading.RLock()
+        self._generation = 0
+        self._revoked = False
         self._authenticated = False
         self._retry_at = 0.0
         self._cache = OrderedDict()
 
-    def _backoff(self):
-        self._retry_at = time.monotonic() + self.BACKOFF
-        self._authenticated = False
-        self._session.cookies.clear()
-
-    def _login(self) -> bool:
-        self._session.cookies.clear()
-        try:
-            response = self._session.post(BASE_URL + "/api/auth/login",
-                json={"email": self._email, "password": self._password},
-                timeout=self.TIMEOUT, allow_redirects=False)
-            data = response.json() if response.status_code == 200 else None
-            self._authenticated = (isinstance(data, dict) and isinstance(data.get("user_info"), dict)
-                                   and any(c.name == "access_token" for c in self._session.cookies))
-        except (requests.RequestException, ValueError):
+    def revoke(self):
+        with self._state_lock:
+            self._revoked = True
+            self._generation += 1
+            self.enabled = False
+            self._credentials = None
             self._authenticated = False
-        if not self._authenticated:
-            logger.warning("SaveTicker authentication unavailable; retry cooldown started")
-            self._backoff()
-        return self._authenticated
+            self._cache.clear()
+            transport, self._session = self._session, None
+            if transport is not None:
+                transport.cookies.clear()
 
-    def fetch(self, ticker: str, market_type: str = "USA") -> dict:
-        ticker = str(ticker or "").strip().upper()
-        if str(market_type).upper() != "USA" or not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,19}", ticker):
-            return empty_snapshot("unsupported")
-        if not self.enabled:
-            return empty_snapshot("disabled")
+    def clear_cache(self):
+        with self._state_lock:
+            self._generation += 1
+            self._cache.clear()
+
+    def _check(self, generation, transport):
+        with self._state_lock:
+            if self._revoked or generation != self._generation:
+                transport.cookies.clear()
+                raise InsightRevoked()
+
+    def _backoff(self, generation, transport):
+        with self._state_lock:
+            self._check(generation, transport)
+            self._retry_at = time.monotonic() + self.BACKOFF
+            self._authenticated = False
+            transport.cookies.clear()
+
+    def _login(self, generation, transport):
+        with self._state_lock:
+            self._check(generation, transport)
+            credentials = self._credentials
+            transport.cookies.clear()
+        try:
+            response = transport.post(BASE_URL + "/api/auth/login",
+                json={"email": credentials[0], "password": credentials[1]},
+                timeout=self.TIMEOUT, allow_redirects=False)
+            self._check(generation, transport)
+            data = response.json() if response.status_code == 200 else None
+            authenticated = (isinstance(data, dict) and isinstance(data.get("user_info"), dict)
+                             and any(c.name == "access_token" for c in transport.cookies))
+        except (requests.RequestException, ValueError):
+            authenticated = False
+        finally:
+            credentials = None
+            self._check(generation, transport)
+        with self._state_lock:
+            self._check(generation, transport)
+            self._authenticated = authenticated
+            if not authenticated:
+                self._backoff(generation, transport)
+            return authenticated
+
+    def authenticate(self):
         with self._lock:
-            now = time.monotonic()
-            cached = self._cache.get(ticker)
-            cache_ttl = self.BACKOFF if cached and "error" in cached[1]["section_status"].values() else self.CACHE_TTL
-            if cached and now - cached[0] < cache_ttl:
-                self._cache.move_to_end(ticker)
-                return copy.deepcopy(cached[1])
-            if now < self._retry_at:
-                return empty_snapshot("unavailable")
-            if not self._authenticated and not self._login():
+            with self._state_lock:
+                if self._revoked:
+                    raise InsightRevoked()
+                generation, transport = self._generation, self._session
+            return self.enabled and self._login(generation, transport)
+
+    def fetch(self, ticker, market_type="USA"):
+        ticker = str(ticker or "").strip().upper()
+        with self._lock:
+            with self._state_lock:
+                if self._revoked:
+                    raise InsightRevoked()
+                generation, transport = self._generation, self._session
+                if str(market_type).upper() != "USA" or not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,19}", ticker):
+                    return empty_snapshot("unsupported")
+                if not self.enabled:
+                    return empty_snapshot("disabled")
+                now = time.monotonic()
+                cached = self._cache.get(ticker)
+                ttl = self.BACKOFF if cached and (cached[1]["status"] == "unavailable" or "error" in cached[1]["section_status"].values()) else self.CACHE_TTL
+                if cached and now - cached[0] < ttl:
+                    self._cache.move_to_end(ticker)
+                    return copy.deepcopy(cached[1])
+                if now < self._retry_at:
+                    return empty_snapshot("unavailable")
+            if not self._authenticated and not self._login(generation, transport):
                 return empty_snapshot("unavailable")
             result = empty_snapshot("unavailable")
             refreshed = False
             for key, endpoint in SECTIONS.items():
                 try:
+                    self._check(generation, transport)
                     url = f"{BASE_URL}/api/stocks/api/v1/tickers/{quote(ticker, safe='')}/{endpoint}"
                     if key == "news":
                         url = f"{BASE_URL}/api/news/company?page=1&page_size=3&ticker={quote(ticker, safe='')}&sort=created_at_desc"
-                    response = self._session.get(url, timeout=self.TIMEOUT, allow_redirects=False)
+                    response = transport.get(url, timeout=self.TIMEOUT, allow_redirects=False)
+                    self._check(generation, transport)
                     if response.status_code == 401 and not refreshed:
                         refreshed = True
-                        if not self._login():
+                        if not self._login(generation, transport):
                             result["section_status"][key] = "error"
                             break
-                        response = self._session.get(url, timeout=self.TIMEOUT, allow_redirects=False)
+                        self._check(generation, transport)
+                        response = transport.get(url, timeout=self.TIMEOUT, allow_redirects=False)
+                        self._check(generation, transport)
                     if response.status_code in (401, 403, 429):
                         result["section_status"][key] = "error"
-                        logger.warning("SaveTicker section %s unavailable (HTTP %s)", key, response.status_code)
-                        self._backoff()
+                        self._backoff(generation, transport)
                         break
                     if response.status_code in (204, 404):
                         continue
                     if response.status_code != 200:
-                        logger.warning("SaveTicker section %s unavailable (HTTP %s)", key, response.status_code)
                         result["section_status"][key] = "error"
                         continue
                     data = response.json()
@@ -183,25 +236,22 @@ class SaveTickerService:
                         continue
                     if key == "news":
                         data = _normalize_news(data)
+                    data = normalize_section(key, data)
                     if data is None or not _valid_section(key, data):
                         result["section_status"][key] = "error"
                         continue
                     result["sections"][key] = data
                     result["section_status"][key] = "available"
-                except requests.RequestException:
-                    logger.warning("SaveTicker section %s request failed", key)
-                    result["section_status"][key] = "error"
-                    continue
-                except ValueError:
+                except (requests.RequestException, ValueError):
+                    self._check(generation, transport)
                     result["section_status"][key] = "error"
             count = sum(v == "available" for v in result["section_status"].values())
             status = "available" if count == len(SECTIONS) else "partial" if count else "unavailable"
             result.update(status=status, message=empty_snapshot(status)["message"])
-            self._cache[ticker] = (time.monotonic(), copy.deepcopy(result))
-            self._cache.move_to_end(ticker)
-            while len(self._cache) > self.MAX_CACHE:
-                self._cache.popitem(last=False)
-            return result
-
-
-saveticker_service = SaveTickerService(config.SAVETICKER_EMAIL, config.SAVETICKER_PASSWORD, config.SAVETICKER_ENABLED)
+            with self._state_lock:
+                self._check(generation, transport)
+                self._cache[ticker] = (time.monotonic(), copy.deepcopy(result))
+                self._cache.move_to_end(ticker)
+                while len(self._cache) > self.MAX_CACHE:
+                    self._cache.popitem(last=False)
+                return result

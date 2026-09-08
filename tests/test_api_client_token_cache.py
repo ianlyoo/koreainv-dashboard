@@ -319,7 +319,7 @@ class ResetClearsTokenCacheTests(unittest.TestCase):
         active_sessions["test-session"] = SessionData("key", "secret", "12345678", "01")
         self.client.cookies.set("session", "test-session")
 
-        with patch("app.routes.auth_pages.auth.delete_settings", return_value=True):
+        with patch("app.routes.auth_pages.auth.delete_settings", return_value=True), patch("app.routes.auth_pages.credential_store.delete"):
             response = self.client.post("/api/reset")
 
         self.assertEqual(response.status_code, 200)

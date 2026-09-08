@@ -33,7 +33,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitCancellation
 
-/** Debug-only screen host. Never creates a repository, transport, or order client. */
+/** Debug-only host. Brokerage data is synthetic; insight uses a memory-only fake HTTP transport. */
 class UiPreviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,10 +41,14 @@ class UiPreviewActivity : ComponentActivity() {
         val initialScreen = intent.getStringExtra("screen") ?: "portfolio"
         val fixture = intent.getStringExtra("fixture") ?: "normal"
         val source = SyntheticDashboardSource(fixture)
+        val insightEnvironment = lazy { PreviewInsightEnvironment(this, fixture) }
         // Run only on the fresh review emulator; setup is displayed without entering credentials.
         val appearance = AppearancePreference(applicationContext)
         intent.getStringExtra("theme")?.let { appearance.setThemeMode(ThemeMode.fromStoredValue(it)) }
         setContent {
+            DisposableEffect(Unit) {
+                onDispose { if (insightEnvironment.isInitialized()) insightEnvironment.value.close() }
+            }
             KoreaInvDashboardTheme(darkTheme = appearance.themeMode.isDark(isSystemInDarkTheme())) {
                 val bottomBarHeight = remember { mutableStateOf(116.dp) }
                 val currencyPreference = rememberCurrencyPreference()
@@ -71,6 +75,10 @@ class UiPreviewActivity : ComponentActivity() {
                         var detailSymbol by rememberSaveable { mutableStateOf("005930") }
                         var detailAccount by rememberSaveable { mutableStateOf<String?>("demo-kis") }
                         var detailTrade by remember { mutableStateOf(source.allTrades.first()) }
+                        var insightSymbol by rememberSaveable { mutableStateOf("AVGO") }
+                        var insightName by rememberSaveable { mutableStateOf("브로드컴") }
+                        var insightMarket by rememberSaveable { mutableStateOf("USA") }
+                        var connectionRequired by rememberSaveable { mutableStateOf(fixture == "disconnected") }
                         var tradeSession by remember { mutableStateOf(TradeHistorySessionState()) }
                         val back: () -> Unit = {
                             if (!navController.popBackStack()) navigatePreview("portfolio")
@@ -111,7 +119,7 @@ class UiPreviewActivity : ComponentActivity() {
                                     previewMotionRoute(initialState.destination.route),
                                     previewMotionRoute(targetState.destination.route), isPop = true) },
                             ) {
-                                (primaryRoutes + listOf("details", "trade-details", "unlock", "accounts", "setup")).forEach { scene ->
+                                (primaryRoutes + listOf("details", "trade-details", "unlock", "accounts", "setup", "insight", "connection")).forEach { scene ->
                                     composable(scene) { entry ->
                                         val targetEntry by navController.currentBackStackEntryAsState()
                                         DashboardNavigationScene(isNavigationSource = entry.id == targetEntry?.id) {
@@ -123,7 +131,18 @@ class UiPreviewActivity : ComponentActivity() {
                                                 "trades" -> TradeHistoryScreen(source, source.filters, settings,
                                                     { trade, _, _ -> detailTrade = trade; navigatePreview("trade-details") },
                                                     tradeSession, { tradeSession = it })
-                                                "details" -> HoldingDetailScreen(source, detailSymbol, detailAccount, back)
+                                                "details" -> HoldingDetailScreen(source, detailSymbol, detailAccount, back) { holding ->
+                                                    insightSymbol=holding.symbol; insightName=holding.name; insightMarket=holding.market
+                                                    connectionRequired=fixture == "disconnected"
+                                                    navigatePreview(if(connectionRequired) "connection" else "insight")
+                                                }
+                                                "insight", "connection" -> {
+                                                    val env=remember { insightEnvironment.value }
+                                                    LaunchedEffect(env) { if(!env.session.state.value.isUnlocked) env.start() }
+                                                    if(scene == "insight") StockInsightScreen(env.repository,insightSymbol,insightMarket,back,
+                                                        { connectionRequired=true;navigatePreview("connection") },displayName=insightName)
+                                                    else InsightConnectionScreen(env.session,back,{navigatePreview("insight")},connectionRequired,env.repository::clearCache)
+                                                }
                                                 "trade-details" -> TradeDetailScreen(detailTrade, 1350.0, SyntheticDashboardSource.SYNC, back)
                                                 "unlock" -> PinUnlockScreen(
                                                     unlockError ?: if (fixture == "error") "잠금번호가 올바르지 않습니다." else null,
@@ -148,7 +167,8 @@ class UiPreviewActivity : ComponentActivity() {
                                                     if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
                                                 "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
                                                 "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
-                                                    "1.9.4-preview", false, false, { updateNotice = true }, accounts, logout, back)
+                                                    "1.9.6-preview", false, false, { updateNotice = true }, accounts, logout, back,
+                                                    { connectionRequired=false; navigatePreview("connection") })
                                                 else -> error("Unknown preview screen: $scene")
                                             }
                                         }
@@ -182,6 +202,8 @@ private fun previewMotionRoute(route: String?): String? = when (route) {
     "details" -> "holding_detail/{symbol}?accountId={accountId}"
     "trade-details" -> "trade_detail"
     "accounts" -> "account_management"
+    "insight" -> "stock_insight"
+    "connection" -> "insight_connection"
     else -> route
 }
 

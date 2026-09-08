@@ -1,6 +1,13 @@
 package com.koreainv.dashboard.ui
 
 import android.net.Uri
+import android.content.ComponentCallbacks2
+import android.content.res.Configuration
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.CancellationException
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -24,6 +31,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +56,11 @@ import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.AccountProfile
 import com.koreainv.dashboard.network.KisRepository
 import com.koreainv.dashboard.network.SettingsManager
+import com.koreainv.dashboard.network.Holding
+import com.koreainv.dashboard.network.insight.InsightSessionManager
+import com.koreainv.dashboard.network.insight.SaveTickerInsightRepository
+import com.koreainv.dashboard.ui.screens.StockInsightScreen
+import com.koreainv.dashboard.ui.screens.InsightConnectionScreen
 import com.koreainv.dashboard.network.Trade
 import com.koreainv.dashboard.ui.screens.AssetStatusScreen
 import com.koreainv.dashboard.ui.screens.AccountManagementScreen
@@ -72,6 +87,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelChildren
 
 sealed class Screen(val route: String) {
     data object Splash : Screen("splash")
@@ -83,6 +99,13 @@ sealed class Screen(val route: String) {
     data object AssetStatus : Screen("asset_status")
     data object Settings : Screen("settings")
     data object AccountManagement : Screen("account_management")
+    data object InsightConnection : Screen("insight_connection?required={required}") {
+        fun createRoute(required: Boolean = false) = "insight_connection?required=$required"
+    }
+    data object StockInsight : Screen("stock_insight/{symbol}?market={market}&name={name}") {
+        fun createRoute(symbol: String, market: String, name: String) =
+            "stock_insight/${Uri.encode(symbol)}?market=${Uri.encode(market)}&name=${Uri.encode(name)}"
+    }
     data object HoldingDetail : Screen("holding_detail/{symbol}?accountId={accountId}") {
         fun createRoute(symbol: String, accountId: String?): String =
             "holding_detail/${Uri.encode(symbol)}?accountId=${Uri.encode(accountId.orEmpty())}"
@@ -114,7 +137,17 @@ private fun KoreaInvAppContent(
     navController: NavHostController,
 ) {
     val scope = rememberCoroutineScope()
+    val credentialScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val lifecycle = remember(context) { context.activityOrNull()?.lifecycle }
+    val performance = LocalDevicePerformancePolicy.current
+    val insightSession = remember(context) { InsightSessionManager.getInstance(context.applicationContext) }
+    val insightRepository = remember(insightSession) {
+        SaveTickerInsightRepository(insightSession, maxCachedStocks = if (performance.liveGlass) 8 else 4)
+    }
+    val insightConnection by insightSession.state.collectAsState()
+    var sessionRevision by remember { mutableLongStateOf(0L) }
+    var pendingInsightRoute by remember { mutableStateOf<String?>(null) }
     val upToDateText = stringResource(R.string.update_up_to_date)
     val updateFailedText = stringResource(R.string.update_check_failed)
     val invalidPinText = stringResource(R.string.invalid_pin)
@@ -135,7 +168,9 @@ private fun KoreaInvAppContent(
     var isSavingAccounts by remember { mutableStateOf(false) }
     var accountManagementError by remember { mutableStateOf<String?>(null) }
     val repository = remember(unlockedProfile) {
-        unlockedProfile?.let { profile -> KisRepository(profile.accounts, settingsManager) }
+        unlockedProfile?.let { profile ->
+            KisRepository(profile.accounts, settingsManager, maxConcurrentAccounts = if (performance.liveGlass) 3 else 2)
+        }
     }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -205,18 +240,72 @@ private fun KoreaInvAppContent(
         }
     }
 
+    suspend fun prepareInsightSession() {
+        try {
+            insightSession.unlock()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Optional market insights must never block access to the broker vault.
+            insightSession.lock()
+            updateMessage = "종목 인사이트 연결 저장소를 열지 못했습니다. 계좌는 사용할 수 있으며, 설정에서 연결을 다시 확인해 주세요."
+        }
+    }
+
     fun logout() {
-        scope.launch {
+            sessionRevision++
+            credentialScope.coroutineContext.cancelChildren()
+            insightSession.lock()
+            repository?.close()
             unlockedProfile = null
+            pendingInsightRoute = null
             hasAutoCheckedUpdate = false
             selectedTrade = null
             selectedTradeUsdRate = 1350.0
             selectedTradeLastSynced = null
             tradeHistorySessionState = TradeHistorySessionState()
-            navController.navigate(Screen.Unlock.route) {
-                popUpTo(Screen.Portfolio.route) { inclusive = true }
+            if (navController.currentDestination != null) navController.navigate(Screen.Unlock.route) {
+                popUpTo(navController.graph.id) { inclusive = true }
                 launchSingleTop = true
             }
+    }
+
+    val backgroundLock by rememberUpdatedState {
+        // Invalidate even a PIN operation that has not published an unlocked profile yet.
+        if (unlockedProfile != null) logout() else {
+            sessionRevision++
+            credentialScope.coroutineContext.cancelChildren()
+            insightSession.lock()
+        }
+    }
+    DisposableEffect(lifecycle, insightRepository) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) backgroundLock()
+        }
+        lifecycle?.addObserver(observer)
+        val memoryCallbacks = object : ComponentCallbacks2 {
+            override fun onConfigurationChanged(newConfig: Configuration) = Unit
+            override fun onLowMemory() = insightRepository.trimCache()
+            override fun onTrimMemory(level: Int) {
+                if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) insightRepository.trimCache()
+            }
+        }
+        context.applicationContext.registerComponentCallbacks(memoryCallbacks)
+        onDispose {
+            lifecycle?.removeObserver(observer)
+            context.applicationContext.unregisterComponentCallbacks(memoryCallbacks)
+            insightSession.lock()
+            insightRepository.close()
+        }
+    }
+
+    fun openInsight(holding: Holding) {
+        val route = Screen.StockInsight.createRoute(holding.symbol, holding.market, holding.name)
+        if (holding.market == "USA" && !insightConnection.hasCredentials) {
+            pendingInsightRoute = route
+            navController.navigate(Screen.InsightConnection.createRoute(required = true)) { launchSingleTop = true }
+        } else {
+            navController.navigate(route) { launchSingleTop = true }
         }
     }
 
@@ -261,13 +350,22 @@ private fun KoreaInvAppContent(
                 }
 
                 dashboardComposable(navController, Screen.Setup.route) {
+                    val setupRevision = remember { sessionRevision }
                     SetupScreen(
                         settingsManager = settingsManager,
                         onSetupSuccess = { profile ->
-                            unlockedProfile = profile
-                            hasAutoCheckedUpdate = false
-                            navController.navigate(Screen.Portfolio.route) {
-                                popUpTo(Screen.Setup.route) { inclusive = true }
+                            credentialScope.launch {
+                                if (setupRevision != sessionRevision || lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) == false) {
+                                    navController.navigate(Screen.Unlock.route) { popUpTo(Screen.Setup.route) { inclusive = true } }
+                                    return@launch
+                                }
+                                prepareInsightSession()
+                                if (setupRevision != sessionRevision) return@launch
+                                unlockedProfile = profile
+                                hasAutoCheckedUpdate = false
+                                navController.navigate(Screen.Portfolio.route) {
+                                    popUpTo(Screen.Setup.route) { inclusive = true }
+                                }
                             }
                         },
                     )
@@ -281,13 +379,17 @@ private fun KoreaInvAppContent(
                         errorMessage = errorMessage,
                         isLoading = isUnlocking,
                         onUnlock = { pin ->
-                            scope.launch {
+                            credentialScope.launch {
                                 if (isUnlocking) return@launch
+                                val revision = sessionRevision
                                 errorMessage = null
                                 isUnlocking = true
                                 try {
                                     val profile = settingsManager.unlockProfile(pin)
                                     if (profile != null) {
+                                        if (revision != sessionRevision) return@launch
+                                        prepareInsightSession()
+                                        if (revision != sessionRevision) return@launch
                                         unlockedProfile = profile
                                         hasAutoCheckedUpdate = false
                                         errorMessage = null
@@ -400,6 +502,11 @@ private fun KoreaInvAppContent(
                             },
                             onLogoutClick = ::logout,
                             onBackClick = { navController.popBackStack() },
+                            onInsightSettingsClick = {
+                                pendingInsightRoute = null
+                                navController.navigate(Screen.InsightConnection.createRoute()) { launchSingleTop = true }
+                            },
+                            insightConnectionLabel = if (insightConnection.hasCredentials) "연결됨" else "연결 필요",
                         )
                     }
                 }
@@ -413,12 +520,14 @@ private fun KoreaInvAppContent(
                             isSaving = isSavingAccounts,
                             errorMessage = accountManagementError,
                             onSave = { pin, accounts ->
-                                scope.launch {
+                                credentialScope.launch {
                                     if (isSavingAccounts) return@launch
+                                    val revision = sessionRevision
                                     isSavingAccounts = true
                                     accountManagementError = null
                                     try {
                                         val updatedProfile = settingsManager.updateProfile(accounts, pin)
+                                        if (revision != sessionRevision) return@launch
                                         if (updatedProfile == null) {
                                             accountManagementError = invalidPinText
                                         } else {
@@ -469,6 +578,59 @@ private fun KoreaInvAppContent(
                             symbol = symbol,
                             accountId = accountId,
                             onBackClick = { navController.popBackStack() },
+                            onInsightClick = ::openInsight,
+                        )
+                    }
+                }
+
+                dashboardComposable(
+                    navController, Screen.InsightConnection.route,
+                    arguments = listOf(navArgument("required") { type = NavType.BoolType; defaultValue = false }),
+                ) { entry ->
+                    if (unlockedProfile == null) {
+                        LaunchedEffect(Unit) { navController.navigate(Screen.Unlock.route) { launchSingleTop = true } }
+                    } else {
+                        LaunchedEffect(Unit) {
+                            if (!insightSession.state.value.isUnlocked) prepareInsightSession()
+                        }
+                        InsightConnectionScreen(
+                            sessionManager = insightSession,
+                            connectionRequired = entry.arguments?.getBoolean("required") == true,
+                            onBackClick = { pendingInsightRoute = null; navController.popBackStack() },
+                            onConnected = {
+                                pendingInsightRoute?.let { route ->
+                                    pendingInsightRoute = null
+                                    navController.popBackStack()
+                                    if (navController.currentDestination?.route != Screen.StockInsight.route) {
+                                        navController.navigate(route) { launchSingleTop = true }
+                                    }
+                                }
+                            },
+                            onClearCache = insightRepository::clearCache,
+                        )
+                    }
+                }
+                dashboardComposable(
+                    navController, Screen.StockInsight.route,
+                    arguments = listOf(
+                        navArgument("symbol") { type = NavType.StringType },
+                        navArgument("market") { type = NavType.StringType; defaultValue = "USA" },
+                        navArgument("name") { type = NavType.StringType; defaultValue = "" },
+                    ),
+                ) { entry ->
+                    val symbol = entry.arguments?.getString("symbol").orEmpty()
+                    val market = entry.arguments?.getString("market") ?: "USA"
+                    val name = entry.arguments?.getString("name").orEmpty().ifBlank { symbol }
+                    if (unlockedProfile == null) {
+                        LaunchedEffect(Unit) { navController.navigate(Screen.Unlock.route) { launchSingleTop = true } }
+                    } else {
+                        StockInsightScreen(
+                            repository = insightRepository, symbol = symbol, marketType = market, displayName = name,
+                            onBackClick = { navController.popBackStack() },
+                            onConnectClick = {
+                                pendingInsightRoute = Screen.StockInsight.createRoute(symbol, market, name)
+                                navController.navigate(Screen.InsightConnection.createRoute(required = true)) { launchSingleTop = true }
+                            },
                         )
                     }
                 }
@@ -577,6 +739,17 @@ private fun AccountProfile?.orEmptyAccountFilters(): List<HoldingAccountFilter> 
     this?.accounts?.map { account ->
         HoldingAccountFilter(accountId = account.id, label = account.label)
     }.orEmpty()
+
+private fun Context.activityOrNull(): ComponentActivity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is ComponentActivity) return current
+        val base = current.baseContext
+        if (base === current) return null
+        current = base
+    }
+    return current as? ComponentActivity
+}
 
 internal fun shouldCloseUpdateDialog(policy: ReleasePolicy, launchedInstaller: Boolean): Boolean {
     return launchedInstaller || policy != ReleasePolicy.MANDATORY
