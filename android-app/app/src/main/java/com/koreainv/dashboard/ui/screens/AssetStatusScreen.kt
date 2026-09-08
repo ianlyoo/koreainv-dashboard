@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -49,7 +48,6 @@ import com.koreainv.dashboard.ui.theme.ChartTone3
 import com.koreainv.dashboard.ui.theme.ChartTone4
 import com.koreainv.dashboard.ui.theme.ChartTone5
 import com.koreainv.dashboard.ui.theme.ChartTone6
-import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
 import java.text.NumberFormat
@@ -98,7 +96,7 @@ fun AssetStatusScreen(
         }
     }
 
-    Scaffold(
+    DashboardScaffold(
         topBar = {
             DashboardTopBar(
                 title = stringResource(R.string.asset_status),
@@ -117,9 +115,8 @@ fun AssetStatusScreen(
                 },
             )
         },
-        containerColor = Color.Transparent,
     ) { paddingValues ->
-        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
+        ScreenBackground {
             when {
                 isLoading && dashboardData == null -> {
                     DashboardLoadingState(
@@ -146,8 +143,8 @@ fun AssetStatusScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = dashboardBottomContentPadding()),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                            .padding(start = 20.dp, end = 20.dp, top = paddingValues.calculateTopPadding() + 8.dp, bottom = dashboardBottomContentPadding()),
+                        verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
                         if (errorMessage != null) {
                             DashboardErrorNotice(
@@ -158,6 +155,7 @@ fun AssetStatusScreen(
                         }
                         TotalAssetsCard(data)
                         CashBalanceCard(data)
+                        Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         AssetDistributionCard(data)
                     }
                 }
@@ -168,13 +166,15 @@ fun AssetStatusScreen(
 
 @Composable
 fun TotalAssetsCard(data: DashboardResponse) {
-    val formatter = NumberFormat.getNumberInstance(Locale.KOREA).apply {
-        maximumFractionDigits = 0
-        minimumFractionDigits = 0
+    val formatter = remember {
+        NumberFormat.getNumberInstance(Locale.KOREA).apply {
+            maximumFractionDigits = 0
+            minimumFractionDigits = 0
+        }
     }
     val equityAmount = data.summary.totalAssetsKrw - data.summary.totalCashKrw
 
-    HeroTopSection {
+    HeroTopSection(bottomPadding = 0.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = stringResource(R.string.all_assets),
@@ -183,7 +183,7 @@ fun TotalAssetsCard(data: DashboardResponse) {
             )
             HeroHeadlineValue(
                 value = "₩${formatter.format(data.summary.totalAssetsKrw)}",
-                color = TextGold,
+                color = TextPrimary,
             )
             Text(
                 text = "전체 계좌 · 원화 환산",
@@ -191,7 +191,7 @@ fun TotalAssetsCard(data: DashboardResponse) {
                 color = TextSecondary,
             )
         }
-        HeroMetricGroup {
+        HeroMetricGroup(verticalPadding = 20.dp, showBottomDivider = true) {
             HeroMetricRow(
                 primaryLabel = stringResource(R.string.stock_evaluation_amount),
                 primaryValue = "₩${formatter.format(equityAmount)}",
@@ -204,13 +204,15 @@ fun TotalAssetsCard(data: DashboardResponse) {
 
 @Composable
 fun CashBalanceCard(data: DashboardResponse) {
-    val formatter = NumberFormat.getNumberInstance(Locale.KOREA).apply {
-        maximumFractionDigits = 0
-        minimumFractionDigits = 0
+    val formatter = remember {
+        NumberFormat.getNumberInstance(Locale.KOREA).apply {
+            maximumFractionDigits = 0
+            minimumFractionDigits = 0
+        }
     }
     var isExpanded by rememberSaveable { mutableStateOf(false) }
 
-    PremiumGlassCard {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -223,7 +225,7 @@ fun CashBalanceCard(data: DashboardResponse) {
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                 )
-                DashboardPillButton(
+                DashboardInlineButton(
                     label = if (isExpanded) "접기" else "통화별 보기",
                     onClick = { isExpanded = !isExpanded },
                     trailingIcon = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -261,7 +263,7 @@ fun AssetDistributionCard(data: DashboardResponse) {
         ChartTone6,
     )
 
-    PremiumGlassCard {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -287,10 +289,10 @@ fun AssetDistributionCard(data: DashboardResponse) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(220.dp),
+                        .height(188.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Canvas(modifier = Modifier.size(180.dp)) {
+                    Canvas(modifier = Modifier.size(156.dp)) {
                         var startAngle = -90f
                         data.assetDistribution.forEachIndexed { index, asset ->
                             val sweepAngle = (asset.weightPercent / 100f) * 360f
@@ -299,7 +301,7 @@ fun AssetDistributionCard(data: DashboardResponse) {
                                 startAngle = startAngle,
                                 sweepAngle = sweepAngle.toFloat(),
                                 useCenter = false,
-                                style = Stroke(width = 42f, cap = StrokeCap.Round),
+                                style = Stroke(width = 14.dp.toPx(), cap = StrokeCap.Butt),
                             )
                             startAngle += sweepAngle.toFloat()
                         }

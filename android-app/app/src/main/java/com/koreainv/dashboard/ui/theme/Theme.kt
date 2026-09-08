@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.os.Build
+import android.view.WindowManager
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -94,11 +95,22 @@ fun KoreaInvDashboardTheme(
     if (!view.isInEditMode) {
         SideEffect {
             context.findActivity()?.window?.let { window ->
-                // Current Activity uses decor fitting. Keep bars opaque until inset ownership changes.
+                // Activity 1.8 does not opt into display cutouts on newer Android versions.
+                // Without this, the OS leaves a black strip above the app on notched phones.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    window.attributes = window.attributes.apply {
+                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    }
+                }
+                // The host paints one continuous canvas beneath transparent system bars.
                 @Suppress("DEPRECATION")
-                window.statusBarColor = colors.background.toArgb()
+                window.statusBarColor = Color.Transparent.toArgb()
                 @Suppress("DEPRECATION")
-                window.navigationBarColor = colors.background.toArgb()
+                window.navigationBarColor = Color.Transparent.toArgb()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isStatusBarContrastEnforced = false
+                    window.isNavigationBarContrastEnforced = false
+                }
                 WindowCompat.getInsetsController(window, view).apply {
                     isAppearanceLightStatusBars = !darkTheme
                     isAppearanceLightNavigationBars = !darkTheme

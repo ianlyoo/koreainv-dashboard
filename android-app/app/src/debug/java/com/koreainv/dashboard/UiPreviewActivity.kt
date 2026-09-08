@@ -1,16 +1,15 @@
 package com.koreainv.dashboard
 
 import android.os.Bundle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.outlined.Settings
+import com.koreainv.dashboard.ui.screens.DashboardIcons
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBox
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
@@ -31,6 +30,7 @@ import kotlinx.coroutines.awaitCancellation
 class UiPreviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val initialScreen = intent.getStringExtra("screen") ?: "portfolio"
         val fixture = intent.getStringExtra("fixture") ?: "normal"
         val source = SyntheticDashboardSource(fixture)
@@ -58,13 +58,13 @@ class UiPreviewActivity : ComponentActivity() {
                         var updateNotice by remember { mutableStateOf(false) }
                         val logout = { screen = "unlock" }
                         val tabs = listOf(
-                            DashboardTabItem("portfolio", stringResource(R.string.portfolio), Icons.Default.Home),
-                            DashboardTabItem("assets", stringResource(R.string.asset_status), Icons.Default.AccountBox),
-                            DashboardTabItem("trades", stringResource(R.string.trade_history_title), Icons.Default.List),
-                            DashboardTabItem("settings", "설정", Icons.Default.Settings),
+                            DashboardTabItem("portfolio", stringResource(R.string.portfolio), DashboardIcons.Portfolio),
+                            DashboardTabItem("assets", stringResource(R.string.asset_status), DashboardIcons.Assets),
+                            DashboardTabItem("trades", stringResource(R.string.trade_history_title), DashboardIcons.Trades),
+                            DashboardTabItem("settings", "설정", Icons.Outlined.Settings),
                         )
                         Box(Modifier.fillMaxSize()) {
-                            Box(Modifier.fillMaxSize().recordNavigationBackdrop()) {
+                            Box(Modifier.fillMaxSize()) {
                             screenStateHolder.SaveableStateProvider(screen) {
                                 when (screen) {
                                     "portfolio" -> PortfolioScreen(source, source.filters, settings) { symbol, account ->
@@ -82,7 +82,7 @@ class UiPreviewActivity : ComponentActivity() {
                                         if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
                                     "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
                                     "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
-                                        "1.8.1-preview", false, false, { updateNotice = true }, accounts, logout, back)
+                                        "1.9.1-preview", false, false, { updateNotice = true }, accounts, logout, back)
                                     else -> error("Unknown preview screen: $screen")
                                 }
                             }

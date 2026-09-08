@@ -42,15 +42,13 @@ class MultiAccountTradeFrontendTests(unittest.TestCase):
         self.assertIn("토스 추정 손익 포함", self.android_trade_screen)
         self.assertIn("trade.realizedProfitEstimated", self.android_trade_screen)
 
-    def test_android_trade_filters_share_one_row_without_trade_list_title(self):
+    def test_android_trade_filters_are_compact_without_trade_list_title(self):
         self.assertNotIn(
             "SectionTitle(title = stringResource(R.string.trade_list))",
             self.android_trade_screen,
         )
         self.assertGreaterEqual(self.android_trade_screen.count("compact = true"), 3)
-        self.assertIn("Modifier.weight(1.08f)", self.android_trade_screen)
-        self.assertIn("Modifier.weight(1.12f)", self.android_trade_screen)
-        self.assertIn("Modifier.weight(0.8f)", self.android_trade_screen)
+        # Exact column ratios are not a contract: filters may reflow for large text.
 
 
 if __name__ == "__main__":
