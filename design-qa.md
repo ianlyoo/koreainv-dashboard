@@ -79,3 +79,11 @@ Production backgrounds are `android-app/app/src/main/res/drawable-nodpi/login_ho
 - User approved the palette, tactile motion and fully rounded currency selector, and requested a mandatory update.
 - All version metadata is synchronized to 1.9.3, Android code 37. The release build passed; production DEX includes motion/backdrop lifetime code and excludes `UiPreviewActivity` and `SyntheticDashboardSource`.
 - The release uses an annotated `[mandatory-update]` tag and the same marker in its public release body, following `RELEASE_POLICY.md`.
+
+## v1.9.4 — currency elasticity and combined asset allocation
+
+- Currency selection and bottom tabs share the same stretch/settle helper, including continuous retargeting and no initial pulse. The rounded currency shape and immediate selection are preserved.
+- Distribution combines values by canonical market + normalized symbol across accounts/brokers, then calculates weights and sorts combined values. Different markets and unidentified symbols remain separate. Account positions and totals remain intact; cached Android data and the Python mobile response use the corrected behavior.
+- Validation: 147 Android unit tests, 157 Python tests and 3 Android device tests passed. Debug/release builds and Android lint passed without errors.
+- API 35 light/dark synthetic fixtures retain six account positions while showing five distribution assets. Samsung's two positions combine to KRW 14,700,000 / 33,735,000 = 43.57%, displayed once. Repeated currency switching settled correctly without runtime crashes. Evidence: `build/asset-grouping-review/`.
+- Release metadata is 1.9.4 / Android code 38; user requested a mandatory commit/release.

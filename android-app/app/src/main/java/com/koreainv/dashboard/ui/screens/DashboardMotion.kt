@@ -8,6 +8,9 @@ import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -59,4 +62,20 @@ internal fun rememberGlassPressScale(source: MutableInteractionSource): State<Fl
         }
     }
     return scale.asState()
+}
+
+/** Shared elastic selection treatment for the bottom tabs and currency capsule. */
+@Composable
+internal fun <T> rememberSelectionStretch(selection: T, enabled: Boolean = true): State<Float> {
+    val stretch = remember { Animatable(1f) }
+    var previousSelection by remember { mutableStateOf(selection) }
+    var previousEnabled by remember { mutableStateOf(enabled) }
+    LaunchedEffect(selection, enabled) {
+        val moved = previousEnabled && enabled && previousSelection != selection
+        previousSelection = selection
+        previousEnabled = enabled
+        if (moved) stretch.animateTo(1.045f, tween(80))
+        stretch.animateTo(1f, DashboardMotion.release())
+    }
+    return stretch.asState()
 }

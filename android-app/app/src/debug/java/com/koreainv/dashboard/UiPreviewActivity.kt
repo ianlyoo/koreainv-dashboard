@@ -148,7 +148,7 @@ class UiPreviewActivity : ComponentActivity() {
                                                     if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
                                                 "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
                                                 "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
-                                                    "1.9.3-preview", false, false, { updateNotice = true }, accounts, logout, back)
+                                                    "1.9.4-preview", false, false, { updateNotice = true }, accounts, logout, back)
                                                 else -> error("Unknown preview screen: $scene")
                                             }
                                         }
@@ -212,6 +212,8 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
     private val holdings = when (fixture) {
         "empty" -> emptyList()
         "long-name" -> listOf(allHoldings.first().copy(name = "Global Semiconductor Innovation Holdings"))
+        "same-asset-accounts" -> allHoldings +
+            holding("005930", "삼성전자", "KOR", 50.0, 73500.0, 68000.0, "KRW", 1.0, 1)
         else -> allHoldings
     }
     private val value = holdings.sumOf { it.totalValueKrw }
@@ -223,7 +225,7 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
         DashboardSummary(value + totalCash, cost, value - cost, if (cost == 0.0) 0.0 else (value - cost) / cost * 100,
             cashKrw, totalCash, cashUsd, 0.0, orderableCashKrw = cashKrw, usdExchangeRate = 1350.0,
             domesticCount = holdings.count { it.currency == "KRW" }, overseasCount = holdings.count { it.currency != "KRW" }, lastSynced = SYNC),
-        holdings, holdings.map { AssetDistribution(it.symbol, it.name, it.totalValueKrw / value * 100, it.totalValueKrw) },
+        holdings, buildAssetDistribution(holdings),
     )
     val allTrades = listOf(
         Trade("2026-09-04", "매도", "005930", "삼성전자", "KOR", "KRW", 20.0, 73500.0, 1470000.0, 1470000.0, 110000.0, 8.09,
