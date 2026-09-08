@@ -24,6 +24,8 @@ import com.koreainv.dashboard.ui.screens.*
 import com.koreainv.dashboard.ui.theme.KoreaInvDashboardTheme
 import com.koreainv.dashboard.ui.appearance.AppearancePreference
 import com.koreainv.dashboard.ui.appearance.ThemeMode
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitCancellation
 
 /** Debug-only screen host. Never creates a repository, transport, or order client. */
@@ -45,8 +47,8 @@ class UiPreviewActivity : ComponentActivity() {
                     LocalDashboardBottomBarHeight provides bottomBarHeight,
                     LocalCurrencyPreference provides currencyPreference,
                 ) {
-                    DashboardGlassHost {
-                        var screen by rememberSaveable { mutableStateOf(initialScreen) }
+                    var screen by rememberSaveable { mutableStateOf(initialScreen) }
+                    DashboardGlassHost(background = { if (screen == "unlock") LoginBackdrop() }) {
                         var detailSymbol by rememberSaveable { mutableStateOf("005930") }
                         var detailAccount by rememberSaveable { mutableStateOf<String?>("demo-kis") }
                         val screenStateHolder = rememberSaveableStateHolder()
@@ -56,6 +58,9 @@ class UiPreviewActivity : ComponentActivity() {
                         val accounts = { screen = "accounts" }
                         val settings = { screen = "settings" }
                         var updateNotice by remember { mutableStateOf(false) }
+                        var unlockError by remember { mutableStateOf<String?>(null) }
+                        var unlockBusy by remember { mutableStateOf(false) }
+                        val previewScope = rememberCoroutineScope()
                         val logout = { screen = "unlock" }
                         val tabs = listOf(
                             DashboardTabItem("portfolio", stringResource(R.string.portfolio), DashboardIcons.Portfolio),
@@ -76,13 +81,30 @@ class UiPreviewActivity : ComponentActivity() {
                                         tradeSession, { tradeSession = it })
                                     "details" -> HoldingDetailScreen(source, detailSymbol, detailAccount, back)
                                     "trade-details" -> TradeDetailScreen(detailTrade, 1350.0, SyntheticDashboardSource.SYNC, { screen = "trades" })
-                                    "unlock" -> PinUnlockScreen(if (fixture == "error") "합성 PIN 오류" else null,
-                                        fixture == "loading", { screen = "portfolio" })
+                                    "unlock" -> PinUnlockScreen(
+                                        unlockError ?: if (fixture == "error") "잠금번호가 올바르지 않습니다." else null,
+                                        unlockBusy || fixture == "loading",
+                                    ) { pin ->
+                                        if (!unlockBusy) {
+                                            android.util.Log.i("UiPreviewUnlock", "Synthetic unlock attempt")
+                                            unlockError = null
+                                            unlockBusy = true
+                                            previewScope.launch {
+                                                delay(when (fixture) { "slow-unlock" -> 1500L; "instant-error" -> 0L; else -> 100L })
+                                                if (fixture in listOf("reject", "instant-error") || pin != "1234") {
+                                                    unlockError = "잠금번호가 올바르지 않습니다."
+                                                } else {
+                                                    screen = "portfolio"
+                                                }
+                                                unlockBusy = false
+                                            }
+                                        }
+                                    }
                                     "accounts" -> AccountManagementScreen(source.profile, fixture == "loading",
                                         if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
                                     "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
                                     "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
-                                        "1.9.1-preview", false, false, { updateNotice = true }, accounts, logout, back)
+                                        "1.9.2-preview", false, false, { updateNotice = true }, accounts, logout, back)
                                     else -> error("Unknown preview screen: $screen")
                                 }
                             }
@@ -132,7 +154,11 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
         holding("NVDA", "NVIDIA Corporation", "USA", 35.0, 120.0, 130.0, "USD", 1350.0, 1),
         holding("7203", "Toyota Motor", "JPN", 100.0, 2700.0, 2450.0, "JPY", 9.0, 0),
     )
-    private val holdings = if (fixture == "empty") emptyList() else allHoldings
+    private val holdings = when (fixture) {
+        "empty" -> emptyList()
+        "long-name" -> listOf(allHoldings.first().copy(name = "Global Semiconductor Innovation Holdings"))
+        else -> allHoldings
+    }
     private val value = holdings.sumOf { it.totalValueKrw }
     private val cost = holdings.sumOf { it.totalCostKrw }
     private val cashKrw = if (fixture == "empty") 0.0 else 12600000.0

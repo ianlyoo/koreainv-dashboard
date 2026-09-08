@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -25,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,6 +44,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.input.KeyboardType
@@ -146,7 +148,7 @@ fun AccountManagementScreen(
 
     val displayError = validationError ?: errorMessage?.let { "저장하지 못했습니다. PIN과 연결 상태를 확인한 뒤 다시 시도하세요." }
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
+        DashboardScaffold(
         topBar = {
             DashboardTopBar(
                 title = stringResource(R.string.account_management_title),
@@ -161,16 +163,18 @@ fun AccountManagementScreen(
                 },
             )
         },
-        containerColor = Color.Transparent,
     ) { paddingValues ->
-        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
+        // Keep the form viewport below the floating header so focus relocation
+        // and validation never place editable text beneath its touch blocker.
+        ScreenBackground(modifier = Modifier.padding(top = paddingValues.calculateTopPadding())) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .navigationBarsPadding()
                     .imePadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                    .padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 Text(
                     text = stringResource(R.string.account_management_subtitle),
@@ -181,8 +185,9 @@ fun AccountManagementScreen(
                     AccountFormErrorText(displayError)
                 }
                 drafts.forEachIndexed { index, draft ->
+                    if (index > 0) Divider(color = SurfaceBorder.copy(alpha = 0.5f))
                     key(draft.uiId, draft.broker) {
-                        AccountManagementCard(
+                        AccountManagementSection(
                             index = index,
                             draft = draft,
                             storedAccount = profile.accounts.firstOrNull { it.id == draft.id },
@@ -248,7 +253,7 @@ fun AccountManagementScreen(
                 Button(
                     onClick = ::submit,
                     enabled = !isBusy,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = TextGold),
                 ) {
                     Text(
@@ -278,7 +283,7 @@ fun AccountManagementScreen(
 }
 
 @Composable
-private fun AccountManagementCard(
+private fun AccountManagementSection(
     index: Int,
     draft: ManagedAccountDraft,
     storedAccount: AccountCredential?,
@@ -291,144 +296,141 @@ private fun AccountManagementCard(
     onRemove: () -> Unit,
 ) {
     val lookupInput = managedTossLookupInput(draft, storedAccount)
-    PremiumGlassCard {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).alignByBaseline(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = stringResource(R.string.account_section_title, index + 1),
+                    modifier = Modifier.semantics { heading() },
+                    style = MaterialTheme.typography.titleLarge,
+                    color = TextPrimary,
+                )
+                if (isPrimary) {
                     Text(
-                        text = stringResource(R.string.account_section_title, index + 1),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary,
+                        text = stringResource(R.string.primary_account),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextGold,
                     )
-                    if (isPrimary) {
-                        Text(
-                            text = stringResource(R.string.primary_account),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextGold,
-                        )
-                    }
-                }
-                if (isRemovable) {
-                    TextButton(onClick = onRemove, enabled = isEnabled) {
-                        Text(text = stringResource(R.string.remove_account), color = TextSecondary)
-                    }
                 }
             }
-            Spacer(modifier = Modifier.height(14.dp))
-            Divider(color = SurfaceBorder)
-            Spacer(modifier = Modifier.height(14.dp))
-            ManagementField(
-                value = draft.label,
-                onValueChange = { onUpdate { current -> current.copy(label = it) } },
-                label = "계좌 이름 (선택)",
-                isEnabled = isEnabled,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            BrokerSelector(
-                broker = draft.broker,
-                isEnabled = isEnabled,
-                onChange = { broker -> onUpdate { it.changeBroker(broker) } },
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            if (draft.broker == Broker.TOSS) {
-                ManagementTossConnectionSelector(
-                    useProxy = draft.useTossProxy,
-                    isEnabled = isEnabled,
-                    onChange = { useProxy -> onUpdate { it.changeConnection(useProxy) } },
-                )
-                if (draft.useTossProxy) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    ManagementField(
-                        value = draft.proxyBaseUrlInput,
-                        errorMessage = issues.messageFor(draft.uiId, AccountFormField.PROXY_URL),
-                        modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_URL)),
-                        onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_URL, it, storedAccount) } },
-                        label = "개인 서버 주소",
-                        keyboardType = KeyboardType.Uri,
-                        isEnabled = isEnabled,
-                        supportingText = if (draft.hasStoredProxyConfig) "비워두면 기존 연결 유지 · 변경 시 주소와 토큰을 함께 입력" else "서버 주소와 인증 토큰을 함께 입력하세요.",
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    ManagementField(
-                        value = draft.proxyApiTokenInput,
-                        errorMessage = issues.messageFor(draft.uiId, AccountFormField.PROXY_TOKEN),
-                        modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_TOKEN)),
-                        onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_TOKEN, it, storedAccount) } },
-                        label = "서버 인증 토큰",
-                        isSecret = true,
-                        isEnabled = isEnabled,
-                        supportingText = if (draft.hasStoredProxyConfig) "비워두면 기존 연결 유지 · 변경 시 주소와 토큰을 함께 입력" else "서버 주소와 인증 토큰을 함께 입력하세요.",
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+            if (isRemovable) {
+                TextButton(onClick = onRemove, enabled = isEnabled, modifier = Modifier.alignByBaseline()) {
+                    Text(text = stringResource(R.string.remove_account), color = TextSecondary)
                 }
             }
-            ManagementField(
-                value = draft.appKeyInput,
-                errorMessage = issues.messageFor(draft.uiId, AccountFormField.KEY),
-                modifier = Modifier.focusRequester(focusFor(AccountFormField.KEY)),
-                onValueChange = {
-                    onUpdate { current -> current.changeLookupField(AccountFormField.KEY, it, storedAccount) }
-                },
-                label = if (draft.broker == Broker.TOSS) "연결 ID" else "앱 키",
-                isSecret = true,
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+        ManagementField(
+            value = draft.label,
+            onValueChange = { onUpdate { current -> current.copy(label = it) } },
+            label = "계좌 이름 (선택)",
+            isEnabled = isEnabled,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        BrokerSelector(
+            broker = draft.broker,
+            isEnabled = isEnabled,
+            onChange = { broker -> onUpdate { it.changeBroker(broker) } },
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        if (draft.broker == Broker.TOSS) {
+            ManagementTossConnectionSelector(
+                useProxy = draft.useTossProxy,
                 isEnabled = isEnabled,
-                supportingText = if (draft.broker == Broker.TOSS) "기존 정보는 표시하지 않습니다. 변경 시 ID와 비밀키를 함께 입력하세요." else if (draft.hasStoredKey) stringResource(R.string.keep_existing_value) else null,
+                onChange = { useProxy -> onUpdate { it.changeConnection(useProxy) } },
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            ManagementField(
-                value = draft.appSecretInput,
-                errorMessage = issues.messageFor(draft.uiId, AccountFormField.SECRET),
-                modifier = Modifier.focusRequester(focusFor(AccountFormField.SECRET)),
-                onValueChange = {
-                    onUpdate { current -> current.changeLookupField(AccountFormField.SECRET, it, storedAccount) }
-                },
-                label = if (draft.broker == Broker.TOSS) "연결 비밀키" else "앱 시크릿",
-                isSecret = true,
-                isEnabled = isEnabled,
-                supportingText = if (draft.broker == Broker.TOSS) "ID와 비밀키를 모두 비워두면 기존 정보를 유지합니다." else if (draft.hasStoredSecret) stringResource(R.string.keep_existing_value) else null,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            if (draft.broker == Broker.TOSS) {
-                TossAccountPicker(
-                    lookupInput = lookupInput,
-                    useProxy = draft.useTossProxy,
-                    selectedAccountSeq = draft.cano,
-                    validationMessage = issues.messageFor(draft.uiId, AccountFormField.ACCOUNT),
-                    modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
-                    isEnabled = isEnabled,
-                    onAccountSelected = { accountSeq ->
-                        onUpdate { current -> if (managedTossLookupInput(current, storedAccount) == lookupInput) current.copy(cano = accountSeq) else current }
-                    },
-                )
-            } else {
+            if (draft.useTossProxy) {
+                Spacer(modifier = Modifier.height(12.dp))
                 ManagementField(
-                    value = draft.cano,
-                    errorMessage = issues.messageFor(draft.uiId, AccountFormField.ACCOUNT),
-                    modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
-                    onValueChange = {
-                        onUpdate { current -> current.copy(cano = asciiDigits(it, ACCOUNT_NUMBER_LENGTH)) }
-                    },
-                    label = "계좌번호 앞 8자리",
-                    keyboardType = KeyboardType.Number,
+                    value = draft.proxyBaseUrlInput,
+                    errorMessage = issues.messageFor(draft.uiId, AccountFormField.PROXY_URL),
+                    modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_URL)),
+                    onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_URL, it, storedAccount) } },
+                    label = "개인 서버 주소",
+                    keyboardType = KeyboardType.Uri,
                     isEnabled = isEnabled,
+                    supportingText = if (draft.hasStoredProxyConfig) "비워두면 기존 연결 유지 · 변경 시 주소와 토큰을 함께 입력" else "서버 주소와 인증 토큰을 함께 입력하세요.",
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 ManagementField(
-                    value = draft.acntPrdtCd,
-                    errorMessage = issues.messageFor(draft.uiId, AccountFormField.PRODUCT),
-                    modifier = Modifier.focusRequester(focusFor(AccountFormField.PRODUCT)),
-                    onValueChange = {
-                        onUpdate { current -> current.copy(acntPrdtCd = asciiDigits(it, ACCOUNT_PRODUCT_CODE_LENGTH)) }
-                    },
-                    label = "계좌번호 뒤 2자리",
-                    keyboardType = KeyboardType.Number,
+                    value = draft.proxyApiTokenInput,
+                    errorMessage = issues.messageFor(draft.uiId, AccountFormField.PROXY_TOKEN),
+                    modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_TOKEN)),
+                    onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_TOKEN, it, storedAccount) } },
+                    label = "서버 인증 토큰",
+                    isSecret = true,
                     isEnabled = isEnabled,
+                    supportingText = if (draft.hasStoredProxyConfig) "비워두면 기존 연결 유지 · 변경 시 주소와 토큰을 함께 입력" else "서버 주소와 인증 토큰을 함께 입력하세요.",
                 )
+                Spacer(modifier = Modifier.height(12.dp))
             }
+        }
+        ManagementField(
+            value = draft.appKeyInput,
+            errorMessage = issues.messageFor(draft.uiId, AccountFormField.KEY),
+            modifier = Modifier.focusRequester(focusFor(AccountFormField.KEY)),
+            onValueChange = {
+                onUpdate { current -> current.changeLookupField(AccountFormField.KEY, it, storedAccount) }
+            },
+            label = if (draft.broker == Broker.TOSS) "연결 ID" else "앱 키",
+            isSecret = true,
+            isEnabled = isEnabled,
+            supportingText = if (draft.broker == Broker.TOSS) "기존 정보는 표시하지 않습니다. 변경 시 ID와 비밀키를 함께 입력하세요." else if (draft.hasStoredKey) stringResource(R.string.keep_existing_value) else null,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        ManagementField(
+            value = draft.appSecretInput,
+            errorMessage = issues.messageFor(draft.uiId, AccountFormField.SECRET),
+            modifier = Modifier.focusRequester(focusFor(AccountFormField.SECRET)),
+            onValueChange = {
+                onUpdate { current -> current.changeLookupField(AccountFormField.SECRET, it, storedAccount) }
+            },
+            label = if (draft.broker == Broker.TOSS) "연결 비밀키" else "앱 시크릿",
+            isSecret = true,
+            isEnabled = isEnabled,
+            supportingText = if (draft.broker == Broker.TOSS) "ID와 비밀키를 모두 비워두면 기존 정보를 유지합니다." else if (draft.hasStoredSecret) stringResource(R.string.keep_existing_value) else null,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        if (draft.broker == Broker.TOSS) {
+            TossAccountPicker(
+                lookupInput = lookupInput,
+                useProxy = draft.useTossProxy,
+                selectedAccountSeq = draft.cano,
+                validationMessage = issues.messageFor(draft.uiId, AccountFormField.ACCOUNT),
+                modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
+                isEnabled = isEnabled,
+                onAccountSelected = { accountSeq ->
+                    onUpdate { current -> if (managedTossLookupInput(current, storedAccount) == lookupInput) current.copy(cano = accountSeq) else current }
+                },
+            )
+        } else {
+            ManagementField(
+                value = draft.cano,
+                errorMessage = issues.messageFor(draft.uiId, AccountFormField.ACCOUNT),
+                modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
+                onValueChange = {
+                    onUpdate { current -> current.copy(cano = asciiDigits(it, ACCOUNT_NUMBER_LENGTH)) }
+                },
+                label = "계좌번호 앞 8자리",
+                keyboardType = KeyboardType.Number,
+                isEnabled = isEnabled,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ManagementField(
+                value = draft.acntPrdtCd,
+                errorMessage = issues.messageFor(draft.uiId, AccountFormField.PRODUCT),
+                modifier = Modifier.focusRequester(focusFor(AccountFormField.PRODUCT)),
+                onValueChange = {
+                    onUpdate { current -> current.copy(acntPrdtCd = asciiDigits(it, ACCOUNT_PRODUCT_CODE_LENGTH)) }
+                },
+                label = "계좌번호 뒤 2자리",
+                keyboardType = KeyboardType.Number,
+                isEnabled = isEnabled,
+            )
         }
     }
 }

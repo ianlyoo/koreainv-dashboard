@@ -48,7 +48,7 @@
     <string name="confirm_pin">PIN 확인</string>
     <string name="save_and_unlock">저장하고 시작하기</string>
     <string name="complete_setup">설정 완료</string>
-    <string name="invalid_pin">PIN이 올바르지 않습니다.</string>
+    <string name="invalid_pin">잠금번호가 올바르지 않습니다.</string>
     <string name="trade_filter">거래 구분</string>
     <string name="trade_period">거래 기간</string>
     <string name="asset_status">자산 현황</string>

@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.DashboardResponse
@@ -331,10 +332,23 @@ fun AssetDistributionCard(data: DashboardResponse) {
                             Canvas(modifier = Modifier.padding(top = 5.dp).size(12.dp)) {
                                 drawCircle(color = colors[index % colors.size])
                             }
-                            ResponsiveDetailRow(
-                                label = asset.name,
-                                value = formatSignedPercent(asset.weightPercent).removePrefix("+"),
-                                modifier = Modifier.weight(1f),
+                            Text(
+                                text = asset.name,
+                                modifier = Modifier.weight(1f).alignByBaseline(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                            )
+                            // Measure the actual percentage first (including decimals).
+                            // The name receives all remaining width rather than a fixed fraction.
+                            Text(
+                                text = formatSignedPercent(asset.weightPercent).removePrefix("+"),
+                                modifier = Modifier.alignByBaseline(),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = TextPrimary,
+                                textAlign = TextAlign.End,
+                                maxLines = 1,
+                                softWrap = false,
                             )
                         }
                     }

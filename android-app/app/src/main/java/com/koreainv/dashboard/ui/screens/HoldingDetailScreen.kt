@@ -3,7 +3,7 @@ package com.koreainv.dashboard.ui.screens
 import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -13,7 +13,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,7 +24,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -35,10 +34,8 @@ import com.koreainv.dashboard.network.Holding
 import com.koreainv.dashboard.network.DashboardDataSource
 import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_INTERVAL_MILLIS
 import com.koreainv.dashboard.network.US_DAY_MARKET_REFRESH_WINDOW_MILLIS
-import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.Error
 import com.koreainv.dashboard.ui.theme.Success
-import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
 import kotlinx.coroutines.CancellationException
@@ -134,7 +131,7 @@ fun HoldingDetailScreen(
         }
     }
 
-    Scaffold(
+    DashboardScaffold(
         topBar = {
             DashboardTopBar(
                 title = stringResource(R.string.holding_detail),
@@ -163,9 +160,8 @@ fun HoldingDetailScreen(
                 },
             )
         },
-        containerColor = Color.Transparent,
     ) { paddingValues ->
-        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
+        ScreenBackground {
             when {
                 isLoading && holding == null -> {
                     DashboardLoadingState(
@@ -195,8 +191,8 @@ fun HoldingDetailScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                            .padding(start = 20.dp, end = 20.dp, top = paddingValues.calculateTopPadding() + 8.dp, bottom = paddingValues.calculateBottomPadding() + 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
                         if (errorMessage != null) {
                             DashboardErrorNotice(
@@ -206,12 +202,11 @@ fun HoldingDetailScreen(
                             )
                         }
                         HeroTopSection {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                SurfaceBadge(label = data.market, tone = AccentTone.Info)
-                                if (data.market == "USA" && data.quoteSession == "day_market" && data.quoteStale) {
-                                    SurfaceBadge(label = "종가", tone = AccentTone.Neutral)
-                                }
-                            }
+                            Text(
+                                text = data.market + if (data.market == "USA" && data.quoteSession == "day_market" && data.quoteStale) " · 종가 기준" else "",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = TextSecondary,
+                            )
                             Text(
                                 text = data.accountLabel?.takeIf(String::isNotBlank) ?: "계좌 이름 없음",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -233,7 +228,7 @@ fun HoldingDetailScreen(
                             FullMonetaryValue(
                                 label = "${stringResource(R.string.total_value)} (${currencyMode.name})",
                                 value = formatCurrencyAmount(data.totalValueKrw, currencyMode, usdRate),
-                                valueColor = TextGold,
+                                valueColor = TextPrimary,
                             )
                             HeroMetricGroup {
                                 ResponsiveDetailRow(stringResource(R.string.quantity), formatWholeNumber(data.quantity))
@@ -245,7 +240,8 @@ fun HoldingDetailScreen(
                             }
                         }
 
-                        PremiumGlassCard {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 ResponsiveDetailRow("${stringResource(R.string.current_price)} ($unitPriceCurrency)", formatHoldingUnitPrice(data.currentPrice, data.currency, currencyMode, usdRate))
                                 ResponsiveDetailRow("${stringResource(R.string.average_cost)} ($unitPriceCurrency)", formatHoldingUnitPrice(data.averageCost, data.currency, currencyMode, usdRate))
@@ -254,7 +250,8 @@ fun HoldingDetailScreen(
                             }
                         }
 
-                        PremiumGlassCard {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 ResponsiveDetailRow(
                                     stringResource(R.string.profit_loss_amount),

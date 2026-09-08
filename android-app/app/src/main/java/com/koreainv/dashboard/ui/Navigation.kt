@@ -33,6 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavHostController
+import com.koreainv.dashboard.ui.screens.LoginBackdrop
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -88,21 +90,28 @@ sealed class Screen(val route: String) {
 
 @Composable
 fun KoreaInvApp(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+    val navController = rememberNavController()
+    val backgroundEntry by navController.currentBackStackEntryAsState()
     val currencyPreference = rememberCurrencyPreference()
     val bottomBarHeight = remember { mutableStateOf(116.dp) }
     CompositionLocalProvider(
         LocalCurrencyPreference provides currencyPreference,
         LocalDashboardBottomBarHeight provides bottomBarHeight,
     ) {
-        DashboardGlassHost {
-            KoreaInvAppContent(themeMode, onThemeModeChange)
+        DashboardGlassHost(background = {
+            if (backgroundEntry?.destination?.route == Screen.Unlock.route) LoginBackdrop()
+        }) {
+            KoreaInvAppContent(themeMode, onThemeModeChange, navController)
         }
     }
 }
 
 @Composable
-private fun KoreaInvAppContent(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
-    val navController = rememberNavController()
+private fun KoreaInvAppContent(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    navController: NavHostController,
+) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val upToDateText = stringResource(R.string.update_up_to_date)
@@ -272,6 +281,7 @@ private fun KoreaInvAppContent(themeMode: ThemeMode, onThemeModeChange: (ThemeMo
                         onUnlock = { pin ->
                             scope.launch {
                                 if (isUnlocking) return@launch
+                                errorMessage = null
                                 isUnlocking = true
                                 try {
                                     val profile = settingsManager.unlockProfile(pin)
