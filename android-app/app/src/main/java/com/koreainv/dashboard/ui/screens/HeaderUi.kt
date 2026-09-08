@@ -1,9 +1,13 @@
 package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,9 +35,11 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -42,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -55,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
@@ -331,26 +339,39 @@ fun HeaderIconButton(
     onClick: () -> Unit,
     tone: AccentTone = AccentTone.Neutral,
     enabled: Boolean = true,
+    isLoading: Boolean = false,
 ) {
     val palette = tonePalette(tone)
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .size(48.dp)
+            .clickable(interactionSource = interactionSource, indication = null,
+                enabled = enabled && !isLoading, role = Role.Button, onClick = onClick)
+            .semantics { this.contentDescription = contentDescription }
             .glassPressFeedback(interactionSource)
             .liquidGlass(radius = 24.dp, role = GlassRole.Control)
             .clip(RoundedCornerShape(24.dp))
-            .clickable(interactionSource = interactionSource, indication = LocalIndication.current,
-                enabled = enabled, role = Role.Button, onClick = onClick),
+            .indication(interactionSource, LocalIndication.current),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = imageVector,
-            contentDescription = contentDescription,
-            tint = if (enabled) palette.content else TextSecondary,
-            modifier = Modifier.size(21.dp),
-        )
+        Crossfade(targetState = isLoading, animationSpec = tween(DashboardMotion.ColorDuration), label = "header loading") { loading ->
+            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                if (loading) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = TextGold, strokeWidth = 2.dp)
+                } else {
+                    Icon(imageVector, contentDescription = null,
+                        tint = if (enabled) palette.content else TextSecondary,
+                        modifier = Modifier.size(21.dp))
+                }
+            }
+        }
     }
+}
+
+@Composable
+fun HeaderRefreshButton(isRefreshing: Boolean, contentDescription: String, onClick: () -> Unit) {
+    HeaderIconButton(Icons.Outlined.Refresh, contentDescription, onClick, isLoading = isRefreshing)
 }
 
 @Composable
@@ -460,25 +481,31 @@ fun CompactCurrencyToggle(
     mode: CurrencyDisplayMode,
     onModeChange: (CurrencyDisplayMode) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .selectableGroup()
-            .liquidGlass(radius = 28.dp, role = GlassRole.Control)
-            .padding(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CurrencyPill(
-            label = "$",
-            description = "미국 달러로 표시",
-            selected = mode == CurrencyDisplayMode.USD,
-            onClick = { onModeChange(CurrencyDisplayMode.USD) },
-        )
-        CurrencyPill(
-            label = "원",
-            description = "원화로 표시",
-            selected = mode == CurrencyDisplayMode.KRW,
-            onClick = { onModeChange(CurrencyDisplayMode.KRW) },
-        )
+    val density = LocalDensity.current
+    var usdWidth by remember { mutableStateOf(48.dp) }
+    var krwWidth by remember { mutableStateOf(48.dp) }
+    val selectedOffset by animateDpAsState(
+        if (mode == CurrencyDisplayMode.USD) 0.dp else usdWidth,
+        DashboardMotion.selection(), label = "currency position",
+    )
+    val selectedWidth by animateDpAsState(
+        if (mode == CurrencyDisplayMode.USD) usdWidth else krwWidth,
+        DashboardMotion.selection(), label = "currency width",
+    )
+    Box(Modifier.selectableGroup().liquidGlass(radius = 28.dp, role = GlassRole.Control).padding(4.dp)) {
+        Box(Modifier.matchParentSize()) {
+            Box(Modifier.offset { IntOffset(with(density) { selectedOffset.roundToPx() }, 0) }
+                .width(selectedWidth).fillMaxHeight().clip(CircleShape)
+                .background(TextPrimary.copy(alpha = 0.10f)))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CurrencyPill("$", "미국 달러로 표시", mode == CurrencyDisplayMode.USD,
+                { onModeChange(CurrencyDisplayMode.USD) },
+                Modifier.onSizeChanged { usdWidth = with(density) { it.width.toDp() } })
+            CurrencyPill("원", "원화로 표시", mode == CurrencyDisplayMode.KRW,
+                { onModeChange(CurrencyDisplayMode.KRW) },
+                Modifier.onSizeChanged { krwWidth = with(density) { it.width.toDp() } })
+        }
     }
 }
 
@@ -574,14 +601,26 @@ fun DashboardBottomTabBar(
         ) {
             val tabWidth = maxWidth / items.size
             val selectedIndex = items.indexOfFirst { it.route == currentRoute }
+            val capsuleStretch = remember { Animatable(1f) }
+            var previousIndex by remember { mutableStateOf(selectedIndex) }
+            LaunchedEffect(selectedIndex) {
+                val moved = previousIndex >= 0 && selectedIndex >= 0 && previousIndex != selectedIndex
+                previousIndex = selectedIndex
+                if (moved) capsuleStretch.animateTo(1.045f, tween(80))
+                capsuleStretch.animateTo(1f, DashboardMotion.release())
+            }
             val indicatorOffset by animateDpAsState(
                 targetValue = tabWidth * selectedIndex.coerceAtLeast(0),
-                animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+                animationSpec = DashboardMotion.selection(),
                 label = "selected tab position",
             )
             if (selectedIndex >= 0) {
                 Box(Modifier.matchParentSize()) {
                     Box(Modifier.offset { IntOffset(with(density) { indicatorOffset.roundToPx() }, 0) }.width(tabWidth).fillMaxHeight()
+                        .graphicsLayer {
+                            scaleX = capsuleStretch.value
+                            scaleY = 1f - (capsuleStretch.value - 1f) * 0.5f
+                        }
                         .clip(RoundedCornerShape(28.dp))
                         .background(selectionFill)
                         .border(0.5.dp, Color.White.copy(alpha = if (colors.isDark) 0.14f else 0.6f), RoundedCornerShape(28.dp)))
@@ -593,21 +632,28 @@ fun DashboardBottomTabBar(
                     val interactionSource = remember { MutableInteractionSource() }
                     val foreground by animateColorAsState(
                         if (selected) colors.primary else TextSecondary,
+                        animationSpec = tween(DashboardMotion.ColorDuration),
                         label = "tab foreground",
                     )
+                    val iconSelection by animateFloatAsState(if (selected) 1f else 0f,
+                        DashboardMotion.selection(), label = "tab icon selection")
                     Column(
                         Modifier.weight(1f)
-                            .glassPressFeedback(interactionSource)
                             .clip(RoundedCornerShape(28.dp))
                             .selectable(selected = selected, role = Role.Tab,
                                 interactionSource = interactionSource, indication = LocalIndication.current,
                                 onClick = { onTabSelected(item) })
+                            .glassPressFeedback(interactionSource)
                             .heightIn(min = 56.dp)
                             .padding(horizontal = 2.dp, vertical = 7.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
                     ) {
-                        item.icon?.let { Icon(it, null, Modifier.size(22.dp), tint = foreground) }
+                        item.icon?.let { Icon(it, null, Modifier.size(22.dp).graphicsLayer {
+                            scaleX = 1f + 0.04f * iconSelection
+                            scaleY = scaleX
+                            translationY = -1.dp.toPx() * iconSelection
+                        }, tint = foreground) }
                         Text(item.label, style = MaterialTheme.typography.labelSmall,
                             color = foreground, textAlign = TextAlign.Center,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium)
@@ -791,23 +837,24 @@ private fun CurrencyPill(
     description: String,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val foreground by animateColorAsState(if (selected) TextPrimary else TextSecondary,
+        tween(DashboardMotion.ColorDuration), label = "currency foreground")
     Box(
-        modifier = Modifier
+        modifier = modifier
             .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) TextPrimary.copy(alpha = 0.10f) else Color.Transparent)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .clip(CircleShape)
+            .selectable(selected = selected, role = Role.RadioButton,
+                interactionSource = interactionSource, indication = LocalIndication.current, onClick = onClick)
             .semantics { contentDescription = description }
+            .glassPressFeedback(interactionSource)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (selected) TextPrimary else TextSecondary,
-        )
+        Text(label, style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium, color = foreground)
     }
 }
 
