@@ -190,7 +190,6 @@ fun CredentialShell(
                     .fillMaxWidth()
                     .then(
                         if (centered) Modifier
-                            .liquidGlass(radius = 32.dp)
                             .padding(horizontal = 24.dp, vertical = 28.dp)
                         else Modifier,
                     ),

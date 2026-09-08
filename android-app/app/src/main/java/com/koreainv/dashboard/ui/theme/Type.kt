@@ -19,8 +19,8 @@ val Typography = Typography(
     displayLarge = TextStyle(
         fontFamily = BrainBoxFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 40.sp,
-        lineHeight = 46.sp,
+        fontSize = 38.sp,
+        lineHeight = 44.sp,
         letterSpacing = (-1.1).sp
     ),
     displayMedium = TextStyle(
@@ -40,14 +40,14 @@ val Typography = Typography(
     titleLarge = TextStyle(
         fontFamily = BrainBoxFontFamily,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
         letterSpacing = (-0.2).sp
     ),
     titleMedium = TextStyle(
         fontFamily = BrainBoxFontFamily,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 18.sp,
+        fontSize = 17.sp,
         lineHeight = 24.sp,
         letterSpacing = (-0.1).sp
     ),
@@ -91,13 +91,13 @@ val Typography = Typography(
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
         lineHeight = 16.sp,
-        letterSpacing = 0.45.sp
+        letterSpacing = 0.sp
     ),
     labelSmall = TextStyle(
         fontFamily = BrainBoxFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
         lineHeight = 16.sp,
-        letterSpacing = 0.4.sp
+        letterSpacing = 0.sp
     )
 )

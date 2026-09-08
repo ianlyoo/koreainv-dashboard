@@ -3,12 +3,17 @@ package com.koreainv.dashboard.ui.screens
 import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -17,14 +22,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.LayerBackdrop
-import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
@@ -34,44 +37,28 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.Shadow
 import com.koreainv.dashboard.ui.theme.LocalDashboardColors
 
-private val LocalGlassBackground = staticCompositionLocalOf<LayerBackdrop?> { null }
-private val LocalGlassNavigation = staticCompositionLocalOf<LayerBackdrop?> { null }
+internal val LocalGlassNavigation = staticCompositionLocalOf<LayerBackdrop?> { null }
+// Provided only around floating top controls, never around their recorded source.
+internal val LocalGlassControls = staticCompositionLocalOf<LayerBackdrop?> { null }
 
 internal enum class GlassRole { Panel, Control, Navigation }
 
-/** Two independent recordings keep the floating bar out of its own backdrop. */
+/** One body recording feeds floating controls and navigation; ordinary surfaces stay flat. */
 @Composable
 fun DashboardGlassHost(content: @Composable () -> Unit) {
-    val background = rememberLayerBackdrop()
     val navigation = rememberLayerBackdrop()
     val colors = LocalDashboardColors.current
-    CompositionLocalProvider(
-        LocalGlassBackground provides background,
-        LocalGlassNavigation provides navigation,
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            Canvas(Modifier.fillMaxSize().layerBackdrop(background)) {
-                drawRect(Brush.verticalGradient(listOf(colors.background, colors.backgroundRaised)))
-                // A quiet light source gives glass edges depth without competing with values.
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(colors.primary.copy(alpha = if (colors.isDark) 0.09f else 0.06f), Color.Transparent),
-                        center = Offset(size.width * 0.85f, size.height * 0.18f),
-                        radius = size.width * 0.95f,
-                    ),
-                    center = Offset(size.width * 0.85f, size.height * 0.18f),
-                    radius = size.width * 0.95f,
-                )
+    CompositionLocalProvider(LocalGlassNavigation provides navigation) {
+        Box(Modifier.fillMaxSize().background(colors.background)) {
+            // Paint through the status bar, while keeping controls clear of system UI/cutouts.
+            Box(Modifier.fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .imePadding()) {
+                content()
             }
-            content()
         }
     }
 }
-
-/** Apply only to screen content, never to a container that includes the bottom bar. */
-@Composable
-fun Modifier.recordNavigationBackdrop(): Modifier =
-    LocalGlassNavigation.current?.let { layerBackdrop(it) } ?: this
 
 @Composable
 internal fun Modifier.liquidGlass(
@@ -80,34 +67,44 @@ internal fun Modifier.liquidGlass(
     tint: Color = Color.Unspecified,
 ): Modifier {
     val colors = LocalDashboardColors.current
-    val backdrop = if (role == GlassRole.Navigation) LocalGlassNavigation.current else LocalGlassBackground.current
+    val backdrop = when (role) {
+        GlassRole.Navigation -> LocalGlassNavigation.current
+        GlassRole.Control -> LocalGlassControls.current
+        GlassRole.Panel -> null
+    }
     val shape = RoundedCornerShape(radius)
     val surface = if (tint != Color.Unspecified) tint else colors.surfaceGlassLight.copy(
         alpha = when (role) {
             GlassRole.Panel -> if (colors.isDark) 0.58f else 0.64f
-            GlassRole.Control -> if (colors.isDark) 0.48f else 0.54f
-            GlassRole.Navigation -> if (colors.isDark) 0.58f else 0.68f
+            GlassRole.Control -> if (colors.isDark) 0.42f else 0.36f
+            GlassRole.Navigation -> if (colors.isDark) 0.42f else 0.38f
         },
     )
     val edge = Brush.linearGradient(
         listOf(colors.glassHighlight, colors.surfaceBorder.copy(alpha = 0.28f), colors.surfaceBorder.copy(alpha = 0.65f)),
     )
-    // RenderEffect blur starts at API 31; refraction is guarded internally at API 33.
+    // Body controls remain cheap; only scoped top controls and navigation get effects.
     if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-        return this.clip(shape)
-            .background(colors.surfaceGlassLight.copy(alpha = if (role == GlassRole.Navigation) 1f else 0.94f))
-            .border(0.75.dp, edge, shape)
+        val fill = if (role == GlassRole.Navigation || backdrop != null) {
+            (if (tint != Color.Unspecified) tint else colors.surfaceGlassLight).copy(alpha = 1f)
+        } else surface
+        val flat = this.clip(shape).background(fill)
+        return if (role == GlassRole.Control) flat.border(0.5.dp, edge, shape) else flat
     }
     return this.drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
         effects = {
             vibrancy()
-            blur(if (role == GlassRole.Navigation) 14.dp.toPx() else 7.dp.toPx())
-            lens(8.dp.toPx(), if (role == GlassRole.Navigation) 16.dp.toPx() else 10.dp.toPx())
+            blur(if (role == GlassRole.Navigation) 12.dp.toPx() else 10.dp.toPx())
+            // Library guards runtime-shader refraction on API 33; API 31–32 retain blur.
+            lens(
+                if (role == GlassRole.Navigation) 18.dp.toPx() else 8.dp.toPx(),
+                if (role == GlassRole.Navigation) 18.dp.toPx() else 12.dp.toPx(),
+            )
         },
         highlight = { Highlight(width = 0.45.dp, alpha = if (colors.isDark) 0.38f else 0.5f) },
-        shadow = { Shadow(radius = if (role == GlassRole.Navigation) 18.dp else 10.dp, color = colors.glassShadow) },
+        shadow = { Shadow(radius = 8.dp, color = colors.glassShadow) },
         onDrawSurface = {
             drawRect(surface)
             drawRect(colors.glassTint)

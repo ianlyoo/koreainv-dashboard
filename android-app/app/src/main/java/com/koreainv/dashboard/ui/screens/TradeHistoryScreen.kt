@@ -20,7 +20,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -179,7 +178,7 @@ fun TradeHistoryScreen(
         }
     }
 
-    Scaffold(
+    DashboardScaffold(
         topBar = {
             DashboardTopBar(
                 title = stringResource(R.string.trade_history_title),
@@ -202,9 +201,8 @@ fun TradeHistoryScreen(
                 },
             )
         },
-        containerColor = Color.Transparent,
     ) { paddingValues ->
-        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
+        ScreenBackground {
             when {
                 isLoading && tradeData == null -> {
                     DashboardLoadingState(
@@ -244,16 +242,19 @@ fun TradeHistoryScreen(
                         "sell" -> AccentTone.Negative
                         else -> AccentTone.Neutral
                     }
-                    val filteredTrades = data.trades.filter { trade ->
-                        tradeFilter == "all" ||
-                            (tradeFilter == "buy" && trade.side == stringResource(R.string.buy)) ||
-                            (tradeFilter == "sell" && trade.side == stringResource(R.string.sell))
+                    val buyLabel = stringResource(R.string.buy)
+                    val sellLabel = stringResource(R.string.sell)
+                    val filteredTrades = remember(data.trades, tradeFilter, buyLabel, sellLabel) {
+                        if (tradeFilter == "all") data.trades else data.trades.filter { trade ->
+                            (tradeFilter == "buy" && trade.side == buyLabel) ||
+                                (tradeFilter == "sell" && trade.side == sellLabel)
+                        }
                     }
 
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = dashboardBottomContentPadding()),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = paddingValues.calculateTopPadding() + 8.dp, bottom = dashboardBottomContentPadding()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         if (warningMessage != null) {
                             item {
@@ -292,7 +293,7 @@ fun TradeHistoryScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Box(modifier = Modifier.widthIn(min = 120.dp).weight(1f)) {
-                                    DashboardPillButton(
+                                    DashboardInlineButton(
                                         label = selectedRangeLabel,
                                         onClick = { rangeExpanded = true },
                                         modifier = Modifier.fillMaxWidth(),
@@ -316,7 +317,7 @@ fun TradeHistoryScreen(
                                     }
                                 }
                                 Box(modifier = Modifier.widthIn(min = 120.dp).weight(1f)) {
-                                    DashboardPillButton(
+                                    DashboardInlineButton(
                                         label = selectedAccountLabel,
                                         onClick = { accountExpanded = true },
                                         modifier = Modifier.fillMaxWidth().semantics {
@@ -350,7 +351,7 @@ fun TradeHistoryScreen(
                                     }
                                 }
                                 Box(modifier = Modifier.widthIn(min = 100.dp).weight(1f)) {
-                                    DashboardPillButton(
+                                    DashboardInlineButton(
                                         label = when (tradeFilter) {
                                             "buy" -> stringResource(R.string.buy)
                                             "sell" -> stringResource(R.string.sell)
@@ -400,6 +401,7 @@ fun TradeHistoryScreen(
 
                         item {
                             Text(
+                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                                 text = if (isTradeListLoading) "거래 목록 · 불러오는 중" else
                                     "거래 목록 · 확인된 ${filteredTrades.size}건 · $selectedAccountLabel · $selectedRangeLabel",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -427,7 +429,7 @@ fun TradeHistoryScreen(
                                 }
                             }
                         } else {
-                            items(filteredTrades) { trade ->
+                            items(filteredTrades, contentType = { "trade" }) { trade ->
                                 TradeItemCard(
                                     trade = trade,
                                     currencyMode = currencyMode,
@@ -582,25 +584,14 @@ fun TradeItemCard(
         "${if (trade.realizedProfitEstimated) "손익(추정)" else "손익"} ${formatCurrencyAmount(it, currencyMode, usdRate, signed = true)}"
     }
     PremiumListItem(onClick = onClick) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                text = trade.name,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = TextPrimary,
-            )
-            Text(
-                text = "${trade.side} · $accountLabel · ${trade.ticker} · ${stringResource(R.string.share_count, formatWholeNumber(trade.quantity))} · ${trade.date}",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-            )
-            AdaptiveListAmounts(
-                amount = formatTradeAmount(trade, currencyMode, usdRate),
-                secondary = profitText,
-                secondaryColor = if (realizedProfit != null) profitColorForAmount(realizedProfit) else TextSecondary,
-            )
-        }
+        LedgerRowContent(
+            name = trade.name,
+            identity = "${trade.ticker} · $accountLabel",
+            detail = "${trade.side} · ${stringResource(R.string.share_count, formatWholeNumber(trade.quantity))} · ${trade.date}",
+            amount = formatTradeAmount(trade, currencyMode, usdRate),
+            secondary = profitText,
+            secondaryColor = if (realizedProfit != null) profitColorForAmount(realizedProfit) else TextSecondary,
+        )
     }
 }
 

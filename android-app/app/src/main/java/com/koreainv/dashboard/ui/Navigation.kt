@@ -12,15 +12,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.outlined.Settings
+import com.koreainv.dashboard.ui.screens.DashboardIcons
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.AccountBox
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Settings
 import com.koreainv.dashboard.ui.appearance.ThemeMode
 import com.koreainv.dashboard.ui.screens.SettingsScreen
 import com.koreainv.dashboard.ui.screens.DashboardGlassHost
-import com.koreainv.dashboard.ui.screens.recordNavigationBackdrop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -133,10 +130,10 @@ private fun KoreaInvAppContent(themeMode: ThemeMode, onThemeModeChange: (ThemeMo
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val primaryTabs = listOf(
-        DashboardTabItem(route = Screen.Portfolio.route, label = stringResource(R.string.portfolio), icon = Icons.Default.Home),
-        DashboardTabItem(route = Screen.AssetStatus.route, label = stringResource(R.string.asset_status), icon = Icons.Default.AccountBox),
-        DashboardTabItem(route = Screen.TradeHistory.route, label = stringResource(R.string.trade_history_title), icon = Icons.Default.List),
-        DashboardTabItem(route = Screen.Settings.route, label = "설정", icon = Icons.Default.Settings),
+        DashboardTabItem(route = Screen.Portfolio.route, label = stringResource(R.string.portfolio), icon = DashboardIcons.Portfolio),
+        DashboardTabItem(route = Screen.AssetStatus.route, label = stringResource(R.string.asset_status), icon = DashboardIcons.Assets),
+        DashboardTabItem(route = Screen.TradeHistory.route, label = stringResource(R.string.trade_history_title), icon = DashboardIcons.Trades),
+        DashboardTabItem(route = Screen.Settings.route, label = "설정", icon = Icons.Outlined.Settings),
     )
     val primaryRoutes = remember(primaryTabs) { primaryTabs.map { it.route }.toSet() }
 
@@ -219,8 +216,7 @@ private fun KoreaInvAppContent(themeMode: ThemeMode, onThemeModeChange: (ThemeMo
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .recordNavigationBackdrop(),
+                .fillMaxSize(),
         ) {
             NavHost(
                 navController = navController,

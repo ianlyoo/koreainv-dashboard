@@ -1,6 +1,8 @@
 package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +13,10 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
@@ -112,13 +118,15 @@ internal fun TossAccountPicker(
     Column(modifier.focusable(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(text = "토스 계좌", color = TextSecondary)
         Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
+            TextButton(
                 onClick = { expanded = true },
                 enabled = isEnabled && !isLoading && accounts.size > 1,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                contentPadding = PaddingValues(vertical = 8.dp),
             ) {
                 val selected = accounts.firstOrNull { it.accountSeq == selectedAccountSeq }
                 Text(
+                    modifier = Modifier.weight(1f),
                     text = selected?.displayName
                         ?: when {
                             isLoading -> "계좌 목록 불러오는 중"
@@ -129,6 +137,9 @@ internal fun TossAccountPicker(
                         },
                     color = if (selected != null) TextGold else TextSecondary,
                 )
+                Icon(Icons.Default.ArrowDropDown, contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (selected != null) TextGold else TextSecondary)
             }
             ScreenFilterMenu(
                 expanded = expanded && isEnabled && !isLoading,

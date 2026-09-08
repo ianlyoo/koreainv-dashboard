@@ -5,6 +5,7 @@
             android:name=".UiPreviewActivity"
             android:exported="true"
             android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.KoreaInvDashboard" />
     </application>
 </manifest>

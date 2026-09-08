@@ -2,6 +2,7 @@ package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +14,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -25,6 +27,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.ui.appearance.ThemeMode
 
@@ -41,8 +44,8 @@ fun SettingsScreen(
     onLogoutClick: () -> Unit,
     onBackClick: () -> Unit,
 ) {
-    ScreenBackground {
-        Column(Modifier.fillMaxSize()) {
+    DashboardScaffold(
+        topBar = {
             DashboardTopBar(
                 title = "설정",
                 lastSynced = null,
@@ -50,13 +53,17 @@ fun SettingsScreen(
                     HeaderIconButton(Icons.Default.ArrowBack, "뒤로", onBackClick)
                 },
             )
+        },
+    ) { paddingValues ->
+        ScreenBackground {
             Column(
-                modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp)
-                    .padding(bottom = dashboardBottomContentPadding()),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                    .padding(top = paddingValues.calculateTopPadding() + 8.dp,
+                        bottom = dashboardBottomContentPadding()),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
-                PremiumGlassCard {
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Column(Modifier.selectableGroup()) {
                         SettingsHeading("화면 모드")
                         Text("기기 설정을 따르거나 원하는 화면 모드를 선택하세요.",
@@ -81,14 +88,16 @@ fun SettingsScreen(
                         }
                     }
                 }
-                PremiumGlassCard {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SettingsHeading("계정")
                         SettingsAction("계좌 관리", onManageAccountsClick)
                         SettingsAction("로그아웃", onLogoutClick)
                     }
                 }
-                PremiumGlassCard {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SettingsHeading("앱 정보")
                         Text("현재 버전 $versionName", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -103,6 +112,13 @@ fun SettingsScreen(
                         )
                     }
                 }
+                Text(
+                    text = "© 2026 Youngin",
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }
@@ -116,7 +132,7 @@ private fun SettingsHeading(text: String) {
 
 @Composable
 private fun SettingsAction(label: String, onClick: () -> Unit, enabled: Boolean = true) {
-    TextButton(onClick = onClick, enabled = enabled,
+    TextButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(vertical = 12.dp),
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
         Text(label, modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite })
     }

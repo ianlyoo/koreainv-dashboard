@@ -33,7 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -50,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -67,6 +68,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
@@ -164,13 +166,13 @@ fun PremiumGlassCard(
 @Composable
 fun HeroTopSection(
     modifier: Modifier = Modifier,
+    bottomPadding: Dp = 20.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .liquidGlass(radius = 32.dp)
-            .padding(horizontal = 24.dp, vertical = 28.dp),
+            .padding(top = 24.dp, bottom = bottomPadding),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -183,19 +185,27 @@ fun HeroTopSection(
 @Composable
 fun HeroMetricGroup(
     modifier: Modifier = Modifier,
+    verticalPadding: Dp = 14.dp,
+    showBottomDivider: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(verticalPadding),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(1.dp)
-                .background(SurfaceBorder.copy(alpha = 0.85f)),
+                .background(SurfaceBorder.copy(alpha = 0.5f)),
         )
         content()
+        if (showBottomDivider) {
+            Box(
+                Modifier.fillMaxWidth().height(1.dp)
+                    .background(SurfaceBorder.copy(alpha = 0.5f)),
+            )
+        }
     }
 }
 
@@ -262,7 +272,7 @@ fun HeroMetricRow(
                     modifier = Modifier
                         .width(1.dp)
                         .height(42.dp)
-                        .background(SurfaceBorder.copy(alpha = 0.85f)),
+                        .background(SurfaceBorder.copy(alpha = 0.5f)),
                 )
                 HeroMetricCell(
                     label = secondaryLabel,
@@ -338,6 +348,7 @@ fun HeaderIconButton(
             imageVector = imageVector,
             contentDescription = contentDescription,
             tint = if (enabled) palette.content else TextSecondary,
+            modifier = Modifier.size(21.dp),
         )
     }
 }
@@ -397,11 +408,12 @@ fun PremiumListItem(
     content: @Composable RowScope.() -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val dividerColor = SurfaceBorder.copy(alpha = 0.5f)
     var rowModifier = modifier
         .fillMaxWidth()
-        .glassPressFeedback(interactionSource)
-        .liquidGlass(radius = 24.dp)
-        .clip(RoundedCornerShape(24.dp))
+        .drawBehind {
+            drawLine(dividerColor, Offset(0f, size.height), Offset(size.width, size.height), 0.5.dp.toPx())
+        }
 
     if (onClick != null) {
         rowModifier = rowModifier.clickable(interactionSource = interactionSource, indication = LocalIndication.current, onClick = onClick)
@@ -409,7 +421,7 @@ fun PremiumListItem(
 
     Box(modifier = rowModifier) {
         Row(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+            modifier = Modifier.padding(vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
             content = content,
@@ -471,7 +483,7 @@ fun CompactCurrencyToggle(
 }
 
 @Composable
-fun DashboardPillButton(
+fun DashboardInlineButton(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -483,12 +495,10 @@ fun DashboardPillButton(
     val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
-            .glassPressFeedback(interactionSource)
-            .liquidGlass(radius = 24.dp, role = GlassRole.Control)
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(interactionSource = interactionSource, indication = LocalIndication.current, role = Role.Button, onClick = onClick)
             .heightIn(min = 48.dp)
-            .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = 10.dp),
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (compact) Arrangement.SpaceBetween else Arrangement.spacedBy(6.dp),
     ) {
@@ -513,7 +523,7 @@ fun DashboardPillButton(
 
 @Composable
 fun DashboardSettingsButton(onClick: () -> Unit) {
-    HeaderIconButton(Icons.Default.Settings, "설정", onClick)
+    HeaderIconButton(Icons.Outlined.Settings, "설정", onClick)
 }
 
 @Composable
@@ -530,9 +540,9 @@ internal fun ScreenFilterMenu(
         containerColor = Color.Transparent,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        // Like the floating bar, popups sample content rather than the plain canvas.
-        modifier = Modifier.liquidGlass(radius = 24.dp, role = GlassRole.Navigation,
-            tint = SurfacePrimary.copy(alpha = 0.94f)),
+        // An opaque menu remains legible without another live backdrop recording.
+        modifier = Modifier.liquidGlass(radius = 24.dp, role = GlassRole.Control,
+            tint = SurfacePrimary.copy(alpha = 1f)),
         content = content,
     )
 }
@@ -545,17 +555,22 @@ fun DashboardBottomTabBar(
 ) {
     if (items.isEmpty()) return
     val density = LocalDensity.current
+    val colors = com.koreainv.dashboard.ui.theme.LocalDashboardColors.current
+    val selectionFill = Brush.verticalGradient(listOf(
+        Color.White.copy(alpha = if (colors.isDark) 0.16f else 0.8f),
+        Color.White.copy(alpha = if (colors.isDark) 0.05f else 0.25f),
+    ))
     val measuredHeight = LocalDashboardBottomBarHeight.current
     Box(
         Modifier.fillMaxWidth()
             .onSizeChanged { size -> measuredHeight?.value = with(density) { size.height.toDp() } }
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 24.dp, vertical = 10.dp),
     ) {
         BoxWithConstraints(
             Modifier.fillMaxWidth()
                 .liquidGlass(radius = 34.dp, role = GlassRole.Navigation)
-                .padding(6.dp),
+                .padding(5.dp),
         ) {
             val tabWidth = maxWidth / items.size
             val selectedIndex = items.indexOfFirst { it.route == currentRoute }
@@ -566,10 +581,10 @@ fun DashboardBottomTabBar(
             )
             if (selectedIndex >= 0) {
                 Box(Modifier.matchParentSize()) {
-                    Box(Modifier.offset(x = indicatorOffset).width(tabWidth).fillMaxHeight()
+                    Box(Modifier.offset { IntOffset(with(density) { indicatorOffset.roundToPx() }, 0) }.width(tabWidth).fillMaxHeight()
                         .clip(RoundedCornerShape(28.dp))
-                        .background(SurfaceAccent.copy(alpha = 0.78f))
-                        .border(0.75.dp, SurfaceBorderPrimary.copy(alpha = 0.45f), RoundedCornerShape(28.dp)))
+                        .background(selectionFill)
+                        .border(0.5.dp, Color.White.copy(alpha = if (colors.isDark) 0.14f else 0.6f), RoundedCornerShape(28.dp)))
                 }
             }
             Row(Modifier.fillMaxWidth().selectableGroup()) {
@@ -577,7 +592,7 @@ fun DashboardBottomTabBar(
                     val selected = currentRoute == item.route
                     val interactionSource = remember { MutableInteractionSource() }
                     val foreground by animateColorAsState(
-                        if (selected) TextGold else TextSecondary,
+                        if (selected) colors.primary else TextSecondary,
                         label = "tab foreground",
                     )
                     Column(
@@ -587,10 +602,10 @@ fun DashboardBottomTabBar(
                             .selectable(selected = selected, role = Role.Tab,
                                 interactionSource = interactionSource, indication = LocalIndication.current,
                                 onClick = { onTabSelected(item) })
-                            .heightIn(min = 60.dp)
-                            .padding(horizontal = 2.dp, vertical = 8.dp),
+                            .heightIn(min = 56.dp)
+                            .padding(horizontal = 2.dp, vertical = 7.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+                        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
                     ) {
                         item.icon?.let { Icon(it, null, Modifier.size(22.dp), tint = foreground) }
                         Text(item.label, style = MaterialTheme.typography.labelSmall,
@@ -781,7 +796,7 @@ private fun CurrencyPill(
         modifier = Modifier
             .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) SurfaceAccent else Color.Transparent)
+            .background(if (selected) TextPrimary.copy(alpha = 0.10f) else Color.Transparent)
             .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .semantics { contentDescription = description }
             .padding(horizontal = 12.dp, vertical = 8.dp),

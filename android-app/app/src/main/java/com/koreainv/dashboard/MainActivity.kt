@@ -1,6 +1,7 @@
 package com.koreainv.dashboard
 
 import android.os.Bundle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -15,6 +16,7 @@ import com.koreainv.dashboard.ui.theme.KoreaInvDashboardTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val appearance = AppearancePreference(applicationContext)
         setContent {
             KoreaInvDashboardTheme(darkTheme = appearance.themeMode.isDark(isSystemInDarkTheme())) {
