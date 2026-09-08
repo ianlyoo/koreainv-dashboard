@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.onConsumedWindowInsetsChanged
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,11 +25,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.koreainv.dashboard.ui.theme.LocalDashboardColors
+import com.koreainv.dashboard.ui.LocalDashboardNavigationSource
 
 /**
  * A floating header above a scrolling body. Apply [content]'s padding inside the
@@ -42,9 +46,22 @@ fun DashboardScaffold(
 ) {
     val colors = LocalDashboardColors.current
     val density = LocalDensity.current
-    // The host shares this body-only recording with bottom navigation. Floating
-    // header controls and the bottom bar never become part of their own source.
-    val bodyBackdrop = LocalGlassNavigation.current ?: rememberLayerBackdrop()
+    // Every body keeps one fixed recording. Publishing a guarded source changes
+    // what the bottom bar reads without moving a LayerBackdrop between nodes.
+    val recording = rememberLayerBackdrop()
+    val bodyBackdrop = remember(recording) { DashboardBodyBackdrop(recording) }
+    val navigationBackdrop = LocalGlassNavigation.current
+    val isNavigationSource = LocalDashboardNavigationSource.current
+    SideEffect {
+        if (isNavigationSource) navigationBackdrop?.publish(bodyBackdrop)
+        else navigationBackdrop?.clear(bodyBackdrop)
+    }
+    DisposableEffect(navigationBackdrop, bodyBackdrop) {
+        onDispose {
+            bodyBackdrop.sourceCoordinates = null
+            navigationBackdrop?.clear(bodyBackdrop)
+        }
+    }
     var topBarHeight by remember { mutableStateOf(80.dp) }
     var consumedInsets by remember { mutableStateOf(WindowInsets(0, 0, 0, 0)) }
     val bottomPadding = WindowInsets.safeDrawing.exclude(consumedInsets)
@@ -53,7 +70,12 @@ fun DashboardScaffold(
     Box(modifier.fillMaxSize().onConsumedWindowInsetsChanged { consumedInsets = it }) {
         // The source includes its own opaque canvas, and excludes both scrim and header.
         CompositionLocalProvider(LocalGlassControls provides null) {
-            Box(Modifier.fillMaxSize().layerBackdrop(bodyBackdrop).background(colors.background)) {
+            Box(
+                Modifier.fillMaxSize()
+                    .onGloballyPositioned { bodyBackdrop.sourceCoordinates = it }
+                    .layerBackdrop(recording)
+                    .background(colors.background),
+            ) {
                 content(PaddingValues(top = topBarHeight, bottom = bottomPadding))
             }
         }

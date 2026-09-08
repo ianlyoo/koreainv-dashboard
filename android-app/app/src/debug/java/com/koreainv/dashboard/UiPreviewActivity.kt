@@ -14,13 +14,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.network.*
 import com.koreainv.dashboard.ui.screens.*
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.koreainv.dashboard.ui.DashboardNavigationMotion
+import com.koreainv.dashboard.ui.DashboardNavigationScene
 import com.koreainv.dashboard.ui.theme.KoreaInvDashboardTheme
 import com.koreainv.dashboard.ui.appearance.AppearancePreference
 import com.koreainv.dashboard.ui.appearance.ThemeMode
@@ -47,21 +52,41 @@ class UiPreviewActivity : ComponentActivity() {
                     LocalDashboardBottomBarHeight provides bottomBarHeight,
                     LocalCurrencyPreference provides currencyPreference,
                 ) {
-                    var screen by rememberSaveable { mutableStateOf(initialScreen) }
+                    val navController = rememberNavController()
+                    val navEntry by navController.currentBackStackEntryAsState()
+                    val screen = navEntry?.destination?.route ?: initialScreen
+                    val primaryRoutes = listOf("portfolio", "assets", "trades", "settings")
+                    fun navigatePreview(route: String) {
+                        val currentRoute = navController.currentDestination?.route
+                        if (currentRoute == route) return
+                        navController.navigate(route) {
+                            launchSingleTop = true
+                            if (route in primaryRoutes && currentRoute in primaryRoutes) {
+                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                restoreState = true
+                            }
+                        }
+                    }
                     DashboardGlassHost(background = { if (screen == "unlock") LoginBackdrop() }) {
                         var detailSymbol by rememberSaveable { mutableStateOf("005930") }
                         var detailAccount by rememberSaveable { mutableStateOf<String?>("demo-kis") }
-                        val screenStateHolder = rememberSaveableStateHolder()
                         var detailTrade by remember { mutableStateOf(source.allTrades.first()) }
                         var tradeSession by remember { mutableStateOf(TradeHistorySessionState()) }
-                        val back = { screen = "portfolio" }
-                        val accounts = { screen = "accounts" }
-                        val settings = { screen = "settings" }
+                        val back: () -> Unit = {
+                            if (!navController.popBackStack()) navigatePreview("portfolio")
+                        }
+                        val accounts = { navigatePreview("accounts") }
+                        val settings = { navigatePreview("settings") }
                         var updateNotice by remember { mutableStateOf(false) }
                         var unlockError by remember { mutableStateOf<String?>(null) }
                         var unlockBusy by remember { mutableStateOf(false) }
                         val previewScope = rememberCoroutineScope()
-                        val logout = { screen = "unlock" }
+                        val logout = {
+                            navController.navigate("unlock") {
+                                popUpTo(navController.graph.id) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
                         val tabs = listOf(
                             DashboardTabItem("portfolio", stringResource(R.string.portfolio), DashboardIcons.Portfolio),
                             DashboardTabItem("assets", stringResource(R.string.asset_status), DashboardIcons.Assets),
@@ -69,45 +94,66 @@ class UiPreviewActivity : ComponentActivity() {
                             DashboardTabItem("settings", "설정", Icons.Outlined.Settings),
                         )
                         Box(Modifier.fillMaxSize()) {
-                            Box(Modifier.fillMaxSize()) {
-                            screenStateHolder.SaveableStateProvider(screen) {
-                                when (screen) {
-                                    "portfolio" -> PortfolioScreen(source, source.filters, settings) { symbol, account ->
-                                        detailSymbol = symbol; detailAccount = account; screen = "details"
-                                    }
-                                    "assets" -> AssetStatusScreen(source, settings)
-                                    "trades" -> TradeHistoryScreen(source, source.filters, settings,
-                                        { trade, _, _ -> detailTrade = trade; screen = "trade-details" },
-                                        tradeSession, { tradeSession = it })
-                                    "details" -> HoldingDetailScreen(source, detailSymbol, detailAccount, back)
-                                    "trade-details" -> TradeDetailScreen(detailTrade, 1350.0, SyntheticDashboardSource.SYNC, { screen = "trades" })
-                                    "unlock" -> PinUnlockScreen(
-                                        unlockError ?: if (fixture == "error") "잠금번호가 올바르지 않습니다." else null,
-                                        unlockBusy || fixture == "loading",
-                                    ) { pin ->
-                                        if (!unlockBusy) {
-                                            android.util.Log.i("UiPreviewUnlock", "Synthetic unlock attempt")
-                                            unlockError = null
-                                            unlockBusy = true
-                                            previewScope.launch {
-                                                delay(when (fixture) { "slow-unlock" -> 1500L; "instant-error" -> 0L; else -> 100L })
-                                                if (fixture in listOf("reject", "instant-error") || pin != "1234") {
-                                                    unlockError = "잠금번호가 올바르지 않습니다."
-                                                } else {
-                                                    screen = "portfolio"
+                            NavHost(
+                                navController = navController,
+                                startDestination = initialScreen,
+                                modifier = Modifier.fillMaxSize(),
+                                enterTransition = { DashboardNavigationMotion.enter(
+                                    previewMotionRoute(initialState.destination.route),
+                                    previewMotionRoute(targetState.destination.route)) },
+                                exitTransition = { DashboardNavigationMotion.exit(
+                                    previewMotionRoute(initialState.destination.route),
+                                    previewMotionRoute(targetState.destination.route)) },
+                                popEnterTransition = { DashboardNavigationMotion.enter(
+                                    previewMotionRoute(initialState.destination.route),
+                                    previewMotionRoute(targetState.destination.route), isPop = true) },
+                                popExitTransition = { DashboardNavigationMotion.exit(
+                                    previewMotionRoute(initialState.destination.route),
+                                    previewMotionRoute(targetState.destination.route), isPop = true) },
+                            ) {
+                                (primaryRoutes + listOf("details", "trade-details", "unlock", "accounts", "setup")).forEach { scene ->
+                                    composable(scene) { entry ->
+                                        val targetEntry by navController.currentBackStackEntryAsState()
+                                        DashboardNavigationScene(isNavigationSource = entry.id == targetEntry?.id) {
+                                            when (scene) {
+                                                "portfolio" -> PortfolioScreen(source, source.filters, settings) { symbol, account ->
+                                                    detailSymbol = symbol; detailAccount = account; navigatePreview("details")
                                                 }
-                                                unlockBusy = false
+                                                "assets" -> AssetStatusScreen(source, settings)
+                                                "trades" -> TradeHistoryScreen(source, source.filters, settings,
+                                                    { trade, _, _ -> detailTrade = trade; navigatePreview("trade-details") },
+                                                    tradeSession, { tradeSession = it })
+                                                "details" -> HoldingDetailScreen(source, detailSymbol, detailAccount, back)
+                                                "trade-details" -> TradeDetailScreen(detailTrade, 1350.0, SyntheticDashboardSource.SYNC, back)
+                                                "unlock" -> PinUnlockScreen(
+                                                    unlockError ?: if (fixture == "error") "잠금번호가 올바르지 않습니다." else null,
+                                                    unlockBusy || fixture == "loading",
+                                                ) { pin ->
+                                                    if (!unlockBusy) {
+                                                        android.util.Log.i("UiPreviewUnlock", "Synthetic unlock attempt")
+                                                        unlockError = null
+                                                        unlockBusy = true
+                                                        previewScope.launch {
+                                                            delay(when (fixture) { "slow-unlock" -> 1500L; "instant-error" -> 0L; else -> 100L })
+                                                            if (fixture in listOf("reject", "instant-error") || pin != "1234") {
+                                                                unlockError = "잠금번호가 올바르지 않습니다."
+                                                            } else {
+                                                                navigatePreview("portfolio")
+                                                            }
+                                                            unlockBusy = false
+                                                        }
+                                                    }
+                                                }
+                                                "accounts" -> AccountManagementScreen(source.profile, fixture == "loading",
+                                                    if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
+                                                "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
+                                                "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
+                                                    "1.9.3-preview", false, false, { updateNotice = true }, accounts, logout, back)
+                                                else -> error("Unknown preview screen: $scene")
                                             }
                                         }
                                     }
-                                    "accounts" -> AccountManagementScreen(source.profile, fixture == "loading",
-                                        if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
-                                    "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
-                                    "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
-                                        "1.9.2-preview", false, false, { updateNotice = true }, accounts, logout, back)
-                                    else -> error("Unknown preview screen: $screen")
                                 }
-                            }
                             }
                             if (updateNotice) {
                                 androidx.compose.material3.AlertDialog(onDismissRequest = { updateNotice = false },
@@ -119,7 +165,7 @@ class UiPreviewActivity : ComponentActivity() {
                             }
                             if (screen in tabs.map { it.route }) {
                                 Box(Modifier.align(Alignment.BottomCenter)) {
-                                    DashboardBottomTabBar(tabs, screen) { screen = it.route }
+                                    DashboardBottomTabBar(tabs, screen) { navigatePreview(it.route) }
                                 }
                             }
                         }
@@ -128,6 +174,15 @@ class UiPreviewActivity : ComponentActivity() {
             }
         }
     }
+}
+
+private fun previewMotionRoute(route: String?): String? = when (route) {
+    "assets" -> "asset_status"
+    "trades" -> "trade_history"
+    "details" -> "holding_detail/{symbol}?accountId={accountId}"
+    "trade-details" -> "trade_detail"
+    "accounts" -> "account_management"
+    else -> route
 }
 
 /** All prices, accounts and transactions are fictional and deterministic. */
@@ -187,6 +242,7 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
     private suspend fun checkFixture() {
         android.util.Log.i("UiPreviewFixture", "Synthetic request fixture=$fixture")
         if (fixture == "loading") awaitCancellation()
+        if (fixture == "motion") delay(800L)
         check(fixture != "error" && fixture != "cached-error") { "합성 데이터 오류 — 실제 네트워크 요청 없음" }
     }
     override fun peekDashboard() = if (fixture in listOf("loading", "error")) null else dashboard

@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -188,15 +187,11 @@ fun TradeHistoryScreen(
                         mode = currencyMode,
                         onModeChange = currencyPreference.onModeChange,
                     )
-                    if (isLoading && tradeData != null) {
-                        HeaderLoadingIndicator()
-                    } else {
-                        HeaderIconButton(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = stringResource(R.string.refresh),
-                            onClick = { loadTradeHistory(range = selectedRange, forceRefresh = true) },
-                        )
-                    }
+                    HeaderRefreshButton(
+                        isRefreshing = isLoading,
+                        contentDescription = stringResource(R.string.refresh),
+                        onClick = { loadTradeHistory(range = selectedRange, forceRefresh = true) },
+                    )
                     DashboardSettingsButton(onClick = onSettingsClick)
                 },
             )

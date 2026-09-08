@@ -10,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.HorizontalDivider
@@ -148,15 +147,11 @@ fun HoldingDetailScreen(
                         mode = currencyMode,
                         onModeChange = currencyPreference.onModeChange,
                     )
-                    if (isLoading && holding != null) {
-                        HeaderLoadingIndicator()
-                    } else {
-                        HeaderIconButton(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = stringResource(R.string.refresh),
-                            onClick = { loadHolding(forceRefresh = true) },
-                        )
-                    }
+                    HeaderRefreshButton(
+                        isRefreshing = isLoading,
+                        contentDescription = stringResource(R.string.refresh),
+                        onClick = { loadHolding(forceRefresh = true) },
+                    )
                 },
             )
         },

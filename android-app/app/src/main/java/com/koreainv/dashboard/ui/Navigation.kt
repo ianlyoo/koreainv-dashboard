@@ -2,8 +2,6 @@ package com.koreainv.dashboard.ui
 
 import android.net.Uri
 import kotlinx.coroutines.CancellationException
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NamedNavArgument
 import androidx.navigation.NavHostController
 import com.koreainv.dashboard.ui.screens.LoginBackdrop
 import androidx.navigation.NavType
@@ -177,6 +178,7 @@ private fun KoreaInvAppContent(
     }
 
     fun navigateToPrimaryTab(route: String) {
+        if (navController.currentDestination?.route == route) return
         navController.navigate(route) {
             launchSingleTop = true
             restoreState = true
@@ -230,12 +232,12 @@ private fun KoreaInvAppContent(
             NavHost(
                 navController = navController,
                 startDestination = Screen.Splash.route,
-                enterTransition = { EnterTransition.None },
-                exitTransition = { ExitTransition.None },
-                popEnterTransition = { EnterTransition.None },
-                popExitTransition = { ExitTransition.None },
+                enterTransition = { DashboardNavigationMotion.enter(initialState.destination.route, targetState.destination.route) },
+                exitTransition = { DashboardNavigationMotion.exit(initialState.destination.route, targetState.destination.route) },
+                popEnterTransition = { DashboardNavigationMotion.enter(initialState.destination.route, targetState.destination.route, isPop = true) },
+                popExitTransition = { DashboardNavigationMotion.exit(initialState.destination.route, targetState.destination.route, isPop = true) },
             ) {
-                composable(Screen.Splash.route) {
+                dashboardComposable(navController, Screen.Splash.route) {
                     var isChecking by remember { mutableStateOf(true) }
 
                     LaunchedEffect(Unit) {
@@ -258,7 +260,7 @@ private fun KoreaInvAppContent(
                     }
                 }
 
-                composable(Screen.Setup.route) {
+                dashboardComposable(navController, Screen.Setup.route) {
                     SetupScreen(
                         settingsManager = settingsManager,
                         onSetupSuccess = { profile ->
@@ -271,7 +273,7 @@ private fun KoreaInvAppContent(
                     )
                 }
 
-                composable(Screen.Unlock.route) {
+                dashboardComposable(navController, Screen.Unlock.route) {
                     var errorMessage by remember { mutableStateOf<String?>(null) }
                     var isUnlocking by remember { mutableStateOf(false) }
 
@@ -307,7 +309,7 @@ private fun KoreaInvAppContent(
                     )
                 }
 
-                composable(Screen.Portfolio.route) {
+                dashboardComposable(navController, Screen.Portfolio.route) {
                     val activeRepository = repository
                     if (activeRepository == null) {
                         LaunchedEffect(Unit) {
@@ -327,7 +329,7 @@ private fun KoreaInvAppContent(
                     }
                 }
 
-                composable(Screen.AssetStatus.route) {
+                dashboardComposable(navController, Screen.AssetStatus.route) {
                     val activeRepository = repository
                     if (activeRepository == null) {
                         LaunchedEffect(Unit) { navController.navigate(Screen.Unlock.route) }
@@ -339,7 +341,7 @@ private fun KoreaInvAppContent(
                     }
                 }
 
-                composable(Screen.TradeHistory.route) {
+                dashboardComposable(navController, Screen.TradeHistory.route) {
                     val activeRepository = repository
                     if (activeRepository == null) {
                         LaunchedEffect(Unit) { navController.navigate(Screen.Unlock.route) }
@@ -360,7 +362,7 @@ private fun KoreaInvAppContent(
                     }
                 }
 
-                composable(Screen.TradeDetail.route) {
+                dashboardComposable(navController, Screen.TradeDetail.route) {
                     val trade = selectedTrade
                     if (trade == null) {
                         LaunchedEffect(Unit) { navController.popBackStack() }
@@ -374,7 +376,7 @@ private fun KoreaInvAppContent(
                     }
                 }
 
-                composable(Screen.Settings.route) {
+                dashboardComposable(navController, Screen.Settings.route) {
                     if (unlockedProfile == null) {
                         LaunchedEffect(Unit) {
                             navController.navigate(Screen.Unlock.route) {
@@ -401,7 +403,7 @@ private fun KoreaInvAppContent(
                         )
                     }
                 }
-                composable(Screen.AccountManagement.route) {
+                dashboardComposable(navController, Screen.AccountManagement.route) {
                     val profile = unlockedProfile
                     if (profile == null) {
                         LaunchedEffect(Unit) { navController.navigate(Screen.Unlock.route) }
@@ -444,7 +446,8 @@ private fun KoreaInvAppContent(
                     }
                 }
 
-                composable(
+                dashboardComposable(
+                    navController = navController,
                     route = Screen.HoldingDetail.route,
                     arguments = listOf(
                         navArgument("symbol") { type = NavType.StringType },
@@ -577,4 +580,19 @@ private fun AccountProfile?.orEmptyAccountFilters(): List<HoldingAccountFilter> 
 
 internal fun shouldCloseUpdateDialog(policy: ReleasePolicy, launchedInstaller: Boolean): Boolean {
     return launchedInstaller || policy != ReleasePolicy.MANDATORY
+}
+
+/** Give shared glass recording to the target entry, including interrupted transitions. */
+private fun NavGraphBuilder.dashboardComposable(
+    navController: NavHostController,
+    route: String,
+    arguments: List<NamedNavArgument> = emptyList(),
+    content: @Composable (NavBackStackEntry) -> Unit,
+) {
+    composable(route = route, arguments = arguments) { entry ->
+        val targetEntry by navController.currentBackStackEntryAsState()
+        DashboardNavigationScene(isNavigationSource = entry.id == targetEntry?.id) {
+            content(entry)
+        }
+    }
 }

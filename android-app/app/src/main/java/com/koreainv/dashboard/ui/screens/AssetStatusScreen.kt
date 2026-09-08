@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
@@ -103,15 +102,11 @@ fun AssetStatusScreen(
                 title = stringResource(R.string.asset_status),
                 lastSynced = dashboardData?.summary?.lastSynced,
                 actions = {
-                    if (isLoading && dashboardData != null) {
-                        HeaderLoadingIndicator()
-                    } else {
-                        HeaderIconButton(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = stringResource(R.string.refresh),
-                            onClick = { loadDashboard(forceRefresh = true) },
-                        )
-                    }
+                    HeaderRefreshButton(
+                        isRefreshing = isLoading,
+                        contentDescription = stringResource(R.string.refresh),
+                        onClick = { loadDashboard(forceRefresh = true) },
+                    )
                     DashboardSettingsButton(onClick = onSettingsClick)
                 },
             )
