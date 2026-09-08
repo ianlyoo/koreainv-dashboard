@@ -31,6 +31,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.input.KeyboardType
@@ -125,6 +126,10 @@ fun SetupScreen(
         errorMessage = errorMessage,
     ) {
         accounts.forEachIndexed { index, account ->
+            if (index > 0) {
+                Divider(color = SurfaceBorder.copy(alpha = 0.5f))
+                Spacer(modifier = Modifier.height(24.dp))
+            }
             key(account.uiId, account.broker) {
                 AccountSection(
                     index = index,
@@ -151,7 +156,7 @@ fun SetupScreen(
                         }
                     },
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
         if (removedDrafts.isNotEmpty()) {
@@ -200,7 +205,7 @@ fun SetupScreen(
         Button(
             onClick = ::submit,
             enabled = !isLoading,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
             colors = ButtonDefaults.buttonColors(containerColor = TextGold),
         ) {
             Text(text = stringResource(R.string.complete_setup), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleMedium)
@@ -221,143 +226,140 @@ private fun AccountSection(
     onRemove: () -> Unit,
 ) {
     val lookupInput = managedTossLookupInput(account, null)
-    PremiumGlassCard {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).alignByBaseline(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = stringResource(R.string.account_section_title, index + 1),
+                    modifier = Modifier.semantics { heading() },
+                    style = MaterialTheme.typography.titleLarge,
+                    color = TextPrimary,
+                )
+                if (isPrimary) {
                     Text(
-                        text = stringResource(R.string.account_section_title, index + 1),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary,
+                        text = stringResource(R.string.primary_account),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextGold,
                     )
-                    if (isPrimary) {
-                        Text(
-                            text = stringResource(R.string.primary_account),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextGold,
-                        )
-                    }
-                }
-                if (isRemovable) {
-                    TextButton(onClick = onRemove, enabled = isEnabled) {
-                        Text(text = stringResource(R.string.remove_account), color = TextSecondary)
-                    }
                 }
             }
-            Spacer(modifier = Modifier.height(14.dp))
-            Divider(color = SurfaceBorder)
-            Spacer(modifier = Modifier.height(14.dp))
-            SetupField(
-                isEnabled = isEnabled,
-                value = account.label,
-                onValueChange = { onUpdate { current -> current.copy(label = it) } },
-                label = "계좌 이름 (선택)",
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            BrokerSelector(
-                broker = account.broker,
-                isEnabled = isEnabled,
-                onChange = { broker -> onUpdate { it.changeBroker(broker) } },
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            if (account.broker == Broker.TOSS) {
-                TossConnectionSelector(
-                    useProxy = account.useTossProxy,
-                    isEnabled = isEnabled,
-                    onChange = { useProxy -> onUpdate { it.changeConnection(useProxy) } },
-                )
-                if (account.useTossProxy) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    SetupField(
-                        isEnabled = isEnabled,
-                        value = account.proxyBaseUrlInput,
-                        errorMessage = issues.messageFor(account.uiId, AccountFormField.PROXY_URL),
-                        modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_URL)),
-                        onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_URL, it, null) } },
-                        label = "개인 서버 주소",
-                        keyboardType = KeyboardType.Uri,
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    SetupField(
-                        isEnabled = isEnabled,
-                        value = account.proxyApiTokenInput,
-                        errorMessage = issues.messageFor(account.uiId, AccountFormField.PROXY_TOKEN),
-                        modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_TOKEN)),
-                        onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_TOKEN, it, null) } },
-                        label = "서버 인증 토큰",
-                        isSecret = true,
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+            if (isRemovable) {
+                TextButton(onClick = onRemove, enabled = isEnabled, modifier = Modifier.alignByBaseline()) {
+                    Text(text = stringResource(R.string.remove_account), color = TextSecondary)
                 }
             }
-            SetupField(
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+        SetupField(
+            isEnabled = isEnabled,
+            value = account.label,
+            onValueChange = { onUpdate { current -> current.copy(label = it) } },
+            label = "계좌 이름 (선택)",
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        BrokerSelector(
+            broker = account.broker,
+            isEnabled = isEnabled,
+            onChange = { broker -> onUpdate { it.changeBroker(broker) } },
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        if (account.broker == Broker.TOSS) {
+            TossConnectionSelector(
+                useProxy = account.useTossProxy,
                 isEnabled = isEnabled,
-                value = account.appKeyInput,
-                errorMessage = issues.messageFor(account.uiId, AccountFormField.KEY),
-                modifier = Modifier.focusRequester(focusFor(AccountFormField.KEY)),
-                onValueChange = {
-                    onUpdate { current -> current.changeLookupField(AccountFormField.KEY, it, null) }
-                },
-                label = if (account.broker == Broker.TOSS) "연결 ID" else "앱 키",
-                isSecret = true,
-                supportingText = "선택한 증권사에서 발급한 연결 정보를 입력하세요.",
+                onChange = { useProxy -> onUpdate { it.changeConnection(useProxy) } },
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            SetupField(
-                isEnabled = isEnabled,
-                value = account.appSecretInput,
-                errorMessage = issues.messageFor(account.uiId, AccountFormField.SECRET),
-                modifier = Modifier.focusRequester(focusFor(AccountFormField.SECRET)),
-                onValueChange = {
-                    onUpdate { current -> current.changeLookupField(AccountFormField.SECRET, it, null) }
-                },
-                label = if (account.broker == Broker.TOSS) "연결 비밀키" else "앱 시크릿",
-                isSecret = true,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            if (account.broker == Broker.TOSS) {
-                TossAccountPicker(
-                    lookupInput = lookupInput,
-                    useProxy = account.useTossProxy,
-                    selectedAccountSeq = account.cano,
-                    validationMessage = issues.messageFor(account.uiId, AccountFormField.ACCOUNT),
-                    modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
-                    isEnabled = isEnabled,
-                    onAccountSelected = { accountSeq ->
-                        onUpdate { current -> if (managedTossLookupInput(current, null) == lookupInput) current.copy(cano = accountSeq) else current }
-                    },
-                )
-            } else {
+            if (account.useTossProxy) {
+                Spacer(modifier = Modifier.height(12.dp))
                 SetupField(
                     isEnabled = isEnabled,
-                    value = account.cano,
-                    errorMessage = issues.messageFor(account.uiId, AccountFormField.ACCOUNT),
-                    modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
-                    onValueChange = {
-                        onUpdate { current -> current.copy(cano = asciiDigits(it, ACCOUNT_NUMBER_LENGTH)) }
-                    },
-                    label = "계좌번호 앞 8자리",
-                    supportingText = "숫자 8자리 · 하이픈 없이 입력",
-                    keyboardType = KeyboardType.Number,
+                    value = account.proxyBaseUrlInput,
+                    errorMessage = issues.messageFor(account.uiId, AccountFormField.PROXY_URL),
+                    modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_URL)),
+                    onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_URL, it, null) } },
+                    label = "개인 서버 주소",
+                    keyboardType = KeyboardType.Uri,
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 SetupField(
                     isEnabled = isEnabled,
-                    value = account.acntPrdtCd,
-                    errorMessage = issues.messageFor(account.uiId, AccountFormField.PRODUCT),
-                    modifier = Modifier.focusRequester(focusFor(AccountFormField.PRODUCT)),
-                    onValueChange = {
-                        onUpdate { current -> current.copy(acntPrdtCd = asciiDigits(it, ACCOUNT_PRODUCT_CODE_LENGTH)) }
-                    },
-                    label = "계좌번호 뒤 2자리",
-                    supportingText = "계좌의 상품 코드입니다. 예: 01",
-                    keyboardType = KeyboardType.Number,
+                    value = account.proxyApiTokenInput,
+                    errorMessage = issues.messageFor(account.uiId, AccountFormField.PROXY_TOKEN),
+                    modifier = Modifier.focusRequester(focusFor(AccountFormField.PROXY_TOKEN)),
+                    onValueChange = { onUpdate { current -> current.changeLookupField(AccountFormField.PROXY_TOKEN, it, null) } },
+                    label = "서버 인증 토큰",
+                    isSecret = true,
                 )
+                Spacer(modifier = Modifier.height(12.dp))
             }
+        }
+        SetupField(
+            isEnabled = isEnabled,
+            value = account.appKeyInput,
+            errorMessage = issues.messageFor(account.uiId, AccountFormField.KEY),
+            modifier = Modifier.focusRequester(focusFor(AccountFormField.KEY)),
+            onValueChange = {
+                onUpdate { current -> current.changeLookupField(AccountFormField.KEY, it, null) }
+            },
+            label = if (account.broker == Broker.TOSS) "연결 ID" else "앱 키",
+            isSecret = true,
+            supportingText = "선택한 증권사에서 발급한 연결 정보를 입력하세요.",
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        SetupField(
+            isEnabled = isEnabled,
+            value = account.appSecretInput,
+            errorMessage = issues.messageFor(account.uiId, AccountFormField.SECRET),
+            modifier = Modifier.focusRequester(focusFor(AccountFormField.SECRET)),
+            onValueChange = {
+                onUpdate { current -> current.changeLookupField(AccountFormField.SECRET, it, null) }
+            },
+            label = if (account.broker == Broker.TOSS) "연결 비밀키" else "앱 시크릿",
+            isSecret = true,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        if (account.broker == Broker.TOSS) {
+            TossAccountPicker(
+                lookupInput = lookupInput,
+                useProxy = account.useTossProxy,
+                selectedAccountSeq = account.cano,
+                validationMessage = issues.messageFor(account.uiId, AccountFormField.ACCOUNT),
+                modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
+                isEnabled = isEnabled,
+                onAccountSelected = { accountSeq ->
+                    onUpdate { current -> if (managedTossLookupInput(current, null) == lookupInput) current.copy(cano = accountSeq) else current }
+                },
+            )
+        } else {
+            SetupField(
+                isEnabled = isEnabled,
+                value = account.cano,
+                errorMessage = issues.messageFor(account.uiId, AccountFormField.ACCOUNT),
+                modifier = Modifier.focusRequester(focusFor(AccountFormField.ACCOUNT)),
+                onValueChange = {
+                    onUpdate { current -> current.copy(cano = asciiDigits(it, ACCOUNT_NUMBER_LENGTH)) }
+                },
+                label = "계좌번호 앞 8자리",
+                supportingText = "숫자 8자리 · 하이픈 없이 입력",
+                keyboardType = KeyboardType.Number,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            SetupField(
+                isEnabled = isEnabled,
+                value = account.acntPrdtCd,
+                errorMessage = issues.messageFor(account.uiId, AccountFormField.PRODUCT),
+                modifier = Modifier.focusRequester(focusFor(AccountFormField.PRODUCT)),
+                onValueChange = {
+                    onUpdate { current -> current.copy(acntPrdtCd = asciiDigits(it, ACCOUNT_PRODUCT_CODE_LENGTH)) }
+                },
+                label = "계좌번호 뒤 2자리",
+                supportingText = "계좌의 상품 코드입니다. 예: 01",
+                keyboardType = KeyboardType.Number,
+            )
         }
     }
 }

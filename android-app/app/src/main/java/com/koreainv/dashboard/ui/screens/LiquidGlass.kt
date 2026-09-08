@@ -45,11 +45,15 @@ internal enum class GlassRole { Panel, Control, Navigation }
 
 /** One body recording feeds floating controls and navigation; ordinary surfaces stay flat. */
 @Composable
-fun DashboardGlassHost(content: @Composable () -> Unit) {
+fun DashboardGlassHost(
+    background: @Composable () -> Unit = {},
+    content: @Composable () -> Unit,
+) {
     val navigation = rememberLayerBackdrop()
     val colors = LocalDashboardColors.current
     CompositionLocalProvider(LocalGlassNavigation provides navigation) {
         Box(Modifier.fillMaxSize().background(colors.background)) {
+            background()
             // Paint through the status bar, while keeping controls clear of system UI/cutouts.
             Box(Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))

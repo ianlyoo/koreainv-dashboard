@@ -2,6 +2,7 @@ package com.koreainv.dashboard.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -10,20 +11,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.R
 import com.koreainv.dashboard.network.Trade
-import com.koreainv.dashboard.ui.theme.Background
 import com.koreainv.dashboard.ui.theme.Error
 import com.koreainv.dashboard.ui.theme.Success
-import com.koreainv.dashboard.ui.theme.TextGold
 import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.ui.theme.TextSecondary
 import java.text.NumberFormat
@@ -41,11 +39,10 @@ fun TradeDetailScreen(
     val currencyPreference = rememberCurrencyPreference()
     val currencyMode = currencyPreference.mode
     val isBuy = trade.side == stringResource(R.string.buy)
-    val sideTone = if (isBuy) AccentTone.Positive else AccentTone.Negative
     val sideColor = if (isBuy) Success else Error
     val hasSupplementaryMetrics = trade.realizedProfitKrw != null || trade.returnRate != null
 
-    Scaffold(
+    DashboardScaffold(
         topBar = {
             DashboardTopBar(
                 title = stringResource(R.string.trade_detail),
@@ -62,18 +59,17 @@ fun TradeDetailScreen(
                 },
             )
         },
-        containerColor = Color.Transparent,
     ) { paddingValues ->
-        ScreenBackground(modifier = Modifier.padding(paddingValues)) {
+        ScreenBackground {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                    .padding(start = 20.dp, end = 20.dp, top = paddingValues.calculateTopPadding() + 8.dp, bottom = paddingValues.calculateBottomPadding() + 32.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 HeroTopSection {
-                    SurfaceBadge(label = trade.side, tone = sideTone)
+                    Text(trade.side, style = MaterialTheme.typography.labelLarge, color = sideColor)
                     Text(
                         text = trade.accountLabel.takeIf(String::isNotBlank) ?: "계좌 이름 없음",
                         style = MaterialTheme.typography.bodyMedium,
@@ -95,7 +91,7 @@ fun TradeDetailScreen(
                     FullMonetaryValue(
                         label = "${stringResource(R.string.trade_amount)} (${currencyMode.name})",
                         value = formatTradeAmount(trade, currencyMode, usdRate),
-                        valueColor = TextGold,
+                        valueColor = TextPrimary,
                     )
                     HeroMetricGroup {
                         ResponsiveDetailRow("거래 수량", formatWholeNumber(trade.quantity))
@@ -103,7 +99,8 @@ fun TradeDetailScreen(
                     }
                 }
 
-                PremiumGlassCard {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         ResponsiveDetailRow(stringResource(R.string.trade_type), trade.side, valueColor = sideColor)
                         ResponsiveDetailRow(stringResource(R.string.trade_date), trade.date)
@@ -115,7 +112,8 @@ fun TradeDetailScreen(
                 }
 
                 if (hasSupplementaryMetrics) {
-                    PremiumGlassCard {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             trade.realizedProfitKrw?.let {
                                 ResponsiveDetailRow(
