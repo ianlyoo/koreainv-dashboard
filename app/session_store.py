@@ -48,10 +48,6 @@ class AccountCredential:
             broker=safe_broker,
         )
 
-    @property
-    def supports_orders(self) -> bool:
-        return self.broker == "kis"
-
     def masked_metadata(self) -> dict[str, object]:
         key = self.app_key
         if len(key) > 8:
@@ -73,7 +69,6 @@ class AccountCredential:
             "broker": self.broker,
             "broker_name": "토스증권" if self.broker == "toss" else "한국투자증권",
             "account_ref_label": "계좌 순번" if self.broker == "toss" else "계좌번호",
-            "supports_orders": self.supports_orders,
         }
 
 

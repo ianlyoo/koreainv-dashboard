@@ -1,34 +1,26 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="dark">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Korea Investment Dashboard - Login</title>
+    <script src="/static/js/theme.js?v=__ASSET_VERSION__"></script>
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="/img/fa82e0f8872e03ff459435036237a46d.ico">
 
-    <link rel="stylesheet" href="/static/css/login.css">
+    <link rel="stylesheet" href="/static/css/login.css?v=__ASSET_VERSION__">
 </head>
 
 <body>
-    <div class="cosmic-bg" aria-hidden="true">
-        <div class="cosmic-gradient"></div>
-        <div class="space-grid"></div>
-        <div class="dust-layer dust-layer-1"></div>
-        <div class="dust-layer dust-layer-2"></div>
-        <div class="nebula nebula-1"></div>
-        <div class="nebula nebula-2"></div>
-        <div class="nebula nebula-3"></div>
-        <div class="aurora aurora-1"></div>
-        <div class="aurora aurora-2"></div>
-        <div class="light-column light-column-1"></div>
-        <div class="light-column light-column-2"></div>
-        <div class="orbital-ring orbital-ring-1"></div>
-        <div class="orbital-ring orbital-ring-2"></div>
-        <canvas id="starfield"></canvas>
-        <div class="vignette"></div>
-    </div>
+    <label class="appearance-control" for="appearanceMode">
+        <span>화면 테마</span>
+        <select id="appearanceMode" aria-label="화면 테마">
+            <option value="system">시스템</option>
+            <option value="light">라이트</option>
+            <option value="dark">다크</option>
+        </select>
+    </label>
 
     <div class="login-stage">
         <div class="login-aura" aria-hidden="true"></div>
@@ -40,7 +32,7 @@
                 <div class="logo-icon" aria-hidden="true">
                     <img src="/img/fa82e0f8872e03ff459435036237a46d.jpg" alt="" class="app-brand-icon">
                 </div>
-                <h1>Welcome to Dashboard</h1>
+                <h1>계좌 연결</h1>
                 <p>하나 이상의 한국투자증권 계좌 정보와<br>간편비밀번호(PIN)를 설정합니다.</p>
             </div>
             <form id="setup-form" onsubmit="handleSetup(event)" novalidate>
@@ -74,7 +66,7 @@
                 <div class="logo-icon" aria-hidden="true">
                     <img src="/img/fa82e0f8872e03ff459435036237a46d.jpg" alt="" class="app-brand-icon">
                 </div>
-                <h1>Welcome Back</h1>
+                <h1>로그인</h1>
                 <p>설정하신 간편비밀번호(PIN)를 입력하세요.</p>
             </div>
             <form id="login-form" onsubmit="handleLogin(event)">
@@ -93,11 +85,11 @@
         </div>
     </div>
 
-    <script src="/static/js/login.js"></script>
+    <script src="/static/js/login.js?v=__ASSET_VERSION__"></script>
 
     <!-- Footer -->
     <div
-        style="position: fixed; bottom: 12px; width: 100%; text-align: center; color: rgba(255,255,255,0.3); font-size: 11px; z-index: 9999; pointer-events: none;">
+        style="position: fixed; bottom: 12px; width: 100%; text-align: center; color: var(--text-muted); font-size: 11px; z-index: 9999; pointer-events: none;">
         © Youngin all rights reserved.
     </div>
 </body>

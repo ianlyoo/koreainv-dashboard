@@ -8,19 +8,16 @@ A personal dashboard that shows your Korea Investment & Securities portfolio, as
 and trade history in one place. It bundles a desktop/web app, an Android app, and a
 GitHub Releases-based update pipeline.
 
-**This project is not read-only.** It includes a central scheduled-order server slice
-for small (1–2 user) setups, and actual KIS order execution runs only when explicitly
-enabled with `CENTRAL_ORDER_EXECUTION_ENABLED`. It does nothing unless you turn it on.
+The dashboard is read-only for broker operations. It supports portfolio, balance,
+market and historical execution queries. Order registration, submission, scheduling,
+modification and cancellation are not supported.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A[Desktop / web app<br/>app/] --> C[Central scheduled-order server<br/>optional · gated]
-    B[Android app<br/>android-app/] --> C
-    C -- "only when<br/>CENTRAL_ORDER_EXECUTION_ENABLED=true" --> D[KIS Open API]
-    A --> D
-    B --> D
+    A[Desktop / web app<br/>app/] --> D[KIS Open API - read only]
+    B[Android app<br/>android-app/] --> D
 ```
 
 ## Quick start
@@ -57,7 +54,6 @@ unlock with it afterward.
 | Cash and buying power | Yes | Not exposed by the API |
 | Trade executions | Yes, for every registered account | Yes, from closed orders |
 | Realized P/L | Yes, for every registered account | Estimated from full closed-order history |
-| Scheduled orders | First KIS account | No |
 
 Trade history defaults to the integrated view and can be filtered by account on both web and Android. Toss realized P/L is explicitly marked as an estimate: the app rebuilds moving-average cost basis from the full closed-order history and includes execution commission and tax. Sells without sufficient purchase history (for example, transferred-in shares or corporate actions) remain unpriced and are counted as incomplete. USD estimates use the exchange rate available at lookup time and may differ from official brokerage or tax records.
 
@@ -65,44 +61,16 @@ Trade history defaults to the integrated view and can be filtered by account on 
 
 For Android mobile-data networks without a fixed public IP, an Oracle/VPS instance can relay read-only Toss requests. It supports account discovery, holdings, exchange rates, and closed-order execution history. It does not expose order create/modify/cancel operations and does not persist Toss credentials on disk.
 
-## Central scheduled-order server (optional)
-
-A central scheduled-order server slice is included for 1–2 user setups.
-
-- Enable server mode with `CENTRAL_ORDER_SERVER_MODE=true`.
-- Remote clients authenticate with `CENTRAL_ORDER_SERVER_TOKEN`.
-- Stored execution credentials are encrypted with `CENTRAL_ORDER_MASTER_KEY` (Fernet).
-- Due orders are polled every `CENTRAL_ORDER_POLL_INTERVAL_SECONDS` by an in-process worker.
-- **Actual KIS execution is gated solely by `CENTRAL_ORDER_EXECUTION_ENABLED=true`.**
-- Scheduled orders are stored in `scheduled_orders.json` under the writable user-data directory.
-- Starter systemd unit: `scripts/koreainv-dashboard-central.service.example`
-
 ## Configuration reference
 
-| Environment variable | Required | Description |
-|---|---|---|
-| `CENTRAL_ORDER_SERVER_MODE` |  | Enables central server mode |
-| `CENTRAL_ORDER_SERVER_TOKEN` | in server mode | Remote client auth token |
-| `CENTRAL_ORDER_MASTER_KEY` | in server mode | Fernet key encrypting stored credentials |
-| `CENTRAL_ORDER_EXECUTION_ENABLED` |  | Gate for actual KIS order execution (off by default) |
-| `CENTRAL_ORDER_POLL_INTERVAL_SECONDS` |  | Due-order polling interval |
-| `CENTRAL_ORDER_REMOTE_URL` |  | Central server URL a desktop client forwards orders to |
-| `CENTRAL_ORDER_REMOTE_TOKEN` |  | Token for remote forwarding |
-| `COOKIE_SECURE` |  | `true` when deployed behind HTTPS |
-
-### Oracle Ubuntu deployment notes
-
-1. Generate a Fernet key for `CENTRAL_ORDER_MASTER_KEY`.
-2. Set `COOKIE_SECURE=true`.
-3. Run behind an HTTPS reverse proxy (Nginx/Caddy) and keep `CENTRAL_ORDER_SERVER_TOKEN` private.
-4. Set `CENTRAL_ORDER_REMOTE_URL`/`CENTRAL_ORDER_REMOTE_TOKEN` on desktop clients that forward to the central server.
+See `.env.example` for broker endpoints and optional Toss read-proxy settings.
+Set `COOKIE_SECURE=true` when deploying behind HTTPS.
 
 ## Security
 
-- Because an order-execution path exists, `CENTRAL_ORDER_EXECUTION_ENABLED` is enabled only when you deliberately turn it on.
-- Stored execution credentials are encrypted at rest with `CENTRAL_ORDER_MASTER_KEY`.
+- Account credentials remain protected by the existing local PIN storage.
 - Never share API keys, account numbers, PINs, or config files.
-- Expose the central server only behind HTTPS and keep the server token private.
+- Deploy the optional Toss read proxy behind HTTPS and keep its token private.
 
 ## Releases
 

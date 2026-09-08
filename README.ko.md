@@ -27,7 +27,7 @@ bun run build
 python3 -m app.main
 ```
 
-KIS와 Google Sheets 인증은 env로 주입한다. 인증 없이는 데모 모드로 동작하며 실제 주문은 실행되지 않는다.
+앱의 초기 설정 화면에서 계좌 인증 정보를 입력한다. 대시보드는 포트폴리오, 잔고, 시세와 과거 체결 내역을 조회한다.
 
 ## 포트폴리오 추적과 주식 대시보드 사용 사례
 
@@ -35,17 +35,14 @@ KIS와 Google Sheets 인증은 env로 주입한다. 인증 없이는 데모 모�
 - stock-dashboard에서 KRW/USD 전환과 300초 캐시로 finance 현황을 본다.
 - Google Sheets를 watchlist와 배분 노트의 기준으로 ops 워크플로를 운영한다.
 
-중앙 예약 서버는 기본 off이며 `CENTRAL_ORDER_EXECUTION_ENABLED=true`일 때만 동작한다.
+증권사 데이터 조회 전용 대시보드다. 주문 등록·제출·예약·수정·취소 기능은 제공하지 않는다.
 
 ## 아키텍처: kis-api와 모니터링 파이프라인
 
 ```mermaid
 flowchart LR
-    A[Desktop / Web] --> C[중앙 예약 서버 - gated]
-    B[Android] --> C
-    C -- "CENTRAL_ORDER_EXECUTION_ENABLED=true" --> D[KIS Open API]
-    A --> D
-    B --> D
+    A[Desktop / Web] --> D[KIS Open API - 조회 전용]
+    B[Android] --> D
 ```
 
 흐름은 `집계 → 정규화 → Google Sheets ops → 모니터링 insight`이며 모든 계산은 결정론적이다.

@@ -75,7 +75,6 @@ class KisRepository(
     private val quoteRefreshMutex = Mutex()
     private val tradeHistoryCacheMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
-    private val centralOrderClient by lazy { CentralOrderClient(client) }
     private val tokenAliases = AuthTokenAliases(accounts)
     private val tokenCoordinator = AuthTokenCoordinator(
         load = { settingsManager.loadAuthToken(tokenAliases.scopesFor(it)) },
@@ -152,13 +151,6 @@ class KisRepository(
 
     fun close() {
         usQuoteService?.close()
-    }
-
-    suspend fun submitScheduledDomesticOrder(
-        request: ScheduledDomesticOrderRequest,
-    ): ScheduledOrderSummary = withContext(Dispatchers.IO) {
-        // Scheduled orders execute on the primary account.
-        centralOrderClient.submitScheduledDomesticOrder(primaryAccount.toAppCredentials(), request)
     }
 
     private suspend fun loadAccountDashboard(account: AccountCredential): AccountDashboardPayload = coroutineScope {

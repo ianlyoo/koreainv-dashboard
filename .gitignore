@@ -42,3 +42,6 @@ android-app/release-keystore.jks
 # Local screenshots and issue dumps
 temp/
 .omx/
+
+# Browser QA screenshots, recordings and frozen baselines
+output/playwright/

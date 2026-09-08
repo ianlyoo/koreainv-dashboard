@@ -11,15 +11,6 @@ def _as_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _as_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
 APP_KEY = os.getenv("APP_KEY", "")
 APP_SECRET = os.getenv("APP_SECRET", "")
 URL_BASE = os.getenv("URL_BASE", "https://openapi.koreainvestment.com:9443")
@@ -28,14 +19,12 @@ CANO = os.getenv("CANO", "")
 ACNT_PRDT_CD = os.getenv("ACNT_PRDT_CD", "01")
 TRADE_MODE = os.getenv("TRADE_MODE", "live")  # "paper" or "live"
 PAPER_URL_BASE = os.getenv("PAPER_URL_BASE", "https://openapivts.koreainvestment.com:29443")
-CENTRAL_ORDER_SERVER_MODE = _as_bool("CENTRAL_ORDER_SERVER_MODE", False)
-CENTRAL_ORDER_EXECUTION_ENABLED = _as_bool("CENTRAL_ORDER_EXECUTION_ENABLED", False)
-CENTRAL_ORDER_SERVER_TOKEN = os.getenv("CENTRAL_ORDER_SERVER_TOKEN", "").strip()
-CENTRAL_ORDER_MASTER_KEY = os.getenv("CENTRAL_ORDER_MASTER_KEY", "").strip()
-CENTRAL_ORDER_REMOTE_URL = os.getenv("CENTRAL_ORDER_REMOTE_URL", "").strip().rstrip("/")
-CENTRAL_ORDER_REMOTE_TOKEN = os.getenv("CENTRAL_ORDER_REMOTE_TOKEN", "").strip()
-CENTRAL_ORDER_POLL_INTERVAL_SECONDS = _as_int("CENTRAL_ORDER_POLL_INTERVAL_SECONDS", 5)
 TOSS_PROXY_SERVER_ENABLED = _as_bool("TOSS_PROXY_SERVER_ENABLED", False)
 TOSS_PROXY_SERVER_TOKEN = os.getenv("TOSS_PROXY_SERVER_TOKEN", "").strip()
 TOSS_PROXY_REMOTE_URL = os.getenv("TOSS_PROXY_REMOTE_URL", "").strip().rstrip("/")
 TOSS_PROXY_REMOTE_TOKEN = os.getenv("TOSS_PROXY_REMOTE_TOKEN", "").strip()
+
+# Server-only credentials. Session cookies are kept in process memory.
+SAVETICKER_EMAIL = os.getenv("SAVETICKER_EMAIL", "").strip()
+SAVETICKER_PASSWORD = os.getenv("SAVETICKER_PASSWORD", "")
+SAVETICKER_ENABLED = _as_bool("SAVETICKER_ENABLED", True)

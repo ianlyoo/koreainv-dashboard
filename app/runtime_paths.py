@@ -41,7 +41,3 @@ def get_logs_dir() -> str:
     logs_dir = os.path.join(get_user_data_dir(), "logs")
     os.makedirs(logs_dir, exist_ok=True)
     return logs_dir
-
-
-def get_scheduled_orders_path() -> str:
-    return os.path.join(get_user_data_dir(), "scheduled_orders.json")
