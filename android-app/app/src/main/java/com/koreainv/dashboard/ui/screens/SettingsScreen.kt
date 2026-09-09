@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -19,9 +22,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -93,22 +98,25 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     SettingsHeading("연결")
-                    TextButton(
-                        onClick = onInsightSettingsClick,
-                        contentPadding = PaddingValues(vertical = 12.dp),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-                    ) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val stackStatus = maxWidth < 300.dp || LocalDensity.current.fontScale > 1.2f
+                        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                            .clickable(role = Role.Button, onClick = onInsightSettingsClick)
+                            .padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                 Text("SaveTicker", color = MaterialTheme.colorScheme.onSurface,
                                     style = MaterialTheme.typography.titleMedium)
                                 Text("종목 인사이트 연결", color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium)
+                                if (stackStatus) Text(insightConnectionLabel,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall)
                             }
-                            Text(insightConnectionLabel, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (!stackStatus) Text(insightConnectionLabel, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall)
-                            Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(DashboardIcons.ChevronRight, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
                         }
                     }
                 }

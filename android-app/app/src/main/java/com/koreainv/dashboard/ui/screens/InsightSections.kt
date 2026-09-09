@@ -36,12 +36,8 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
         InsightSectionNotice(s, "key_metrics", onRetry)
         val metrics = remember(s) { insightCoreMetrics(s) }
         InsightCoreGrid(metrics)
-        TextButton(onClick = { toggle("metrics") }, modifier = Modifier.heightIn(min = 48.dp)) {
-            Text(if ("metrics" in expanded) "정확한 값 접기" else "핵심 지표 정확한 값")
-        }
-        TextButton(onClick = { toggle("header") }, modifier = Modifier.heightIn(min = 48.dp)) {
-            Text(if ("header" in expanded) "가격 범위·거래 현황 접기" else "가격 범위·거래 현황")
-        }
+        InsightDisclosureRow("핵심 지표 정확한 값", "metrics" in expanded, { toggle("metrics") })
+        InsightDisclosureRow("가격 범위·거래 현황", "header" in expanded, { toggle("header") })
     }
     if ("metrics" in expanded) item("metrics_exact") {
         val metrics = remember(s) { insightCoreMetrics(s) }
@@ -59,7 +55,7 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
         s.revenue?.let { r ->
             Text("분기 매출 · USD",style=MaterialTheme.typography.titleMedium)
             InsightRevenueChart(r)
-            TextButton(onClick={toggle("financial")},modifier=Modifier.heightIn(min=48.dp)) { Text(if("financial" in expanded) "정확한 값 접기" else "전체 ${r.quarters.size}개 분기 정확한 값") }
+            InsightDisclosureRow("전체 ${r.quarters.size}개 분기 정확한 값", "financial" in expanded, { toggle("financial") })
         }
     }
     if ("financial" in expanded) s.revenue?.quarters?.forEachIndexed { i, q ->
@@ -76,7 +72,7 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
             InsightBarsChart(remember(a) { listOf("매수" to a.dist?.buy,"보유" to a.dist?.hold,"매도" to a.dist?.sell) })
             InsightTargetChart(a.target,s.header?.price)
             InsightRows(listOf("목표가 최저" to insightNumber(a.target?.low," USD"),"평균 목표가" to insightNumber(a.target?.mean," USD"),"목표가 최고" to insightNumber(a.target?.high," USD"),"현재가 (세로 표시)" to insightNumber(s.header?.price," USD"),"상승 여력" to insightSigned(a.upsidePct,"%")))
-            TextButton(onClick={toggle("analyst")},modifier=Modifier.heightIn(min=48.dp)) { Text(if("analyst" in expanded) "평가 목록 접기" else "전체 ${a.recent.size}건 평가 보기") }
+            InsightDisclosureRow("전체 ${a.recent.size}건 평가 보기", "analyst" in expanded, { toggle("analyst") })
         }
     }
     if ("analyst" in expanded) s.analyst?.recent?.forEachIndexed { i, a ->
@@ -119,7 +115,7 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
         InsightSectionNotice(s,"insider",onRetry)
         s.insider?.let { i ->
             InsightRows(listOf("집계 기간" to insightNumber(i.window,"일"),"매수" to insightNumber(i.buyCount,"건"),"매도" to insightNumber(i.sellCount,"건"),"순금액 · 공급자 집계" to insightSigned(i.netValue," USD"),"설명" to insightText(i.label)))
-            TextButton(onClick={toggle("insider")},modifier=Modifier.heightIn(min=48.dp)) { Text(if("insider" in expanded) "최근 거래 접기" else "전체 ${i.recent.size}건 최근 거래 보기") }
+            InsightDisclosureRow("전체 ${i.recent.size}건 최근 거래 보기", "insider" in expanded, { toggle("insider") })
         }
     }
     if("insider" in expanded) s.insider?.recent?.forEachIndexed { i,r -> item("insider_$i") { InsightRows(listOf("이름" to insightText(r.name),"직책" to insightText(r.title),"거래일" to insightText(r.transactionDate),"거래 코드" to insightText(r.transactionCode),"금액" to insightSigned(r.value," USD"))); Spacer(Modifier.height(24.dp)) } }
@@ -135,5 +131,19 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
             Spacer(Modifier.height(16.dp))
         }
     } }
-    item("ledger") { InsightHeading("데이터 기준 시점"); val rows=remember(s){insightLedger(s)}; InsightRows(rows) }
+    item("ledger") {
+        Column(Modifier.padding(top = 24.dp)) {
+            HorizontalDivider()
+            Spacer(Modifier.height(12.dp))
+            InsightDisclosureRow("데이터 기준 시점", "ledger" in expanded, { toggle("ledger") }, prominent = true)
+        }
+    }
+    if ("ledger" in expanded) insightLedgerGroups(s).forEach { group ->
+        item("ledger_group_${group.key}") {
+            Text(group.title, Modifier.padding(top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall)
+        }
+        group.rows.forEach { row ->
+            item("ledger_${group.key}_${row.key}") { InsightLedgerField(row) }
+        }
+    }
 }.items

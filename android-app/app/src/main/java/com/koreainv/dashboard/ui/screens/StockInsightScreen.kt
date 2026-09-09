@@ -135,6 +135,7 @@ private fun InsightCompany(s: InsightSnapshot, displayName: String, symbol: Stri
 
 @Composable
 private fun InsightSectionNavigation(items: List<InsightListItem>, listState: LazyListState, modifier: Modifier) {
+    val colors = LocalDashboardColors.current
     val scope = rememberCoroutineScope()
     val selectedSection by remember(items, listState) {
         derivedStateOf { items.getOrNull(listState.firstVisibleItemIndex)?.section ?: "overview" }
@@ -153,6 +154,7 @@ private fun InsightSectionNavigation(items: List<InsightListItem>, listState: La
                     .semantics { selected = selectedSection == key }
                     .then(if (selectedSection == key) Modifier.liquidGlass(radius = 28.dp, role = GlassRole.Control) else Modifier),
                 contentPadding = PaddingValues(horizontal = 10.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = if (selectedSection == key) colors.textPrimary else colors.textSecondary),
             ) { Text(label) }
         }
     }
