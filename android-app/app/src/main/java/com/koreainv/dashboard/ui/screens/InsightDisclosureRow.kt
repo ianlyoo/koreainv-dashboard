@@ -15,12 +15,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
-import com.koreainv.dashboard.ui.theme.LocalDashboardColors
 
 /** No internal horizontal inset: labels share the surrounding content's 20dp gutter. */
 @Composable
 internal fun InsightDisclosureRow(label: String, expanded: Boolean, onClick: () -> Unit, prominent: Boolean = false) {
-    val colors = LocalDashboardColors.current
+    val actionColor = MaterialTheme.colorScheme.primary
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp)
             .semantics(mergeDescendants = true) { stateDescription = if (expanded) "펼쳐짐" else "접힘" }
@@ -29,8 +28,8 @@ internal fun InsightDisclosureRow(label: String, expanded: Boolean, onClick: () 
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, Modifier.weight(1f), style = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge, color = colors.textPrimary)
+        Text(label, Modifier.weight(1f), style = if (prominent) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge, color = actionColor)
         Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-            contentDescription = null, modifier = Modifier.size(24.dp), tint = colors.textSecondary)
+            contentDescription = null, modifier = Modifier.size(24.dp), tint = actionColor)
     }
 }

@@ -11,6 +11,12 @@ import com.koreainv.dashboard.network.insight.*
 internal val insightSectionLabels = linkedMapOf("overview" to "개요", "financial" to "재무", "analyst" to "의견", "options" to "옵션", "insider" to "내부자", "news" to "뉴스")
 @Composable internal fun InsightRows(rows:List<Pair<String,String>>) { Column(verticalArrangement=Arrangement.spacedBy(12.dp)) { rows.forEach { (label,value) -> ResponsiveDetailRow(label,value) } } }
 @Composable internal fun InsightHeading(title:String) { Column(Modifier.padding(top=24.dp,bottom=12.dp)) { HorizontalDivider(); Spacer(Modifier.height(24.dp)); Text(title,style=MaterialTheme.typography.titleLarge) } }
+@Composable private fun InsightDataGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        content()
+    }
+}
 @Composable internal fun InsightSectionNotice(s:InsightSnapshot,key:String,onRetry:()->Unit) {
     val info=s.sections[key]
     if(info!=null && info.status!=InsightSectionStatus.AVAILABLE) {
@@ -51,11 +57,13 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
     }
     item("financial") {
         InsightHeading("재무")
+        Spacer(Modifier.height(8.dp))
         InsightSectionNotice(s,"revenue",onRetry)
         s.revenue?.let { r ->
-            Text("분기 매출 · USD",style=MaterialTheme.typography.titleMedium)
-            InsightRevenueChart(r)
-            InsightDisclosureRow("전체 ${r.quarters.size}개 분기 정확한 값", "financial" in expanded, { toggle("financial") })
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                InsightDataGroup("분기 매출 · USD") { InsightRevenueChart(r) }
+                InsightDisclosureRow("전체 ${r.quarters.size}개 분기 정확한 값", "financial" in expanded, { toggle("financial") })
+            }
         }
     }
     if ("financial" in expanded) s.revenue?.quarters?.forEachIndexed { i, q ->
@@ -66,13 +74,20 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
     }
     item("analyst") {
         InsightHeading("애널리스트")
+        Spacer(Modifier.height(8.dp))
         InsightSectionNotice(s,"analyst",onRetry)
         s.analyst?.let { a ->
-            InsightRows(listOf("종합 의견" to insightText(a.label),"참여" to insightNumber(a.analystCount,"명")))
-            InsightBarsChart(remember(a) { listOf("매수" to a.dist?.buy,"보유" to a.dist?.hold,"매도" to a.dist?.sell) })
-            InsightTargetChart(a.target,s.header?.price)
-            InsightRows(listOf("목표가 최저" to insightNumber(a.target?.low," USD"),"평균 목표가" to insightNumber(a.target?.mean," USD"),"목표가 최고" to insightNumber(a.target?.high," USD"),"현재가 (세로 표시)" to insightNumber(s.header?.price," USD"),"상승 여력" to insightSigned(a.upsidePct,"%")))
-            InsightDisclosureRow("전체 ${a.recent.size}건 평가 보기", "analyst" in expanded, { toggle("analyst") })
+            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                InsightRows(listOf("종합 의견" to insightText(a.label),"참여" to insightNumber(a.analystCount,"명")))
+                InsightDataGroup("투자의견 분포") {
+                    InsightBarsChart(remember(a) { listOf("매수" to a.dist?.buy,"보유" to a.dist?.hold,"매도" to a.dist?.sell) })
+                }
+                InsightDataGroup("목표가 범위") {
+                    InsightTargetChart(a.target,s.header?.price)
+                    InsightRows(listOf("목표가 최저" to insightNumber(a.target?.low," USD"),"평균 목표가" to insightNumber(a.target?.mean," USD"),"목표가 최고" to insightNumber(a.target?.high," USD"),"현재가 (세로 표시)" to insightNumber(s.header?.price," USD"),"상승 여력" to insightSigned(a.upsidePct,"%")))
+                }
+                InsightDisclosureRow("전체 ${a.recent.size}건 평가 보기", "analyst" in expanded, { toggle("analyst") })
+            }
         }
     }
     if ("analyst" in expanded) s.analyst?.recent?.forEachIndexed { i, a ->
@@ -95,19 +110,34 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
     }
     item("options") {
         InsightHeading("옵션")
+        Spacer(Modifier.height(8.dp))
         InsightSectionNotice(s,"options",onRetry)
         s.options?.let { o ->
-            if(o.optionable==false) Text("옵션을 지원하지 않는 종목입니다.")
-            InsightRows(listOf("거래량 · 전체 만기" to insightNumber(o.volume,"계약"),"거래량 PCR (풋/콜)" to insightNumber(o.putCallRatioVolume),"미결제약정 PCR (풋/콜)" to insightNumber(o.putCallRatioOpenInterest)))
-            Spacer(Modifier.height(16.dp))
-            InsightShareChart("거래량 구성",o.volumeShare); Spacer(Modifier.height(12.dp)); InsightShareChart("미결제약정 구성",o.openInterestShare); Spacer(Modifier.height(12.dp)); InsightShareChart("프리미엄 구성",o.premiumShare)
-            Spacer(Modifier.height(20.dp)); Text("동일 시각 평균 대비 · 기준선 100%",style=MaterialTheme.typography.titleSmall)
-            val values=remember(o) { listOf("d3" to "3일","d7" to "7일","d30" to "30일").map { (key,label) -> label to o.optionVolumeVsAvg?.windows?.get(key)?.let { if(it.available) it.ratioPct else null } } }
-            InsightBarsChart(values,100.0)
-            InsightRows(listOf("현재 누적 거래량" to insightNumber(o.optionVolumeVsAvg?.currentCumVolume,"계약")))
-            listOf("d3" to "3일","d7" to "7일","d30" to "30일").forEach { (key,label) -> ResponsiveDetailRow("$label 비교 누적 거래량",insightNumber(o.optionVolumeVsAvg?.windows?.get(key)?.takeIf{it.available}?.baselineCumVolume,"계약")) }
-            Spacer(Modifier.height(20.dp))
-            InsightRows(listOf("가장 가까운 만기" to insightText(o.nearestExpiry),"만기까지" to insightNumber(o.daysToExpiry,"일"),"Max Pain" to insightNumber(o.maxPain," USD"),"기준 주가" to insightNumber(o.referencePrice," USD"),"Call Wall" to insightNumber(o.callWall," USD"),"Put Wall" to insightNumber(o.putWall," USD"),"Gamma Flip" to insightNumber(o.gammaFlip," USD"),"Net GEX" to insightNumber(o.netGammaExposure," USD"),"기초자산 1% 변화당 감마" to insightNumber(o.gammaPer1Pct," USD / 1%")))
+            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                if(o.optionable==false) Text("옵션을 지원하지 않는 종목입니다.")
+                InsightRows(listOf("거래량 · 전체 만기" to insightNumber(o.volume,"계약"),"거래량 PCR (풋/콜)" to insightNumber(o.putCallRatioVolume),"미결제약정 PCR (풋/콜)" to insightNumber(o.putCallRatioOpenInterest)))
+                Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    InsightShareChart("거래량 구성",o.volumeShare)
+                    InsightShareChart("미결제약정 구성",o.openInterestShare)
+                    InsightShareChart("프리미엄 구성",o.premiumShare)
+                }
+                InsightDataGroup("동일 시각 평균 대비 · 기준선 100%") {
+                    val values=remember(o) { listOf("d3" to "3일","d7" to "7일","d30" to "30일").map { (key,label) -> label to o.optionVolumeVsAvg?.windows?.get(key)?.let { if(it.available) it.ratioPct else null } } }
+                    InsightBarsChart(values,100.0)
+                    InsightRows(buildList {
+                        add("현재 누적 거래량" to insightNumber(o.optionVolumeVsAvg?.currentCumVolume,"계약"))
+                        listOf("d3" to "3일","d7" to "7일","d30" to "30일").forEach { (key,label) ->
+                            add("$label 비교 누적 거래량" to insightNumber(o.optionVolumeVsAvg?.windows?.get(key)?.takeIf{it.available}?.baselineCumVolume,"계약"))
+                        }
+                    })
+                }
+                InsightDataGroup("만기와 주요 가격") {
+                    InsightRows(listOf("가장 가까운 만기" to insightText(o.nearestExpiry),"만기까지" to insightNumber(o.daysToExpiry,"일"),"Max Pain" to insightNumber(o.maxPain," USD"),"기준 주가" to insightNumber(o.referencePrice," USD"),"Call Wall" to insightNumber(o.callWall," USD"),"Put Wall" to insightNumber(o.putWall," USD"),"Gamma Flip" to insightNumber(o.gammaFlip," USD")))
+                }
+                InsightDataGroup("감마 노출") {
+                    InsightRows(listOf("Net GEX" to insightNumber(o.netGammaExposure," USD"),"기초자산 1% 변화당 감마" to insightNumber(o.gammaPer1Pct," USD / 1%")))
+                }
+            }
         }
     }
     item("insider") {

@@ -167,7 +167,7 @@ class UiPreviewActivity : ComponentActivity() {
                                                     if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
                                                 "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
                                                 "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
-                                                    "1.9.7-preview", false, false, { updateNotice = true }, accounts, logout, back,
+                                                    "1.9.8-preview", false, false, { updateNotice = true }, accounts, logout, back,
                                                     { connectionRequired=false; navigatePreview("connection") })
                                                 else -> error("Unknown preview screen: $scene")
                                             }

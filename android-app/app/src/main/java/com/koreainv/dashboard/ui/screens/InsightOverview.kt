@@ -111,7 +111,7 @@ private fun InsightRangeMarker(label: String, range: InsightRange, price: Double
             }) {
                 drawLine(colors.surfaceBorderPrimary, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 3.dp.toPx())
                 val x = ((current - low) / (high - low)).coerceIn(0.0, 1.0).toFloat() * size.width
-                drawCircle(colors.primary, 5.dp.toPx(), Offset(x, size.height / 2))
+                drawCircle(colors.success, 5.dp.toPx(), Offset(x, size.height / 2))
             }
         }
     }
