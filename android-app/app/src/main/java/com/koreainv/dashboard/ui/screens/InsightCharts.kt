@@ -64,7 +64,7 @@ import kotlin.math.*
                         val color=if(b.close>=b.open) colors.success else colors.error
                         if(candle) { drawLine(color,Offset(x(i),y(b.high)),Offset(x(i),y(b.low)),1f); drawRect(color,Offset(x(i)-step*.3f,min(y(b.open),y(b.close))),Size(max(1f,step*.6f),max(1f,abs(y(b.open)-y(b.close))))) }
                         val h=(b.volume/maxVolume*size.height*.20).toFloat()
-                        drawRect(accents.teal.copy(alpha=.75f),Offset(x(i)-step*.3f,size.height-h),Size(max(1f,step*.6f),h))
+                        drawRect(color.copy(alpha=.32f),Offset(x(i)-step*.3f,size.height-h),Size(max(1f,step*.6f),h))
                     }
                     val i=selected.intValue.coerceIn(bars.indices)
                     drawLine(colors.textSecondary,Offset(x(i),0f),Offset(x(i),size.height),1f)
@@ -79,7 +79,6 @@ import kotlin.math.*
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             InsightChartKey(if (candle) "상승" else "종가", if (candle) colors.success else accents.blue)
             if (candle) InsightChartKey("하락", colors.error)
-            InsightChartKey("거래량", accents.teal)
         }
     }
 }
