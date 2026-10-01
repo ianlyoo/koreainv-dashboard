@@ -5,6 +5,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class InsightPresentationTest {
+    @Test fun quartersAdvanceChronologicallyAndKeepOriginalDefaultIdentity() {
+        val latest = InsightQuarter("'26 Q2", 400.0)
+        val original = listOf(latest, InsightQuarter("'25 Q4", 0.0), InsightQuarter("2026 Q1", null), InsightQuarter("'25 Q3", 100.0))
+        val ordered = insightChronologicalQuarters(original)
+        assertEquals(listOf("'25 Q3", "'25 Q4", "2026 Q1", "'26 Q2"), ordered.map { it.label })
+        assertEquals(listOf(100.0, 0.0, null, 400.0), ordered.map { it.revenue })
+        assertSame(latest, ordered[insightDefaultQuarterIndex(original, ordered)])
+        assertEquals(0.0, ordered[1].revenue)
+        assertNull(ordered[2].revenue)
+        assertEquals(0, insightDefaultQuarterIndex(emptyList(), emptyList()))
+        val missing = listOf(InsightQuarter(null), InsightQuarter("unknown"))
+        assertEquals(missing, insightChronologicalQuarters(missing))
+    }
+    @Test fun insiderTransactionLabelsOnlyClassifyKnownPurchaseAndSaleCodes() {
+        assertEquals("매수 (P)", insightTransactionLabel("P"))
+        assertEquals("매도 (S)", insightTransactionLabel("S"))
+        assertEquals("A", insightTransactionLabel("A"))
+        assertEquals("제공 안 됨", insightTransactionLabel(null))
+    }
+
     @org.junit.Test fun replacementAnnotationDoesNotEraseAPresentMetricValue() {
         val metric = InsightCoreMetric("EPS", InsightMetric(value = -2.5, replaceText = "적자 전환"), " USD")
         org.junit.Assert.assertEquals("-2.5 USD", metric.exactValue)

@@ -1101,6 +1101,18 @@
             return notes.length ? ` · ${notes.join(' · ')}` : '';
         }
 
+        function realizedProfitSummaryCaption(payload, accountId = activeProfitAccountId, accounts = cachedAccounts) {
+            const account = accounts.find(a => String(a.account_id || '') === accountId);
+            const scope = accountId === 'all' ? '전체 계좌 실현손익 합계'
+                : account?.broker === 'toss' ? '토스 계좌 실현손익'
+                : account && (!account.broker || account.broker === 'kis') ? '한국투자증권 계좌 실현손익'
+                : '선택 계좌 실현손익';
+            const state = payload?.profit_available === false ? ' · 미산출'
+                : payload?.profit_complete === false ? (payload.profit_estimated ? ' · 추정·일부 미산출' : ' · 일부 미산출')
+                : payload?.profit_estimated ? ' · 추정' : '';
+            return scope + state;
+        }
+
         function renderRealizedProfitSummary(summaryPayload) {
             const valueEl = document.getElementById('val_realized_profit_month');
             const subEl = document.getElementById('val_realized_profit_month_sub');
@@ -1118,15 +1130,14 @@
             if (summaryPayload.profit_available === false) {
                 valueEl.innerText = '-';
                 valueEl.className = 'summary-value';
-                subEl.innerText = `토스 손익 미산출: 원가·환율·체결 정보를 확인하세요${realizedProfitCoverageNote(summaryPayload)}`;
+                subEl.innerText = realizedProfitSummaryCaption(summaryPayload);
                 return;
             }
 
             const total = Number(summaryPayload.summary?.total_realized_profit_krw || 0);
             valueEl.innerText = formatSignedKrw(total);
             valueEl.className = `summary-value ${profitClassName(total)}`.trim();
-            const coverageNote = realizedProfitCoverageNote(summaryPayload);
-            subEl.innerText = `${formatDisplayDate(summaryPayload.period.start)} ~ ${formatDisplayDate(summaryPayload.period.end)} 누적${coverageNote}`;
+            subEl.innerText = realizedProfitSummaryCaption(summaryPayload);
         }
 
         function getTodayMonthKey() {
@@ -1647,7 +1658,7 @@
                         <td>${tradeAccountBadgeHtml(trade, '매수')}</td>
                         <td>${escapeHtml(trade.ticker || trade.symbol || '-')}</td>
                         <td>${escapeHtml(trade.name || trade.symbol || '-')}</td>
-                        <td>${formatNumber(Number(trade.quantity || 0))}</td>
+                        <td><strong>${formatNumber(Number(trade.quantity || 0))}</strong></td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
                     </tr>
@@ -1669,7 +1680,7 @@
                         <td>${tradeAccountBadgeHtml(trade, '매도')}</td>
                         <td>${escapeHtml(trade.ticker || trade.symbol || '-')}</td>
                         <td>${escapeHtml(trade.name || trade.symbol || '-')}</td>
-                        <td>${formatNumber(Number(trade.quantity || 0))}</td>
+                        <td><strong>${formatNumber(Number(trade.quantity || 0))}</strong></td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
                         <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : `${formatSignedKrw(trade.realized_profit_krw)}${trade.realized_profit_estimated ? '<span class="profit-estimate-chip">추정</span>' : ''}`}<small>${escapeHtml(trade.profit_estimate_reason || trade.profit_rate_source || '')}${trade.realized_profit_krw != null && trade.profit_exchange_rate ? ` · ${formatNumber(trade.profit_exchange_rate)} KRW/USD` : ''}</small></td>
@@ -2195,6 +2206,7 @@
             const text = value => value === null || value === undefined || value === '' ? '—' : escapeHtml(value);
             const module = (title, body, meta = '') => `<section class="st-section"><div class="st-heading"><h3>${title}</h3>${meta ? `<span>${meta}</span>` : ''}</div>${body}</section>`;
             const unavailable = '<p class="st-note">이 항목은 현재 제공되지 않습니다.</p>';
+            const emphasis = (value, tone = '') => `<strong class="st-value ${tone}">${value}</strong>`;
             const exactMoney = value => { const n = insightFinite(value); return n === null ? '—' : (n < 0 ? '-$' : '$') + insightExact(Math.abs(n)); };
             const table = (id, headings, rows) => `<div class="st-table-wrap"><table class="st-table st-data-table" id="st-table-${id}"><thead><tr>${headings.map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map((cell, i) => i === 0 ? `<th scope="row">${cell}</th>` : `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
             const chartSpecs = saveTickerDetailChartSpecs(state);
@@ -2219,7 +2231,7 @@
                 ['공매도 비중', insightExact(k.shortInterestPct?.value, '%'), `2주 변화 ${insightExact(k.shortInterestPct?.compare, '%p')}${k.shortBasis === 'float' ? ' · 유통주식 기준' : ''}`],
                 ['Days to cover', insightExact(k.daysToCover?.value, '일'), `2주 변화 ${insightExact(k.daysToCover?.compare, '일')}`],
             ];
-            html += module('핵심 지표', sections.key_metrics ? `<div class="st-core-tables">${table('core-a', ['지표', '값', '비교 · 기준'], metricRows.slice(0, 4))}${table('core-b', ['지표', '값', '비교 · 기준'], metricRows.slice(4))}</div><p class="st-note">지표 기준 ${insightDate(k.asOf)} · 공매도 기준 ${insightDate(k.shortAsOf)}</p>` : unavailable);
+            html += module('핵심 지표', sections.key_metrics ? `<div class="st-core-tables">${table('core-a', ['지표', '값', '비교 · 기준'], metricRows.slice(0, 4).map(([label, value, detail]) => [label, emphasis(value, 'st-accent'), detail]))}${table('core-b', ['지표', '값', '비교 · 기준'], metricRows.slice(4).map(([label, value, detail]) => [label, emphasis(value, 'st-accent'), detail]))}</div><p class="st-note">지표 기준 ${insightDate(k.asOf)} · 공매도 기준 ${insightDate(k.shortAsOf)}</p>` : unavailable);
             const range = (label, values) => {
                 const low = insightFinite(values?.low), high = insightFinite(values?.high), current = insightFinite(values?.current) ?? price;
                 const pos = low !== null && high !== null && current !== null && high > low ? Math.min(100, Math.max(0, (current - low) / (high - low) * 100)) : null;
@@ -2230,13 +2242,13 @@
             html += '<div class="st-details">';
             const revenue = sections.revenue;
             const quarters = saveTickerQuarters(revenue);
-            const revenueSection = module('분기 매출', quarters.length ? chart('revenue') + table('revenue', ['회계 분기', '매출 (USD)', '전년 대비'], quarters.map(q => [text(q.label), exactMoney(q.revenue), insightExact(q.yoy, '%')])) : unavailable, text(revenue?.source));
+            const revenueSection = module('분기 매출', quarters.length ? chart('revenue') + table('revenue', ['회계 분기', '매출 (USD)', '전년 대비'], quarters.map(q => [text(q.label), emphasis(exactMoney(q.revenue)), emphasis(insightExact(q.yoy, '%'), profitClassName(q.yoy))])) : unavailable, text(revenue?.source));
             const a = sections.analyst;
             const firms = Array.isArray(a?.recent) ? a.recent.filter(f => f && typeof f === 'object') : [];
             const analystSection = module('애널리스트', a ? chart('consensus') + table('consensus', ['의견', '인원'], [
-                ['매수', insightExact(a.dist?.buy, '명')], ['보유', insightExact(a.dist?.hold, '명')], ['매도', insightExact(a.dist?.sell, '명')], ['제공 총원', insightExact(a.analystCount, '명')],
+                [emphasis('매수', 'profit-plus'), emphasis(insightExact(a.dist?.buy, '명'), 'profit-plus')], ['보유', emphasis(insightExact(a.dist?.hold, '명'))], [emphasis('매도', 'profit-minus'), emphasis(insightExact(a.dist?.sell, '명'), 'profit-minus')], ['제공 총원', insightExact(a.analystCount, '명')],
             ]) + chart('targets') + table('targets', ['가격 기준', 'USD'], [
-                ['최저 목표가', exactMoney(a.target?.low)], ['평균 목표가', exactMoney(a.target?.mean)], ['최고 목표가', exactMoney(a.target?.high)], ['현재가', exactMoney(price)],
+                ['최저 목표가', exactMoney(a.target?.low)], ['평균 목표가', emphasis(exactMoney(a.target?.mean), 'st-accent')], ['최고 목표가', exactMoney(a.target?.high)], ['현재가', exactMoney(price)],
             ]) + (firms.length ? table('analysts', ['증권사 / 날짜', '평가', '이전 목표가', '현재 목표가'], firms.map(f => [`${text(f.firmKo || f.firm)}<small>${insightDate(f.at)}</small>`, text(f.rating), exactMoney(f.prevTarget), exactMoney(f.target)])) : '') : unavailable, a ? `${text(a.provider)} · ${insightDate(a.asOf)}` : '');
             const o = sections.options;
             let optionsHtml = unavailable;
@@ -2257,8 +2269,8 @@
             const insider = sections.insider;
             const transactions = Array.isArray(insider?.recent) ? insider.recent.filter(t => t && typeof t === 'object') : [];
             const insiderSection = module('내부자 거래', insider ? `<p class="st-note">최근 ${insightNumber(insider.window, '일')} · ${text(insider.label)}</p>` + chart('insider-counts') + table('insider-counts', ['거래 집계', '값'], [
-                ['매수 건수', insightExact(insider.buyCount, '건')], ['매도 건수', insightExact(insider.sellCount, '건')], ['기간 순거래 금액 (USD)', exactMoney(insider.netValue)],
-            ]) + (transactions.length ? table('insider-transactions', ['거래일 / 이름', '거래 유형', '금액 (USD)'], transactions.map(t => [`${insightDate(t.transactionDate)}<small>${text(t.name)} · ${text(t.title)}</small>`, text(({ P: '매수 (P)', S: '매도 (S)' })[t.transactionCode] || t.transactionCode), exactMoney(t.value)])) : '') : unavailable, insider ? `SEC · ${insightDate(insider.asOf)}` : '');
+                ['매수 건수', emphasis(insightExact(insider.buyCount, '건'), 'profit-plus')], ['매도 건수', emphasis(insightExact(insider.sellCount, '건'), 'profit-minus')], ['기간 순거래 금액 (USD)', emphasis(exactMoney(insider.netValue), profitClassName(insider.netValue))],
+            ]) + (transactions.length ? table('insider-transactions', ['거래일 / 이름', '거래 유형', '금액 (USD)'], transactions.map(t => [`${insightDate(t.transactionDate)}<small><span class="st-person">${text(t.name)}</span> · ${text(t.title)}</small>`, emphasis(text(({ P: '매수 (P)', S: '매도 (S)' })[t.transactionCode] || t.transactionCode), ({ P: 'profit-plus', S: 'profit-minus' })[t.transactionCode] || ''), emphasis(exactMoney(t.value), profitClassName(t.value))])) : '') : unavailable, insider ? `SEC · ${insightDate(insider.asOf)}` : '');
             html += `<div class="st-detail-column">${revenueSection}${optionsSection}</div><div class="st-detail-column">${analystSection}${insiderSection}</div>`;
             const headlines = Array.isArray(sections.news?.items) ? sections.news.items.filter(n => n && typeof n === 'object').slice(0, 6) : [];
             if (headlines.length) {

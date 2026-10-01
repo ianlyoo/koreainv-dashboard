@@ -163,9 +163,9 @@ import kotlin.math.*
 
 @Composable internal fun InsightRevenueChart(revenue: InsightRevenue) {
     val accents = insightChartColors
-    val quarters = revenue.quarters
+    val quarters = remember(revenue) { insightChronologicalQuarters(revenue.quarters) }
     if (quarters.isEmpty()) { Text("제공된 분기 매출이 없습니다."); return }
-    var selected by remember(revenue) { mutableIntStateOf(0) }
+    var selected by remember(revenue) { mutableIntStateOf(insightDefaultQuarterIndex(revenue.quarters, quarters)) }
     val maxRevenue = remember(revenue) { quarters.mapNotNull { it.revenue }.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0 }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -192,7 +192,7 @@ import kotlin.math.*
         }
         Spacer(Modifier.height(16.dp))
         val quarter = quarters[selected.coerceIn(quarters.indices)]
-        InsightRows(listOf("선택 분기" to insightText(quarter.label), "매출" to insightNumber(quarter.revenue, " USD"), "전년 대비" to insightQuarterChange(quarter)))
+        InsightRows(listOf("선택 분기" to insightText(quarter.label), "매출" to insightNumber(quarter.revenue, " USD"), "전년 대비" to insightQuarterChange(quarter)), valueColors = mapOf("선택 분기" to LocalDashboardColors.current.info, "전년 대비" to insightChangeColor(quarter.yoy)), strongLabels = setOf("매출", "전년 대비"))
     }
 }
 

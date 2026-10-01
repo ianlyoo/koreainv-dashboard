@@ -274,8 +274,8 @@ fun TradeHistoryScreen(
                             TradeSummaryCard(
                                 data = data,
                                 currencyMode = currencyMode,
-                                selectedRangeLabel = selectedRangeLabel,
-                                selectedAccountLabel = selectedAccountLabel,
+                                selectedBroker = accountFilters.firstOrNull { it.accountId == selectedAccountId }?.broker,
+                                allAccounts = selectedAccountId == null,
                             )
                         }
 
@@ -491,8 +491,8 @@ internal fun tradeHistorySessionMatches(
 fun TradeSummaryCard(
     data: TradeHistoryResponse,
     currencyMode: CurrencyDisplayMode,
-    selectedRangeLabel: String,
-    selectedAccountLabel: String,
+    selectedBroker: String? = null,
+    allAccounts: Boolean = false,
 ) {
     val profitColor = when {
         data.summary.totalRealizedProfitKrw > 0 -> Success
@@ -521,23 +521,9 @@ fun TradeSummaryCard(
                 color = if (data.profitAvailable) profitColor else TextPrimary,
             )
             Text(
-                text = buildString {
-                    append(selectedAccountLabel)
-                    append(" · ")
-                    append(selectedRangeLabel)
-                    append(" · 매도 실현 손익")
-                    if (!data.profitAvailable) {
-                        append(" · 토스 손익 미산출(원가·환율·체결 정보 확인)")
-                    } else {
-                        if (data.profitEstimated) append(" · 토스 추정 손익 포함 · 매도 시점 참고환율(midRate) · 환차손익 제외")
-                        if (!data.profitComplete) {
-                            append(" · 원가·환율·체결 정보 부족 ")
-                            append(data.unpricedSellCount)
-                            append("건 미산출")
-                        }
-                    }
-                    data.tossHistoryNotes.forEach { append(" · $it") }
-                },
+                text = tradeProfitCaption(allAccounts, selectedBroker, data.profitAvailable, data.profitEstimated, data.profitComplete),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
             )
@@ -585,6 +571,16 @@ fun TradeItemCard(
             name = trade.name,
             identity = "${trade.ticker} · $accountLabel",
             detail = "${trade.side} · ${stringResource(R.string.share_count, formatWholeNumber(trade.quantity))} · ${trade.date}",
+            styledDetail = androidx.compose.ui.text.buildAnnotatedString {
+                pushStyle(androidx.compose.ui.text.SpanStyle(color = if (isBuy) Success else Error, fontWeight = FontWeight.SemiBold))
+                append(trade.side)
+                pop()
+                append(" · ")
+                pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.SemiBold))
+                append(stringResource(R.string.share_count, formatWholeNumber(trade.quantity)))
+                pop()
+                append(" · ${trade.date}")
+            },
             amount = formatTradeAmount(trade, currencyMode, usdRate),
             secondary = profitText,
             secondaryColor = if (realizedProfit != null) profitColorForAmount(realizedProfit) else TextSecondary,
@@ -632,3 +628,19 @@ internal fun tradeRangeOptions(): List<Pair<String, String>> = listOf(
 
 internal fun rangeLabel(range: String): String =
     tradeRangeOptions().firstOrNull { it.first == range }?.second ?: "이번 달"
+
+internal fun tradeProfitCaption(allAccounts: Boolean, broker: String?, available: Boolean = true, estimated: Boolean = false, complete: Boolean = true): String {
+    val scope = when {
+        allAccounts -> "전체 계좌 실현손익 합계"
+        broker == com.koreainv.dashboard.network.Broker.TOSS -> "토스 계좌 실현손익"
+        broker == com.koreainv.dashboard.network.Broker.KIS -> "한국투자증권 계좌 실현손익"
+        else -> "선택 계좌 실현손익"
+    }
+    return scope + when {
+        !available -> " · 미산출"
+        !complete && estimated -> " · 추정·일부 미산출"
+        !complete -> " · 일부 미산출"
+        estimated -> " · 추정"
+        else -> ""
+    }
+}

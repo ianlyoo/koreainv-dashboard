@@ -167,7 +167,7 @@ class UiPreviewActivity : ComponentActivity() {
                                                     if (fixture == "error") "합성 저장 오류" else null, { _, _ -> }, back)
                                                 "setup" -> SetupScreen(SettingsManager(this@UiPreviewActivity), {})
                                                 "settings" -> SettingsScreen(appearance.themeMode, appearance::setThemeMode,
-                                                    "1.9.9-preview", false, false, { updateNotice = true }, accounts, logout, back,
+                                                    "1.9.10-preview", false, false, { updateNotice = true }, accounts, logout, back,
                                                     { connectionRequired=false; navigatePreview("connection") })
                                                 else -> error("Unknown preview screen: $scene")
                                             }
@@ -214,7 +214,7 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
         AccountCredential("demo-kis", "데모 한국투자", "", "", "00000000", "01"),
         AccountCredential("demo-toss", "데모 토스증권", "", "", "11111111", "01", broker = Broker.TOSS),
     ))
-    val filters = profile.accounts.map { HoldingAccountFilter(it.id, it.label) }
+    val filters = profile.accounts.map { HoldingAccountFilter(it.id, it.label, it.broker) }
     private fun holding(symbol: String, name: String, market: String, quantity: Double, price: Double,
                         cost: Double, currency: String, rate: Double, account: Int): Holding {
         val value = quantity * price * rate

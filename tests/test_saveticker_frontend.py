@@ -83,6 +83,35 @@ if (!unsupported.includes('Yahoo Finance') || unsupported.includes('st-insight')
         result = subprocess.run(['node', '-e', script], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_account_captions_and_semantic_insider_emphasis(self):
+        script = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const context = { console, URL, setTimeout: () => 1, clearTimeout() {},
+    document: { addEventListener() {}, querySelectorAll: () => [] }, window: { addEventListener() {} } };
+vm.createContext(context);
+vm.runInContext(fs.readFileSync('app/static/js/dashboard.js', 'utf8'), context);
+vm.runInContext(`
+const accounts = [{ account_id: 't', broker: 'toss', label: 'Custom name' }, { account_id: 'k', broker: 'kis' }];
+const caption = (id, flags = {}) => realizedProfitSummaryCaption(flags, id, accounts);
+if (caption('all') !== '전체 계좌 실현손익 합계' || caption('t') !== '토스 계좌 실현손익' || caption('k') !== '한국투자증권 계좌 실현손익') throw Error('Selection caption incorrect');
+if (caption('unknown') !== '선택 계좌 실현손익') throw Error('Unknown scope mislabeled');
+if (caption('t', {profit_estimated:true}) !== '토스 계좌 실현손익 · 추정') throw Error('Estimate lost');
+if (caption('all', {profit_estimated:true, profit_complete:false}) !== '전체 계좌 실현손익 합계 · 추정·일부 미산출') throw Error('Partial coverage lost');
+if (caption('t', {profit_available:false}) !== '토스 계좌 실현손익 · 미산출') throw Error('Unavailable profit lost');
+const html = buildSaveTickerInsightHtml({ ticker: 'DEMO', marketType: 'USA', data: { financials: {}, saveticker: { sections: { insider: { recent: [
+    { name: 'Demo Buyer', value: 100, transactionCode: 'P' },
+    { name: 'Demo Seller', value: -200, transactionCode: 'S' },
+    { name: '<script>bad</script>', value: 0, transactionCode: 'A' }
+] } } } } });
+if (!html.includes('st-value profit-plus">매수 (P)') || !html.includes('st-value profit-minus">매도 (S)') || !html.includes('st-person">Demo Buyer')) throw Error('Semantic emphasis missing');
+if (html.includes('<script>') || !html.includes('$0')) throw Error('Escaping or zero regressed');
+`, context);
+"""
+        result = subprocess.run(['node', '-e', script], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_chart_series_and_lifecycle(self):
         script = r"""
 const assert = require('node:assert/strict');

@@ -39,7 +39,7 @@ class MultiAccountTradeFrontendTests(unittest.TestCase):
     def test_estimated_toss_profit_is_clearly_labeled(self):
         self.assertIn("토스 추정 손익 포함", self.javascript)
         self.assertIn('class="profit-estimate-chip">추정', self.javascript)
-        self.assertIn("토스 추정 손익 포함", self.android_trade_screen)
+        self.assertIn('estimated -> " · 추정"', self.android_trade_screen)
         self.assertIn("trade.realizedProfitEstimated", self.android_trade_screen)
 
     def test_android_trade_filters_are_compact_without_trade_list_title(self):

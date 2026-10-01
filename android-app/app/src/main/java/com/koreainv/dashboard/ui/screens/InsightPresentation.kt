@@ -119,3 +119,20 @@ internal fun insightLedger(s: InsightSnapshot): List<Pair<String,String>> = buil
     }
     if (s.bars.isNotEmpty()) add("일봉 해석" to "공급자 UTC 날짜 · 수정주가·거래소 날짜·진행 중 봉 여부 미확인")
 }
+
+/** Keep unrecognized labels stable; dated quarters advance left to right. */
+internal fun insightChronologicalQuarters(quarters: List<InsightQuarter>): List<InsightQuarter> {
+    val pattern = Regex("^'?([0-9]{2}|[0-9]{4})\\s+Q([1-4])$")
+    fun rank(q: InsightQuarter): Int? = pattern.matchEntire(q.label.orEmpty().trim())?.let {
+        val year = it.groupValues[1].toInt().let { y -> if (y < 100) 2000 + y else y }
+        year * 4 + it.groupValues[2].toInt()
+    }
+    return quarters.withIndex().sortedWith(compareBy<IndexedValue<InsightQuarter>> { rank(it.value) ?: Int.MIN_VALUE }.thenBy { it.index }).map { it.value }
+}
+internal fun insightDefaultQuarterIndex(original: List<InsightQuarter>, ordered: List<InsightQuarter>): Int =
+    ordered.indexOf(original.firstOrNull()).coerceAtLeast(0)
+internal fun insightTransactionLabel(code: String?): String = when (code) {
+    "P" -> "매수 (P)"
+    "S" -> "매도 (S)"
+    else -> insightText(code)
+}

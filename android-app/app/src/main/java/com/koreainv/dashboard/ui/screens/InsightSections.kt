@@ -6,11 +6,37 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import com.koreainv.dashboard.ui.theme.Success
+import com.koreainv.dashboard.ui.theme.Error
+import com.koreainv.dashboard.ui.theme.TextPrimary
 import com.koreainv.dashboard.network.insight.*
 import com.koreainv.dashboard.ui.theme.LocalDashboardColors
 
 internal val insightSectionLabels = linkedMapOf("overview" to "개요", "financial" to "재무", "analyst" to "의견", "options" to "옵션", "insider" to "내부자", "news" to "뉴스")
-@Composable internal fun InsightRows(rows:List<Pair<String,String>>) { Column(verticalArrangement=Arrangement.spacedBy(16.dp)) { rows.forEach { (label,value) -> ResponsiveDetailRow(label,value) } } }
+@Composable internal fun InsightRows(
+    rows: List<Pair<String, String>>,
+    valueColors: Map<String, Color> = emptyMap(),
+    strongLabels: Set<String> = emptySet(),
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        rows.forEach { (label, value) ->
+            ResponsiveDetailRow(label, value, valueColor = valueColors[label] ?: TextPrimary,
+                valueWeight = if (label in strongLabels) FontWeight.SemiBold else FontWeight.Medium)
+        }
+    }
+}
+@Composable internal fun insightChangeColor(value: Double?): Color = when {
+    value == null || !value.isFinite() || value == 0.0 -> TextPrimary
+    value > 0 -> Success
+    else -> Error
+}
+@Composable internal fun insightTransactionColor(code: String?): Color = when (code) {
+    "P" -> Success
+    "S" -> Error
+    else -> TextPrimary
+}
 @Composable internal fun InsightHeading(title:String) {
     val colors = LocalDashboardColors.current
     Column(Modifier.fillMaxWidth().padding(top = 16.dp)) {
@@ -73,9 +99,9 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
             }
         }
     }
-    if ("financial" in expanded) s.revenue?.quarters?.forEachIndexed { i, q ->
+    if ("financial" in expanded) s.revenue?.quarters?.let(::insightChronologicalQuarters)?.forEachIndexed { i, q ->
         item("quarter_$i") {
-            InsightRows(listOf("회계 분기" to insightText(q.label), "매출" to insightNumber(q.revenue, " USD"), "전년 대비" to insightQuarterChange(q)))
+            InsightRows(listOf("회계 분기" to insightText(q.label), "매출" to insightNumber(q.revenue, " USD"), "전년 대비" to insightQuarterChange(q)), valueColors = mapOf("회계 분기" to LocalDashboardColors.current.info, "전년 대비" to insightChangeColor(q.yoy)), strongLabels = setOf("매출", "전년 대비"))
             Spacer(Modifier.height(20.dp))
         }
     }
@@ -90,7 +116,7 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
                 }
                 InsightDataGroup("목표가 범위") {
                     InsightTargetChart(a.target,s.header?.price)
-                    InsightRows(listOf("목표가 최저" to insightNumber(a.target?.low," USD"),"평균 목표가" to insightNumber(a.target?.mean," USD"),"목표가 최고" to insightNumber(a.target?.high," USD"),"현재가 (세로 표시)" to insightNumber(s.header?.price," USD"),"상승 여력" to insightSigned(a.upsidePct,"%")))
+                    InsightRows(listOf("목표가 최저" to insightNumber(a.target?.low," USD"),"평균 목표가" to insightNumber(a.target?.mean," USD"),"목표가 최고" to insightNumber(a.target?.high," USD"),"현재가 (세로 표시)" to insightNumber(s.header?.price," USD"),"상승 여력" to insightSigned(a.upsidePct,"%")), valueColors = mapOf("상승 여력" to insightChangeColor(a.upsidePct), "평균 목표가" to LocalDashboardColors.current.info), strongLabels = setOf("평균 목표가", "상승 여력"))
                 }
                 InsightDisclosureRow("전체 ${a.recent.size}건 평가 보기", "analyst" in expanded, { toggle("analyst") })
             }
@@ -149,11 +175,11 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
         InsightHeading("내부자")
         InsightSectionNotice(s,"insider",onRetry)
         s.insider?.let { i ->
-            InsightRows(listOf("집계 기간" to insightNumber(i.window,"일"),"매수" to insightNumber(i.buyCount,"건"),"매도" to insightNumber(i.sellCount,"건"),"순금액 · 공급자 집계" to insightSigned(i.netValue," USD"),"설명" to insightText(i.label)))
+            InsightRows(listOf("집계 기간" to insightNumber(i.window,"일"),"매수" to insightNumber(i.buyCount,"건"),"매도" to insightNumber(i.sellCount,"건"),"순금액 · 공급자 집계" to insightSigned(i.netValue," USD"),"설명" to insightText(i.label)), valueColors = mapOf("매수" to Success, "매도" to Error, "순금액 · 공급자 집계" to insightChangeColor(i.netValue)), strongLabels = setOf("매수", "매도", "순금액 · 공급자 집계"))
             InsightDisclosureRow("전체 ${i.recent.size}건 최근 거래 보기", "insider" in expanded, { toggle("insider") })
         }
     }
-    if("insider" in expanded) s.insider?.recent?.forEachIndexed { i,r -> item("insider_$i") { InsightRows(listOf("이름" to insightText(r.name),"직책" to insightText(r.title),"거래일" to insightText(r.transactionDate),"거래 코드" to insightText(r.transactionCode),"금액" to insightSigned(r.value," USD"))); Spacer(Modifier.height(24.dp)) } }
+    if("insider" in expanded) s.insider?.recent?.forEachIndexed { i,r -> item("insider_$i") { InsightRows(listOf("이름" to insightText(r.name),"직책" to insightText(r.title),"거래일" to insightText(r.transactionDate),"거래 유형" to insightTransactionLabel(r.transactionCode),"금액" to insightSigned(r.value," USD")), valueColors = mapOf("거래 유형" to insightTransactionColor(r.transactionCode), "금액" to insightChangeColor(r.value)), strongLabels = setOf("거래 유형", "금액")); Spacer(Modifier.height(24.dp)) } }
     item("news") { InsightHeading("뉴스"); InsightSectionNotice(s,"news",onRetry); if(s.news?.items.isNullOrEmpty()) Text("제공된 뉴스가 없습니다.") }
     s.news?.items?.forEachIndexed { i,n -> item("news_$i") {
         val uri=LocalUriHandler.current

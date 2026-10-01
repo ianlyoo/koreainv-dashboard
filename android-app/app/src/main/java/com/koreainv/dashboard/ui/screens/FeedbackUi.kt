@@ -124,19 +124,20 @@ fun ResponsiveDetailRow(
     value: String,
     valueColor: Color = TextPrimary,
     modifier: Modifier = Modifier,
+    valueWeight: FontWeight = FontWeight.Medium,
 ) {
     val fontScale = LocalDensity.current.fontScale
     BoxWithConstraints(modifier.fillMaxWidth()) {
         if (maxWidth < 300.dp || fontScale > 1.2f) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(label, color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
-                Text(value, color = valueColor, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                Text(value, color = valueColor, style = MaterialTheme.typography.bodyLarge, fontWeight = valueWeight)
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
                 Text(label, Modifier.weight(1f), color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
                 Text(value, Modifier.weight(1.4f), color = valueColor, style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+                    fontWeight = valueWeight, textAlign = TextAlign.End)
             }
         }
     }

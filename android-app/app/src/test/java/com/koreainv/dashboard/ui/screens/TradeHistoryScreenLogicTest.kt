@@ -12,6 +12,16 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class TradeHistoryScreenLogicTest {
+    @org.junit.Test fun profitCaptionUsesSelectionAndPreservesConciseCoverageStatus() {
+        org.junit.Assert.assertEquals("전체 계좌 실현손익 합계", tradeProfitCaption(true, null))
+        org.junit.Assert.assertEquals("토스 계좌 실현손익", tradeProfitCaption(false, "toss"))
+        org.junit.Assert.assertEquals("한국투자증권 계좌 실현손익", tradeProfitCaption(false, "kis"))
+        org.junit.Assert.assertEquals("선택 계좌 실현손익", tradeProfitCaption(false, null))
+        org.junit.Assert.assertEquals("토스 계좌 실현손익 · 추정", tradeProfitCaption(false, "toss", estimated = true))
+        org.junit.Assert.assertEquals("전체 계좌 실현손익 합계 · 추정·일부 미산출", tradeProfitCaption(true, null, estimated = true, complete = false))
+        org.junit.Assert.assertEquals("토스 계좌 실현손익 · 미산출", tradeProfitCaption(false, "toss", available = false, estimated = true, complete = false))
+    }
+
     @Test
     fun tradeRangeOptionsIncludeOneYear() {
         assertTrue(tradeRangeOptions().contains("1y" to "최근 1년"))

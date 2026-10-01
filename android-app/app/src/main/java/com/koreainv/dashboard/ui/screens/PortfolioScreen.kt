@@ -395,6 +395,7 @@ internal enum class HoldingSortMode {
 data class HoldingAccountFilter(
     val accountId: String,
     val label: String,
+    val broker: String = com.koreainv.dashboard.network.Broker.KIS,
 )
 
 internal fun holdingAccountFilters(holdings: List<Holding>): List<HoldingAccountFilter> =
@@ -404,6 +405,7 @@ internal fun holdingAccountFilters(holdings: List<Holding>): List<HoldingAccount
         .map { holding ->
             HoldingAccountFilter(
                 accountId = holding.accountId.orEmpty(),
+                broker = holding.broker,
                 label = holding.accountLabel?.takeIf(String::isNotBlank)
                     ?: holding.accountId.orEmpty().takeLast(6),
             )
@@ -505,6 +507,7 @@ internal fun LedgerRowContent(
     amount: String,
     secondary: String?,
     secondaryColor: Color,
+    styledDetail: androidx.compose.ui.text.AnnotatedString? = null,
 ) {
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -520,7 +523,7 @@ internal fun LedgerRowContent(
             Text(name, style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold, color = TextPrimary)
             Text(identity, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+            Text(styledDetail ?: androidx.compose.ui.text.AnnotatedString(detail), style = MaterialTheme.typography.bodySmall, color = TextSecondary)
         }
         val valueContent: @Composable () -> Unit = {
             Text(amount, style = amountStyle, color = TextPrimary,
@@ -548,7 +551,7 @@ internal fun LedgerRowContent(
                     Column(Modifier.weight(1f).alignBy(LastBaseline),
                         verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(identity, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
-                        Text(detail, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                        Text(styledDetail ?: androidx.compose.ui.text.AnnotatedString(detail), style = MaterialTheme.typography.bodySmall, color = TextSecondary)
                     }
                     if (secondary != null) {
                         Text(secondary, modifier = Modifier.width(amountColumnWidth).alignBy(LastBaseline),

@@ -737,7 +737,7 @@ private fun KoreaInvAppContent(
 
 private fun AccountProfile?.orEmptyAccountFilters(): List<HoldingAccountFilter> =
     this?.accounts?.map { account ->
-        HoldingAccountFilter(accountId = account.id, label = account.label)
+        HoldingAccountFilter(accountId = account.id, label = account.label, broker = account.broker)
     }.orEmpty()
 
 private fun Context.activityOrNull(): ComponentActivity? {

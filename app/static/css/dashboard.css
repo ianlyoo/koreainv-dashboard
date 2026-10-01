@@ -2829,3 +2829,9 @@ th { backdrop-filter: none; -webkit-backdrop-filter: none; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .summary-grid .summary-card { background: var(--panel-bg-secondary); }
 }
+
+/* Semantic emphasis uses the same light/dark theme tokens as portfolio returns. */
+.st-insight .st-value { font-weight: 600; }
+.st-insight .st-person { font-weight: 500; }
+.st-insight .st-accent { color: var(--accent-blue); }
+#val_realized_profit_month_sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
