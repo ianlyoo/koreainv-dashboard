@@ -1,0 +1,106 @@
+{
+  "orders": {
+    "result": {
+      "orders": [
+        {
+          "orderId": "buy-one",
+          "symbol": "AAPL",
+          "side": "BUY",
+          "orderType": "LIMIT",
+          "timeInForce": "DAY",
+          "status": "FILLED",
+          "quantity": "1.5",
+          "currency": "USD",
+          "price": "100",
+          "orderedAt": "2026-06-01T09:00:00+09:00",
+          "execution": {
+            "filledQuantity": "1.5",
+            "averageFilledPrice": "100",
+            "filledAmount": "150.0",
+            "commission": "0.30",
+            "tax": "0",
+            "filledAt": "2026-06-01T09:00:30+09:00",
+            "settlementDate": "2026-06-01"
+          }
+        },
+        {
+          "orderId": "buy-two",
+          "symbol": "AAPL",
+          "side": "BUY",
+          "orderType": "LIMIT",
+          "timeInForce": "DAY",
+          "status": "FILLED",
+          "quantity": "0.5",
+          "currency": "USD",
+          "price": "200",
+          "orderedAt": "2026-07-01T09:00:00+09:00",
+          "execution": {
+            "filledQuantity": "0.5",
+            "averageFilledPrice": "200",
+            "filledAmount": "100.0",
+            "commission": "0.20",
+            "tax": "0",
+            "filledAt": "2026-07-01T09:00:30+09:00",
+            "settlementDate": "2026-07-01"
+          }
+        },
+        {
+          "orderId": "sell-one",
+          "symbol": "AAPL",
+          "side": "SELL",
+          "orderType": "LIMIT",
+          "timeInForce": "DAY",
+          "status": "FILLED",
+          "quantity": "1",
+          "currency": "USD",
+          "price": "180",
+          "orderedAt": "2026-09-02T09:00:00+09:00",
+          "execution": {
+            "filledQuantity": "1",
+            "averageFilledPrice": "180",
+            "filledAmount": "180.0",
+            "commission": "0.40",
+            "tax": "0.10",
+            "filledAt": "2026-09-02T09:00:30+09:00",
+            "settlementDate": "2026-09-02"
+          }
+        },
+        {
+          "orderId": "sell-two",
+          "symbol": "AAPL",
+          "side": "SELL",
+          "orderType": "LIMIT",
+          "timeInForce": "DAY",
+          "status": "FILLED",
+          "quantity": "1",
+          "currency": "USD",
+          "price": "150",
+          "orderedAt": "2026-09-03T09:00:00+09:00",
+          "execution": {
+            "filledQuantity": "1",
+            "averageFilledPrice": "150",
+            "filledAmount": "150.0",
+            "commission": "0.30",
+            "tax": "0.10",
+            "filledAt": "2026-09-03T09:00:30+09:00",
+            "settlementDate": "2026-09-03"
+          }
+        }
+      ],
+      "hasNext": false,
+      "nextCursor": null
+    }
+  },
+  "exchange_rate": {
+    "result": {
+      "baseCurrency": "USD",
+      "quoteCurrency": "KRW",
+      "rate": "1410",
+      "midRate": "1400",
+      "basisPoint": "71.4",
+      "rateChangeType": "UP",
+      "validFrom": "2026-09-02T09:00:00+09:00",
+      "validUntil": "2026-09-02T09:01:00+09:00"
+    }
+  }
+}

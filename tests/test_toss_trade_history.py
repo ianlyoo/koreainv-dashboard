@@ -76,6 +76,7 @@ class TossTradeHistoryTests(unittest.TestCase):
 
         self.assertEqual(len(payload["items"]), 1)
         self.assertEqual(authorized_get.call_count, 2)
+        self.assertEqual(authorized_get.call_args_list[0].kwargs["params"]["from"], "2000-01-01")
         self.assertEqual(
             authorized_get.call_args_list[1].kwargs["params"]["cursor"], "next"
         )
@@ -207,7 +208,7 @@ class TossTradeHistoryTests(unittest.TestCase):
         )
 
         self.assertIsNone(rows[1].get("realized_profit_krw"))
-        self.assertEqual(rows[1]["profit_estimate_reason"], "원화 환산 환율 부족")
+        self.assertEqual(rows[1]["profit_estimate_reason"], "매도 시점 참고환율 정보 부족")
         self.assertFalse(result["profit_available"])
         self.assertEqual(result["unpriced_sell_count"], 1)
 

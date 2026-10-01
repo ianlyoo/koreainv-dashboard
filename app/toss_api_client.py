@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+from collections import OrderedDict
 import threading
 import time
 from collections.abc import Mapping
@@ -13,6 +15,63 @@ BASE_URL = "https://openapi.tossinvest.com"
 _TOKEN_BUFFER_SECONDS = 60
 _token_cache: dict[str, tuple[str, float]] = {}
 _token_lock = threading.RLock()
+_historical_fx_cache: OrderedDict[tuple[str, str], tuple[float, float]] = OrderedDict()
+_historical_fx_lock = threading.RLock()
+HISTORICAL_FX_SOURCE = "토스 매도 시점 참고환율(midRate) · 환차손익 제외"
+HISTORICAL_FX_WINDOW_TOLERANCE = datetime.timedelta(minutes=10)
+
+
+def _aware_timestamp(value: object) -> datetime.datetime | None:
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.utcoffset() is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _validated_historical_mid_rate(result: Mapping[str, object], filled_at: str) -> float:
+    """Validate the sale's requested quote, allowing ten minutes of window skew."""
+    requested = _aware_timestamp(filled_at)
+    valid_from = _aware_timestamp(result.get("validFrom"))
+    valid_until = _aware_timestamp(result.get("validUntil"))
+    rate = _as_float(result.get("midRate"))
+    if (
+        result.get("baseCurrency") != "USD" or result.get("quoteCurrency") != "KRW"
+        or requested is None or valid_from is None or valid_until is None
+        or valid_from >= valid_until
+        or valid_from - requested > HISTORICAL_FX_WINDOW_TOLERANCE
+        or requested - valid_until > HISTORICAL_FX_WINDOW_TOLERANCE
+        or not math.isfinite(rate) or rate <= 0
+    ):
+        return 0.0
+    return rate
+
+
+def _get_historical_usd_mid_rate(client_id: str, client_secret: str, filled_at: str) -> float:
+    if _aware_timestamp(filled_at) is None:
+        return 0.0
+    key = (_scope_key(client_id, client_secret), filled_at)
+    # Serialize misses across concurrent account loads; cap retention and briefly
+    # cache failures to avoid hammering missing historical windows on refresh.
+    with _historical_fx_lock:
+        cached = _historical_fx_cache.get(key)
+        if cached and time.monotonic() < cached[1]:
+            _historical_fx_cache.move_to_end(key)
+            return cached[0]
+        time.sleep(0.25)
+        try:
+            payload = _authorized_get(
+                "/api/v1/exchange-rate", client_id, client_secret,
+                params={"baseCurrency": "USD", "quoteCurrency": "KRW", "dateTime": filled_at},
+            )
+            rate = _validated_historical_mid_rate(_as_mapping(payload.get("result")), filled_at)
+        except Exception:
+            rate = 0.0
+        _historical_fx_cache[key] = (rate, time.monotonic() + (86400 if rate > 0 else 60))
+        _historical_fx_cache.move_to_end(key)
+        while len(_historical_fx_cache) > 1024:
+            _historical_fx_cache.popitem(last=False)
+        return rate
 
 
 def _scope_key(client_id: str, client_secret: str) -> str:
@@ -37,6 +96,14 @@ def _as_float(value: object) -> float:
         return 0.0
 
 
+def _optional_float(value: object) -> float | None:
+    try:
+        result = float(str(value))
+        return result if math.isfinite(result) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _error_detail(response: requests.Response, payload: object) -> str:
     body = _as_mapping(payload)
     error = _as_mapping(body.get("error"))
@@ -52,6 +119,8 @@ def _error_detail(response: requests.Response, payload: object) -> str:
 def clear_token_cache() -> None:
     with _token_lock:
         _token_cache.clear()
+    with _historical_fx_lock:
+        _historical_fx_cache.clear()
 
 
 def get_access_token(client_id: str, client_secret: str, force: bool = False) -> str:
@@ -98,6 +167,7 @@ def _authorized_get(
     account_seq: str | None = None,
     params: Mapping[str, str] | None = None,
     retry: bool = True,
+    rate_limit_retries: int = 2,
 ) -> Mapping[str, object]:
     token = get_access_token(client_id, client_secret)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -119,6 +189,13 @@ def _authorized_get(
             account_seq=account_seq,
             params=params,
             retry=False,
+            rate_limit_retries=rate_limit_retries,
+        )
+    if response.status_code == 429 and rate_limit_retries > 0:
+        time.sleep(0.5 * (3 - rate_limit_retries))
+        return _authorized_get(
+            path, client_id, client_secret, account_seq=account_seq,
+            params=params, retry=retry, rate_limit_retries=rate_limit_retries - 1,
         )
     if response.status_code != 200:
         raise RuntimeError(
@@ -310,6 +387,11 @@ def _normalize_order_rows(
                 "amount_krw": amount_krw,
                 "commission_native": commission_native,
                 "tax_native": tax_native,
+                "execution_costs_complete": all(
+                    _optional_float(execution.get(field)) is not None
+                    for field in ("commission", "tax")
+                ),
+                "filled_at": str(execution.get("filledAt") or ""),
                 "realized_profit_krw": None,
                 "realized_return_rate": None,
                 "realized_profit_estimated": False,
@@ -327,7 +409,7 @@ def _estimate_realized_profit(
     end_date: str,
     history_complete: bool = True,
 ) -> dict[str, object]:
-    """Estimate Toss realized P/L with a moving-average native-currency basis.
+    """Estimate FX-excluded P/L using native basis and historical sale midRate.
 
     The Toss order-history API exposes execution proceeds and costs but not the
     broker's realized P/L.  We reconstruct cost basis from all available prior
@@ -337,19 +419,21 @@ def _estimate_realized_profit(
     """
 
     positions: dict[tuple[str, str], dict[str, float]] = {}
-    unknown_basis: set[tuple[str, str]] = set()
+    unknown_basis: dict[tuple[str, str], str] = {}
     selected_sell_count = 0
     estimated_sell_count = 0
     domestic_profit = 0.0
     overseas_profit = 0.0
     total_buy_amount_krw = 0.0
     daily: dict[str, dict[str, object]] = {}
+    history_start = min((str(r.get("date") or "") for r in rows), default="")
 
     ordered = sorted(
         rows,
         key=lambda row: (
             str(row.get("date") or ""),
             str(row.get("time") or ""),
+            str(row.get("filled_at") or ""),
             str(row.get("order_no") or ""),
         ),
     )
@@ -366,8 +450,16 @@ def _estimate_realized_profit(
         tax = _as_float(row.get("tax_native"))
         trade_date = str(row.get("date") or "")
         selected = start_date.replace("-", "") <= trade_date <= end_date.replace("-", "")
+        row["profit_history_complete"] = history_complete
+        row["profit_history_start_date"] = history_start
+        costs_complete = row.get("execution_costs_complete", True) is True
+        amount_valid = math.isfinite(amount_native) and amount_native > 0
 
         if side in {"BUY", "매수"}:
+            if not costs_complete or not amount_valid:
+                unknown_basis[key] = "매수 체결 금액·수수료·세금 정보 부족"
+                positions.pop(key, None)
+                continue
             if key in unknown_basis:
                 continue
             position = positions.setdefault(key, {"quantity": 0.0, "cost": 0.0})
@@ -379,6 +471,11 @@ def _estimate_realized_profit(
             continue
         if selected:
             selected_sell_count += 1
+            row["realized_profit_krw"] = None
+            row["realized_return_rate"] = None
+            row["realized_profit_estimated"] = True
+            row.pop("profit_estimate_reason", None)
+            row["profit_rate_source"] = HISTORICAL_FX_SOURCE if currency == "USD" else "원화 거래" if currency == "KRW" else "지원하지 않는 통화"
         position = positions.get(key)
         if (
             key in unknown_basis
@@ -386,16 +483,19 @@ def _estimate_realized_profit(
             or quantity <= 0
             or position["quantity"] + 1e-9 < quantity
         ):
-            unknown_basis.add(key)
+            reason = unknown_basis.get(key, "매수 원가 이력 부족")
+            unknown_basis[key] = reason
             positions.pop(key, None)
             if selected:
-                row["profit_estimate_reason"] = "매수 원가 이력 부족"
+                row["profit_estimate_reason"] = reason
             continue
 
         allocated_cost = position["cost"] * (quantity / position["quantity"])
         proceeds = amount_native - commission - tax
         profit_native = proceeds - allocated_cost
-        rate = usd_exchange_rate if currency == "USD" else 1.0
+        # usd_exchange_rate is retained for caller compatibility/display only.
+        # Never use today's rate in historical realized P/L.
+        rate = _as_float(row.get("profit_exchange_rate")) if currency == "USD" else 1.0 if currency == "KRW" else 0.0
         position["quantity"] -= quantity
         position["cost"] -= allocated_cost
         if position["quantity"] <= 1e-9:
@@ -403,8 +503,16 @@ def _estimate_realized_profit(
 
         if not selected:
             continue
-        if currency != "KRW" and rate <= 0:
-            row["profit_estimate_reason"] = "원화 환산 환율 부족"
+        row["realized_profit_native"] = profit_native if costs_complete and amount_valid else None
+        row["buy_amount_native"] = allocated_cost
+        if not history_complete:
+            row["profit_estimate_reason"] = "거래 이력 조회 미완료"
+            continue
+        if not costs_complete or not amount_valid:
+            row["profit_estimate_reason"] = "매도 체결 금액·수수료·세금 정보 부족"
+            continue
+        if not math.isfinite(rate) or rate <= 0:
+            row["profit_estimate_reason"] = "지원하지 않는 통화" if currency not in {"KRW", "USD"} else "매도 시점 참고환율 정보 부족"
             continue
         profit_krw = profit_native * rate
         buy_amount_krw = allocated_cost * rate
@@ -459,7 +567,7 @@ def _estimate_realized_profit(
         "daily": [daily[key] for key in sorted(daily)],
         "profit_available": profit_available,
         "profit_complete": estimate_complete,
-        "profit_estimated": True,
+        "profit_estimated": selected_sell_count > 0,
         "estimated_sell_count": estimated_sell_count,
         "unpriced_sell_count": selected_sell_count - estimated_sell_count,
     }
@@ -479,6 +587,9 @@ def _fetch_closed_orders(
     for _ in range(100):
         params = {
             "status": "CLOSED",
+            # Live API defaults to recent history despite the spec's "all"
+            # wording. An explicit lower bound recovers earlier purchase basis.
+            "from": "2000-01-01",
             "to": end_date,
             "limit": "100",
         }
@@ -492,6 +603,9 @@ def _fetch_closed_orders(
             params=params,
         )
         result = _as_mapping(payload.get("result"))
+        if not isinstance(result.get("orders"), list) or not isinstance(result.get("hasNext"), bool):
+            history_complete = False
+            break
         orders.extend(_as_rows(result.get("orders")))
         has_next = bool(result.get("hasNext"))
         next_cursor = str(result.get("nextCursor") or "").strip()
@@ -535,6 +649,12 @@ def get_trade_history(
         start_date="0001-01-01",
         end_date=safe_end,
     )
+    for row in all_items:
+        if (row["side"] == "매도" and row["currency"] == "USD"
+                and safe_start.replace("-", "") <= str(row["date"]) <= safe_end.replace("-", "")):
+            row["profit_exchange_rate"] = _get_historical_usd_mid_rate(
+                client_id, client_secret, str(row["filled_at"]),
+            )
     estimate = _estimate_realized_profit(
         all_items,
         usd_exchange_rate=usd_rate,
@@ -557,7 +677,11 @@ def get_trade_history(
         "usd_exchange_rate": usd_rate,
         "profit_available": estimate["profit_available"],
         "profit_complete": estimate["profit_complete"],
-        "profit_estimated": True,
+        "profit_estimated": estimate["profit_estimated"],
+        "profit_history_complete": history_complete,
+        "profit_history_start_date": min((str(row["date"]) for row in all_items), default=""),
+        "profit_rate_source": HISTORICAL_FX_SOURCE,
+        "profit_fx_basis": "sale_historical_mid_rate",
         "estimated_sell_count": estimate["estimated_sell_count"],
         "unpriced_sell_count": estimate["unpriced_sell_count"],
     }

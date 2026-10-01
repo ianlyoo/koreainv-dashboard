@@ -79,6 +79,8 @@ class KisRepository(
     private val dashboardLoadMutex = Mutex()
     private val quoteRefreshMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
+    private val tossHistoricalFxMutex = Mutex()
+    private val tossHistoricalFxCache = TossHistoricalFxCache()
     private val tokenAliases = AuthTokenAliases(accounts)
     private val tokenCoordinator = AuthTokenCoordinator(
         load = { account ->
@@ -311,6 +313,7 @@ class KisRepository(
         token: String,
         includeAccount: Boolean,
         retryOnTokenError: Boolean = true,
+        rateLimitRetries: Int = 2,
     ): JsonObject? {
         val urlBuilder = "$TOSS_BASE_URL$path".toHttpUrlOrNull()?.newBuilder()
             ?: throw IllegalStateException("TOSS_INVALID_URL path=$path")
@@ -325,10 +328,14 @@ class KisRepository(
         client.newCall(builder.build()).awaitTextResponse().let { response ->
             ensureActiveSession()
             val payload = parseObject(response.text) ?: JsonObject()
+            if (response.code == 429 && rateLimitRetries > 0) {
+                delay((3 - rateLimitRetries) * 500L)
+                return getTossJson(account, path, query, token, includeAccount, retryOnTokenError, rateLimitRetries - 1)
+            }
             if (response.code == 401 && retryOnTokenError) {
                 val refreshed = tokenCoordinator.refreshToken(account, token)
                     ?: throw IllegalStateException("TOSS_TOKEN_REFRESH_FAILED path=$path")
-                return getTossJson(account, path, query, refreshed, includeAccount, false)
+                return getTossJson(account, path, query, refreshed, includeAccount, false, rateLimitRetries)
             }
             if (!response.isSuccessful) {
                 val error = jsonObject(payload, "error")
@@ -358,7 +365,8 @@ class KisRepository(
             trades = sortTradeRowsNewestFirst(payload.trades),
             profitAvailable = payload.profitAvailable,
             profitComplete = payload.profitComplete,
-            profitEstimated = true,
+            profitEstimated = payload.trades.any { it.side == "매도" },
+            tossHistoryNotes = payload.historyNotes,
             estimatedDomesticProfitKrw = payload.domesticProfitKrw,
             estimatedOverseasProfitKrw = payload.overseasProfitKrw,
             estimatedBuyAmountKrw = payload.totalBuyAmountKrw,
@@ -386,7 +394,9 @@ class KisRepository(
             .header("Authorization", "Bearer ${account.centralServerApiToken.trim()}")
             .build()
         ensureActiveSession()
-        client.newCall(request).awaitTextResponse().let { response ->
+        // The first annual history lookup may hydrate hundreds of FX windows.
+        val historyClient = client.newBuilder().readTimeout(300, TimeUnit.SECONDS).callTimeout(300, TimeUnit.SECONDS).build()
+        historyClient.newCall(request).awaitTextResponse().let { response ->
             ensureActiveSession()
             val body = parseObject(response.text) ?: JsonObject()
             if (!response.isSuccessful) {
@@ -397,8 +407,25 @@ class KisRepository(
             val result = jsonObject(body, "result") ?: JsonObject()
             number(result, "usd_exchange_rate").takeIf { it > 0.0 }?.let { lastKnownUsdRate = it }
             val summary = jsonObject(result, "summary") ?: JsonObject()
+            val trades = normalizeTossTradeRows(normalizeRows(result.get("items")), lastKnownUsdRate)
+            // Older central deployments use today's FX. Preserve their rows,
+            // but require a redeploy before presenting historical-rate profit.
+            if (!supportsTossHistoricalProxyProfit(result) && trades.any { it.side == "매도" && it.currency != "KRW" }) {
+                val reason = "개인 서버 업데이트 필요: 매도 시점 참고환율 미지원"
+                trades.filter { it.side == "매도" }.forEach {
+                    it.realizedProfitKrw = null
+                    it.realizedReturnRate = null
+                    it.realizedProfitEstimated = true
+                    it.profitEstimateReason = reason
+                }
+                return TossTradeHistoryPayload(
+                    trades = trades, domesticProfitKrw = 0.0, overseasProfitKrw = 0.0,
+                    totalBuyAmountKrw = 0.0, profitAvailable = false, profitComplete = false,
+                    unpricedSellCount = trades.count { it.side == "매도" }, historyNotes = listOf(reason),
+                )
+            }
             return TossTradeHistoryPayload(
-                trades = normalizeTossTradeRows(normalizeRows(result.get("items")), lastKnownUsdRate),
+                trades = trades,
                 domesticProfitKrw = number(summary, "domestic_realized_profit_krw"),
                 overseasProfitKrw = number(summary, "overseas_realized_profit_krw"),
                 totalBuyAmountKrw = number(summary, "total_buy_amount_krw"),
@@ -409,6 +436,10 @@ class KisRepository(
                     result.get("profit_complete")?.asBoolean ?: true
                 }.getOrDefault(true),
                 unpricedSellCount = number(result, "unpriced_sell_count").toInt(),
+                historyNotes = listOf(tossHistoryNote(
+                    string(result, "profit_history_start_date"),
+                    runCatching { result.get("profit_history_complete")?.asBoolean ?: false }.getOrDefault(false),
+                )),
             )
         }
     }
@@ -427,6 +458,7 @@ class KisRepository(
         for (page in 0 until 100) {
             val query = linkedMapOf(
                 "status" to "CLOSED",
+                "from" to "2000-01-01",
                 "to" to endIso,
                 "limit" to "100",
             )
@@ -437,8 +469,12 @@ class KisRepository(
                 query = query,
                 token = token,
                 includeAccount = true,
-            ) ?: break
-            val result = jsonObject(payload, "result") ?: break
+            )
+            val result = payload?.let { jsonObject(it, "result") }
+            if (result == null || result.get("orders")?.isJsonArray != true || result.get("hasNext")?.asJsonPrimitive?.isBoolean != true) {
+                historyComplete = false
+                break
+            }
             orders += normalizeRows(result.get("orders"))
             val hasNext = runCatching { result.get("hasNext")?.asBoolean ?: false }.getOrDefault(false)
             val nextCursor = string(result, "nextCursor")
@@ -470,31 +506,31 @@ class KisRepository(
             ?: lastKnownUsdRate
         if (usdRate > 0.0) lastKnownUsdRate = usdRate
         val allTrades = normalizeTossTradeRows(orders, usdRate)
+        val executions = orders.mapNotNull(::parseTossExecutionForEstimate).distinctBy { it.key }.map { execution ->
+            if (execution.side == "SELL" && execution.currency == "USD" && execution.date in startDate..endDate) {
+                execution.copy(saleMidRate = getTossHistoricalMidRate(account, token, execution.filledAt))
+            } else execution
+        }
         val estimate = estimateTossRealizedProfit(
-            executions = allTrades.map { trade ->
-                TossExecutionForEstimate(
-                    key = tossTradeEstimateKey(trade),
-                    date = trade.date,
-                    time = trade.time,
-                    symbol = trade.symbol,
-                    side = trade.side,
-                    currency = trade.currency,
-                    quantity = trade.quantity,
-                    amountNative = trade.amountNative,
-                    commissionNative = trade.commissionNative,
-                    taxNative = trade.taxNative,
-                )
-            },
+            executions = executions,
             startDate = startDate,
             endDate = endDate,
             usdExchangeRate = usdRate,
             historyComplete = historyComplete,
         )
         allTrades.forEach { trade ->
+            if (trade.side == "매도" && trade.date in startDate..endDate) {
+                trade.realizedProfitEstimated = true
+                trade.profitHistoryComplete = historyComplete
+                trade.profitHistoryStartDate = estimate.historyStartDate
+                trade.profitEstimateReason = estimate.reasonsByExecutionKey[tossTradeEstimateKey(trade)].orEmpty()
+            }
             estimate.profitsByExecutionKey[tossTradeEstimateKey(trade)]?.let { profit ->
                 trade.realizedProfitKrw = profit.realizedProfitKrw
                 trade.realizedReturnRate = profit.returnRate
                 trade.realizedProfitEstimated = true
+                trade.profitExchangeRate = profit.exchangeRate
+                trade.profitRateSource = profit.rateSource
             }
         }
         return TossTradeHistoryPayload(
@@ -505,8 +541,29 @@ class KisRepository(
             profitAvailable = estimate.profitAvailable,
             profitComplete = estimate.profitComplete,
             unpricedSellCount = estimate.unpricedSellCount,
+            historyNotes = listOf(tossHistoryNote(estimate.historyStartDate, historyComplete)),
         )
     }
+
+    private suspend fun getTossHistoricalMidRate(account: AccountCredential, token: String, filledAt: String): Double =
+        tossHistoricalFxMutex.withLock {
+            if (runCatching { OffsetDateTime.parse(filledAt) }.getOrNull() == null) return@withLock 0.0
+            val scope = oauthTokenScope(account)
+            tossHistoricalFxCache.get(scope, filledAt, System.currentTimeMillis())?.let { return@withLock it }
+            delay(250L)
+            val result = try {
+                getTossJson(
+                    account, "/api/v1/exchange-rate",
+                    mapOf("baseCurrency" to "USD", "quoteCurrency" to "KRW", "dateTime" to filledAt),
+                    token, includeAccount = false,
+                )?.let { jsonObject(it, "result") }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            tossHistoricalFxCache.put(scope, filledAt, result, System.currentTimeMillis())
+        }
 
     private fun normalizeTossTradeRows(rows: List<JsonObject>, usdRate: Double): List<TradeRow> =
         rows.mapNotNull { row ->
@@ -564,6 +621,11 @@ class KisRepository(
                 realizedProfitEstimated = runCatching {
                     row.get("realized_profit_estimated")?.asBoolean ?: false
                 }.getOrDefault(false),
+                profitExchangeRate = row.get("profit_exchange_rate")?.takeUnless { it.isJsonNull }?.let { runCatching { it.asDouble }.getOrNull() },
+                profitRateSource = string(row, "profit_rate_source"),
+                profitEstimateReason = string(row, "profit_estimate_reason"),
+                profitHistoryStartDate = string(row, "profit_history_start_date"),
+                profitHistoryComplete = runCatching { row.get("profit_history_complete")?.asBoolean }.getOrNull(),
             )
         }.distinctBy { listOf(it.orderNo, it.date, it.symbol, it.side, it.quantity, it.amountNative) }
 
@@ -752,6 +814,11 @@ class KisRepository(
                     realizedProfitKrw = trade.realizedProfitKrw,
                     returnRate = trade.realizedReturnRate,
                     realizedProfitEstimated = trade.realizedProfitEstimated,
+                    profitExchangeRate = trade.profitExchangeRate,
+                    profitRateSource = trade.profitRateSource,
+                    profitEstimateReason = trade.profitEstimateReason,
+                    profitHistoryStartDate = trade.profitHistoryStartDate,
+                    profitHistoryComplete = trade.profitHistoryComplete,
                     accountId = account.id,
                     accountLabel = account.label,
                     broker = Broker.normalize(account.broker),
@@ -764,6 +831,7 @@ class KisRepository(
             profitEstimated = profitEstimated,
             unpricedSellCount = unpricedSellCount,
             accountErrors = accountErrors,
+            tossHistoryNotes = accountPayloads.flatMap { it.tossHistoryNotes },
         )
     }
 
@@ -1862,6 +1930,7 @@ private data class TradeHistoryLoadData(
     val estimatedOverseasProfitKrw: Double = 0.0,
     val estimatedBuyAmountKrw: Double = 0.0,
     val unpricedSellCount: Int = 0,
+    val tossHistoryNotes: List<String> = emptyList(),
 )
 
 private data class TossTradeHistoryPayload(
@@ -1872,6 +1941,7 @@ private data class TossTradeHistoryPayload(
     val profitAvailable: Boolean,
     val profitComplete: Boolean,
     val unpricedSellCount: Int,
+    val historyNotes: List<String> = emptyList(),
 )
 
 private data class RealizedTradeProfitRow(
@@ -1903,6 +1973,11 @@ private data class RealizedTradeProfitRow(
         var realizedProfitKrw: Double? = null,
         var realizedReturnRate: Double? = null,
         var realizedProfitEstimated: Boolean = false,
+        var profitExchangeRate: Double? = null,
+        var profitRateSource: String = "",
+        var profitEstimateReason: String = "",
+        var profitHistoryStartDate: String = "",
+        var profitHistoryComplete: Boolean? = null,
     )
 
 private fun normalizeSide(code: String, label: String): String {

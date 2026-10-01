@@ -40,7 +40,8 @@ fun TradeDetailScreen(
     val currencyMode = currencyPreference.mode
     val isBuy = trade.side == stringResource(R.string.buy)
     val sideColor = if (isBuy) Success else Error
-    val hasSupplementaryMetrics = trade.realizedProfitKrw != null || trade.returnRate != null
+    val hasSupplementaryMetrics = trade.realizedProfitKrw != null || trade.returnRate != null ||
+        trade.profitEstimateReason.isNotBlank() || trade.profitRateSource.isNotBlank() || trade.profitHistoryComplete != null
 
     DashboardScaffold(
         topBar = {
@@ -128,6 +129,18 @@ fun TradeDetailScreen(
                                     formatSignedPercent(it),
                                     valueColor = if (it >= 0) Success else Error,
                                 )
+                            }
+                            if (trade.profitEstimateReason.isNotBlank()) {
+                                ResponsiveDetailRow("손익 미산출 사유", trade.profitEstimateReason)
+                            }
+                            if (trade.profitRateSource.isNotBlank()) {
+                                ResponsiveDetailRow("손익 환율 기준", trade.profitRateSource)
+                            }
+                            trade.profitExchangeRate?.takeIf { it > 0.0 }?.let {
+                                ResponsiveDetailRow("적용 참고환율", "$it KRW/${trade.currency}")
+                            }
+                            trade.profitHistoryComplete?.let {
+                                ResponsiveDetailRow("조회 가능 체결 이력", "${trade.profitHistoryStartDate.ifBlank { "없음" }}부터 · ${if (it) "페이지 조회 완료(이전 원가 보장 안 됨)" else "조회 미완료"}")
                             }
                         }
                     }

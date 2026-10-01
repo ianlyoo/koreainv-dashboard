@@ -527,15 +527,16 @@ fun TradeSummaryCard(
                     append(selectedRangeLabel)
                     append(" · 매도 실현 손익")
                     if (!data.profitAvailable) {
-                        append(" · 토스 추정 불가(원가 이력 부족)")
+                        append(" · 토스 손익 미산출(원가·환율·체결 정보 확인)")
                     } else {
-                        if (data.profitEstimated) append(" · 토스 추정 손익 포함")
+                        if (data.profitEstimated) append(" · 토스 추정 손익 포함 · 매도 시점 참고환율(midRate) · 환차손익 제외")
                         if (!data.profitComplete) {
-                            append(" · 원가 부족 ")
+                            append(" · 원가·환율·체결 정보 부족 ")
                             append(data.unpricedSellCount)
                             append("건 미산출")
                         }
                     }
+                    data.tossHistoryNotes.forEach { append(" · $it") }
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
@@ -577,7 +578,8 @@ fun TradeItemCard(
     val realizedProfit = trade.realizedProfitKrw?.takeIf { !isBuy }
     val profitText = realizedProfit?.let {
         "${if (trade.realizedProfitEstimated) "손익(추정)" else "손익"} ${formatCurrencyAmount(it, currencyMode, usdRate, signed = true)}"
-    }
+    }?.let { value -> value + trade.profitRateSource.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty() }
+        ?: trade.profitEstimateReason.takeIf { !isBuy && it.isNotBlank() }?.let { "손익 미산출 · $it" }
     PremiumListItem(onClick = onClick) {
         LedgerRowContent(
             name = trade.name,

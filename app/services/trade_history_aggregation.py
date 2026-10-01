@@ -199,6 +199,7 @@ def fetch_aggregated_trade_history(
     all_profit_complete = True
     profit_estimated = False
     unpriced_sell_count = 0
+    toss_history_notes: list[str] = []
 
     for account, payload_value, error in results:
         if error:
@@ -213,6 +214,11 @@ def fetch_aggregated_trade_history(
             continue
         payload = payload_value if isinstance(payload_value, Mapping) else {}
         successful_accounts += 1
+        if account.broker == "toss":
+            earliest = str(payload.get("profit_history_start_date") or "없음")
+            coverage = "페이지 조회 완료(이전 원가 보장 안 됨)" if payload.get("profit_history_complete") else "이력 조회 미완료"
+            note = str(payload.get("profit_history_note") or f"조회 가능 체결 이력 {earliest}부터 · {coverage}")
+            toss_history_notes.append(f"{account.label}: {note}")
         summary = payload.get("summary", {})
         account_profit_available = bool(
             payload.get("profit_available", account.broker == "kis")
@@ -314,5 +320,6 @@ def fetch_aggregated_trade_history(
         "profit_complete": profit_complete,
         "profit_estimated": profit_estimated,
         "unpriced_sell_count": unpriced_sell_count,
+        "toss_history_notes": toss_history_notes,
         "account_errors": errors,
     }
