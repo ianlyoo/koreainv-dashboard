@@ -7,12 +7,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.network.insight.*
+import com.koreainv.dashboard.ui.theme.LocalDashboardColors
 
 internal val insightSectionLabels = linkedMapOf("overview" to "개요", "financial" to "재무", "analyst" to "의견", "options" to "옵션", "insider" to "내부자", "news" to "뉴스")
-@Composable internal fun InsightRows(rows:List<Pair<String,String>>) { Column(verticalArrangement=Arrangement.spacedBy(12.dp)) { rows.forEach { (label,value) -> ResponsiveDetailRow(label,value) } } }
-@Composable internal fun InsightHeading(title:String) { Column(Modifier.padding(top=24.dp,bottom=12.dp)) { HorizontalDivider(); Spacer(Modifier.height(24.dp)); Text(title,style=MaterialTheme.typography.titleLarge) } }
+@Composable internal fun InsightRows(rows:List<Pair<String,String>>) { Column(verticalArrangement=Arrangement.spacedBy(16.dp)) { rows.forEach { (label,value) -> ResponsiveDetailRow(label,value) } } }
+@Composable internal fun InsightHeading(title:String) {
+    val colors = LocalDashboardColors.current
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp)) {
+        HorizontalDivider(color = colors.surfaceBorder)
+        Spacer(Modifier.height(24.dp))
+        Text(title, style = MaterialTheme.typography.titleLarge)
+    }
+}
 @Composable private fun InsightDataGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium)
         content()
     }
@@ -57,10 +65,9 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
     }
     item("financial") {
         InsightHeading("재무")
-        Spacer(Modifier.height(8.dp))
         InsightSectionNotice(s,"revenue",onRetry)
         s.revenue?.let { r ->
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 InsightDataGroup("분기 매출 · USD") { InsightRevenueChart(r) }
                 InsightDisclosureRow("전체 ${r.quarters.size}개 분기 정확한 값", "financial" in expanded, { toggle("financial") })
             }
@@ -74,10 +81,9 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
     }
     item("analyst") {
         InsightHeading("애널리스트")
-        Spacer(Modifier.height(8.dp))
         InsightSectionNotice(s,"analyst",onRetry)
         s.analyst?.let { a ->
-            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 InsightRows(listOf("종합 의견" to insightText(a.label),"참여" to insightNumber(a.analystCount,"명")))
                 InsightDataGroup("투자의견 분포") {
                     InsightBarsChart(remember(a) { listOf("매수" to a.dist?.buy,"보유" to a.dist?.hold,"매도" to a.dist?.sell) })
@@ -110,13 +116,12 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
     }
     item("options") {
         InsightHeading("옵션")
-        Spacer(Modifier.height(8.dp))
         InsightSectionNotice(s,"options",onRetry)
         s.options?.let { o ->
             Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 if(o.optionable==false) Text("옵션을 지원하지 않는 종목입니다.")
                 InsightRows(listOf("거래량 · 전체 만기" to insightNumber(o.volume,"계약"),"거래량 PCR (풋/콜)" to insightNumber(o.putCallRatioVolume),"미결제약정 PCR (풋/콜)" to insightNumber(o.putCallRatioOpenInterest)))
-                Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                     InsightShareChart("거래량 구성",o.volumeShare)
                     InsightShareChart("미결제약정 구성",o.openInterestShare)
                     InsightShareChart("프리미엄 구성",o.premiumShare)
@@ -154,7 +159,7 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
         val uri=LocalUriHandler.current
         Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Text(n.title,style=MaterialTheme.typography.titleMedium)
-            Text(listOfNotNull(n.publisher, n.publishedAt).joinToString(" · "),style=MaterialTheme.typography.bodyMedium)
+            Text(listOfNotNull(n.publisher, n.publishedAt).joinToString(" · "),style=MaterialTheme.typography.bodyMedium, color=LocalDashboardColors.current.textSecondary)
             var failed by remember(n.link) { mutableStateOf(false) }
             if(insightSafeLink(n.link)) TextButton(onClick={failed=runCatching { uri.openUri(n.link) }.isFailure},modifier=Modifier.heightIn(min=48.dp)) { Text("원문 열기 ↗") }
             if(failed) Text("원문을 열 수 없습니다.")
@@ -170,7 +175,7 @@ internal fun insightSectionItems(s:InsightSnapshot,expanded:Set<String>,toggle:(
     }
     if ("ledger" in expanded) insightLedgerGroups(s).forEach { group ->
         item("ledger_group_${group.key}") {
-            Text(group.title, Modifier.padding(top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall)
+            Text(group.title, Modifier.padding(top = 16.dp, bottom = 8.dp), style = MaterialTheme.typography.titleMedium)
         }
         group.rows.forEach { row ->
             item("ledger_${group.key}_${row.key}") { InsightLedgerField(row) }

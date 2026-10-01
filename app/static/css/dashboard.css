@@ -2687,7 +2687,7 @@ th { backdrop-filter: none; -webkit-backdrop-filter: none; }
 .st-source { font-size: 11px; color: var(--text-sub); }
 .st-source strong { color: var(--accent-gold); }
 .st-note { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
-.st-section { border-top: 1px solid var(--border-subtle); padding-top: 22px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.st-section { border-top: 1px solid var(--border-subtle); padding-top: 24px; min-width: 0; display: flex; flex-direction: column; gap: 24px; }
 .st-heading h3 { margin: 0; color: var(--text-main); font-size: 15px; font-weight: 600; letter-spacing: -.02em; }
 .st-heading > span { color: var(--text-muted); font-size: 10px; overflow-wrap: anywhere; }
 .st-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 24px; }
@@ -2758,7 +2758,7 @@ th { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 /* Native detail charts share the existing unboxed reading surface. */
 .st-chart-figure { margin: 4px 0 10px; min-width: 0; }
-.st-chart-figure figcaption { margin-bottom: 10px; color: var(--text-sub); font-size: 11px; }
+.st-chart-figure figcaption { margin-bottom: 16px; color: var(--text-sub); font-size: 11px; }
 .st-chart-wrap { position: relative; height: 210px; min-width: 0; width: 100%; }
 .st-chart-wrap--short { height: 145px; }
 .st-chart-wrap canvas:focus-visible { outline: 1px solid var(--accent-gold); outline-offset: 3px; }

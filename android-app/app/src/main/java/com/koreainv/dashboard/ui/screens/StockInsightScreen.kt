@@ -67,12 +67,12 @@ fun StockInsightScreen(
                 })
             }
             if (notice != null) add(InsightListItem("notice", "overview") { Text(notice) })
+            add(InsightListItem("company", "overview") {
+                InsightCompany(s, displayName, symbol, marketType)
+            })
             add(InsightListItem("chart", "overview") {
                 InsightSectionNotice(s, "bars", retry)
                 InsightPriceChart(s.bars)
-            })
-            add(InsightListItem("company", "overview") {
-                InsightCompany(s, displayName, symbol, marketType)
             })
             addAll(insightSectionItems(s, expanded, toggle, retry))
         }
@@ -84,8 +84,8 @@ fun StockInsightScreen(
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp,
-                    top = padding.calculateTopPadding() + 12.dp, bottom = padding.calculateBottomPadding() + 108.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    top = padding.calculateTopPadding() + 20.dp, bottom = padding.calculateBottomPadding() + 120.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 when {
@@ -102,7 +102,9 @@ fun StockInsightScreen(
                             TextButton(onClick = retry, modifier = Modifier.heightIn(min = 48.dp)) { Text("다시 시도") }
                         }
                     }
-                    else -> items(contentItems, key = { it.key }) { it.content() }
+                    else -> items(contentItems, key = { it.key }) {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) { it.content() }
+                    }
                 }
             }
         }
@@ -121,15 +123,15 @@ private fun InsightCompany(s: InsightSnapshot, displayName: String, symbol: Stri
         change > 0 -> colors.success
         else -> colors.error
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(displayName, style = MaterialTheme.typography.titleLarge)
+        Text("$symbol · $marketType", style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
             Text(insightPrice(s.header?.price), style = MaterialTheme.typography.displayLarge, modifier = Modifier.clearAndSetSemantics { contentDescription = "현재가 ${insightNumber(s.header?.price)} USD" })
             Text("USD", style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary,
                 modifier = Modifier.padding(bottom=5.dp))
         }
         Text(insightSigned(change, "%"), style = MaterialTheme.typography.titleMedium, color = changeColor)
-        Text(displayName, style = MaterialTheme.typography.titleLarge)
-        Text("$symbol · $marketType", style = MaterialTheme.typography.bodyMedium)
     }
 }
 

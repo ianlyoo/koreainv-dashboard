@@ -2084,14 +2084,14 @@
             const a = s.analyst;
             const counts = ['buy', 'hold', 'sell'].map(key => count(a?.dist?.[key]));
             const total = counts.reduce((sum, n) => sum + (n ?? 0), 0);
-            if (counts.every(n => n !== null) && total > 0 && count(a?.analystCount) === total) specs.push({ id: 'consensus', title: `애널리스트 의견 · 총 ${total}명`, labels: ['의견 비중'], horizontal: true, stacked: true, unit: '%', datasets: counts.map((n, i) => ({ label: `${['매수', '보유', '매도'][i]} ${n}명`, data: [n / total * 100], color: ['teal', 'neutral', 'coral'][i] })) });
+            if (counts.every(n => n !== null) && total > 0 && count(a?.analystCount) === total) specs.push({ id: 'consensus', title: `애널리스트 의견 · 총 ${total}명`, labels: ['의견 비중'], horizontal: true, stacked: true, unit: '%', datasets: counts.map((n, i) => ({ label: `${['매수', '보유', '매도'][i]} ${n}명`, data: [n / total * 100], color: ['teal', 'amber', 'coral'][i] })) });
             const low = nonnegative(a?.target?.low), mean = nonnegative(a?.target?.mean), high = nonnegative(a?.target?.high);
             const current = nonnegative(s.header?.price ?? state.data?.financials?.currentPrice);
             if (low !== null && mean !== null && high !== null && low <= mean && mean <= high) {
                 specs.push({ id: 'targets', title: '목표가 범위와 현재가 · USD', scatter: true, unit: 'USD', datasets: [
-                    { label: '목표가 범위', data: [{ x: low, y: 0 }, { x: high, y: 0 }], color: 'neutral', showLine: true, pointStyle: 'rect' },
+                    { label: '목표가 범위', data: [{ x: low, y: 0 }, { x: high, y: 0 }], color: 'teal', showLine: true, pointStyle: 'rect' },
                     { label: '평균 목표가', data: [{ x: mean, y: 0 }], color: 'blue', pointStyle: 'circle' },
-                    ...(current === null ? [] : [{ label: '현재가', data: [{ x: current, y: 0.4 }], color: 'teal', pointStyle: 'triangle' }]),
+                    ...(current === null ? [] : [{ label: '현재가', data: [{ x: current, y: 0.4 }], color: 'neutral', pointStyle: 'triangle' }]),
                 ] });
             }
             const o = s.options;
@@ -2100,9 +2100,9 @@
                     const call = nonnegative(pair?.call), put = nonnegative(pair?.put);
                     return call !== null && put !== null && call <= 100 && put <= 100 && Math.abs(call + put - 100) <= 0.05;
                 });
-                if (shares.length) specs.push({ id: 'shares', title: '옵션 콜·풋 비중', labels: shares.map(([label]) => label), horizontal: true, stacked: true, unit: '%', datasets: ['call', 'put'].map((key, i) => ({ label: i ? '풋' : '콜', data: shares.map(([, pair]) => Number(pair[key])), color: i ? 'coral' : 'teal' })) });
+                if (shares.length) specs.push({ id: 'shares', title: '옵션 콜·풋 비중', labels: shares.map(([label]) => label), horizontal: true, stacked: true, unit: '%', datasets: ['call', 'put'].map((key, i) => ({ label: i ? '풋' : '콜', data: shares.map(([, pair]) => Number(pair[key])), color: i ? 'violet' : 'blue' })) });
                 const ratios = ['d3', 'd7', 'd30'].map(key => ({ label: `${key.slice(1)}일 평균`, value: o.optionVolumeVsAvg?.windows?.[key]?.available === true ? nonnegative(o.optionVolumeVsAvg.windows[key].ratioPct) : null }));
-                if (ratios.some(r => r.value !== null)) specs.push({ id: 'volume-comparison', title: '동일 시각 누적 거래량 · 평균 대비', labels: ratios.map(r => r.label), horizontal: true, unit: '%', reference: 100, datasets: [{ label: '평균 대비', data: ratios.map(r => r.value), color: 'blue' }] });
+                if (ratios.some(r => r.value !== null)) specs.push({ id: 'volume-comparison', title: '동일 시각 누적 거래량 · 평균 대비', labels: ratios.map(r => r.label), horizontal: true, unit: '%', reference: 100, datasets: [{ label: '평균 대비', data: ratios.map(r => r.value), color: ['blue', 'teal', 'violet'] }] });
             }
             const buys = count(s.insider?.buyCount), sells = count(s.insider?.sellCount);
             if (buys !== null && sells !== null) specs.push({ id: 'insider-counts', title: `최근 ${insightFinite(s.insider?.window) ?? '—'}일 내부자 거래 건수`, labels: ['매수', '매도'], horizontal: true, unit: '건', datasets: [{ label: '거래 건수', data: [buys, sells], color: ['teal', 'coral'] }] });
@@ -2113,8 +2113,8 @@
             disposeInsightDetailCharts();
             if (typeof Chart === 'undefined') return;
             const palette = resolvedTheme() === 'light'
-                ? { blue: '#2865b4', teal: '#087d72', coral: '#bc4d42', neutral: '#7b808a' }
-                : { blue: '#69aaff', teal: '#42c7b4', coral: '#f38b7c', neutral: '#969eac' };
+                ? { blue: '#2865b4', teal: '#087d72', violet: '#7440cc', amber: '#97620b', coral: '#bc4d42', neutral: '#7b808a' }
+                : { blue: '#91bdff', teal: '#85ced9', violet: '#ccbdec', amber: '#e8c083', coral: '#ffa5a5', neutral: '#969eac' };
             const textColor = themeColor('--chart-text');
             const gridColor = themeColor('--chart-grid');
             for (const spec of saveTickerDetailChartSpecs(state)) {
