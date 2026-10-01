@@ -13,6 +13,7 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalConfiguration
@@ -20,6 +21,7 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import com.koreainv.dashboard.network.insight.*
 import com.koreainv.dashboard.ui.theme.LocalDashboardColors
+import com.koreainv.dashboard.ui.theme.insightChartColors
 import kotlin.math.*
 
 @Composable internal fun InsightPriceChart(allBars: List<PriceBar>) {
@@ -27,7 +29,7 @@ import kotlin.math.*
     var candle by remember { mutableStateOf(true) }
     val bars = remember(allBars, months) { insightBars(allBars, months) }
     val selected = remember(bars) { mutableIntStateOf((bars.size - 1).coerceAtLeast(0)) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             listOf(1,3,6,12).forEach { m -> TextButton(onClick = { months=m }, modifier = Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp).then(if(months==m) Modifier.liquidGlass(radius=28.dp,role=GlassRole.Control) else Modifier)) { Text(if(m==12) "1Y" else "${m}M") } }
             TextButton(onClick={candle=!candle}, modifier=Modifier.heightIn(min=48.dp).semantics { contentDescription = if(candle) "캔들 차트 표시 중, 라인으로 전환" else "라인 차트 표시 중, 캔들로 전환" }) { Text(if(candle) "라인" else "캔들") }
@@ -40,6 +42,7 @@ import kotlin.math.*
 }
 @Composable private fun InsightPricePlot(bars:List<PriceBar>,candle:Boolean,selected:MutableIntState) {
     val colors=LocalDashboardColors.current
+    val accents = insightChartColors
     val bounds=remember(bars) { bars.minOf{it.low} to bars.maxOf{it.high} }
     val plotHeight = if (LocalConfiguration.current.screenHeightDp < 760) 176.dp else 216.dp
     Column {
@@ -56,39 +59,51 @@ import kotlin.math.*
                 val maxVolume=bars.maxOf{it.volume}.coerceAtLeast(1.0)
                 onDrawBehind {
                     for(i in 0..3) { val yy=i*size.height*.24f; drawLine(colors.surfaceBorder,Offset(0f,yy),Offset(size.width,yy),1f) }
-                    if(!candle) drawPath(path,colors.success,style=androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                    if(!candle) drawPath(path,accents.blue,style=androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
                     bars.forEachIndexed { i,b ->
                         val color=if(b.close>=b.open) colors.success else colors.error
                         if(candle) { drawLine(color,Offset(x(i),y(b.high)),Offset(x(i),y(b.low)),1f); drawRect(color,Offset(x(i)-step*.3f,min(y(b.open),y(b.close))),Size(max(1f,step*.6f),max(1f,abs(y(b.open)-y(b.close))))) }
                         val h=(b.volume/maxVolume*size.height*.20).toFloat()
-                        drawRect(color.copy(alpha=.55f),Offset(x(i)-step*.3f,size.height-h),Size(max(1f,step*.6f),h))
+                        drawRect(color.copy(alpha=.32f),Offset(x(i)-step*.3f,size.height-h),Size(max(1f,step*.6f),h))
                     }
                     val i=selected.intValue.coerceIn(bars.indices)
                     drawLine(colors.textSecondary,Offset(x(i),0f),Offset(x(i),size.height),1f)
-                    drawCircle(colors.success,4.dp.toPx(),Offset(x(i),y(bars[i].close)))
+                    drawCircle(colors.background,6.dp.toPx(),Offset(x(i),y(bars[i].close)))
+                    drawCircle(accents.blue,4.dp.toPx(),Offset(x(i),y(bars[i].close)))
                 }
             })
         Row(Modifier.fillMaxWidth().padding(top=4.dp),horizontalArrangement=Arrangement.SpaceBetween) {
             Text(bars.first().date, style=MaterialTheme.typography.labelSmall, color=colors.textSecondary)
             Text(bars.last().date, style=MaterialTheme.typography.labelSmall, color=colors.textSecondary)
         }
+        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            InsightChartKey(if (candle) "상승" else "종가", if (candle) colors.success else accents.blue)
+            if (candle) InsightChartKey("하락", colors.error)
+        }
     }
 }
 @Composable private fun InsightSelectedBar(bars:List<PriceBar>,selected:MutableIntState) {
     val i=selected.intValue.coerceIn(bars.indices); val b=bars[i]
-    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically) {
             Text(b.date,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall)
             TextButton(onClick={selected.intValue=i-1},enabled=i>0,modifier=Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp)) { Text("이전") }
             TextButton(onClick={selected.intValue=i+1},enabled=i<bars.lastIndex,modifier=Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp)) { Text("다음") }
         }
         val values=listOf("시가" to b.open,"고가" to b.high,"저가" to b.low,"종가" to b.close)
-        values.chunked(if (LocalDensity.current.fontScale > 1.2f) 2 else 4).forEach { chunk ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                chunk.forEach { (label, value) ->
-                    Column(Modifier.weight(1f).clearAndSetSemantics { contentDescription = "$label ${insightNumber(value)} USD" }) {
-                        Text(label, style = MaterialTheme.typography.labelMedium)
-                        Text(insightPrice(value), style = MaterialTheme.typography.bodyMedium)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val columns = if (maxWidth < 360.dp || LocalDensity.current.fontScale > 1.2f) 2 else 4
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                values.chunked(columns).forEach { chunk ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        chunk.forEach { (label, value) ->
+                            Column(Modifier.weight(1f).clearAndSetSemantics {
+                                contentDescription = "$label ${insightNumber(value)} USD"
+                            }, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(label, style = MaterialTheme.typography.bodyMedium, color = LocalDashboardColors.current.textSecondary)
+                                Text(insightPrice(value), style = MaterialTheme.typography.titleSmall)
+                            }
+                        }
                     }
                 }
             }
@@ -98,13 +113,17 @@ import kotlin.math.*
 }
 @Composable internal fun InsightBarsChart(values:List<Pair<String,Double?>>,baseline:Double?=null) {
     val colors=LocalDashboardColors.current
+    val accents = insightChartColors
+    val seriesColors = if (baseline == null) listOf(accents.teal, accents.amber, accents.coral)
+        else listOf(accents.blue, accents.teal, accents.violet)
     val maxValue=remember(values,baseline) { max(values.mapNotNull{it.second}.maxOrNull() ?: 0.0,baseline ?: 0.0).coerceAtLeast(1.0) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        values.forEach { (label,value) ->
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        values.forEachIndexed { index, (label,value) ->
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ResponsiveDetailRow(label,insightNumber(value,if(baseline!=null) "%" else ""))
                 Canvas(Modifier.fillMaxWidth().height(16.dp).clearAndSetSemantics{}) {
-                    value?.let { drawRect(colors.success,size=Size((size.width*it/maxValue).toFloat().coerceIn(0f,size.width),size.height*.6f)) }
+                    drawRect(colors.surfaceMuted, size = Size(size.width, size.height * .6f))
+                    value?.let { drawRect(seriesColors[index % seriesColors.size],size=Size((size.width*it/maxValue).toFloat().coerceIn(0f,size.width),size.height*.6f)) }
                     baseline?.let { val x=(size.width*it/maxValue).toFloat(); drawLine(colors.textSecondary,Offset(x,0f),Offset(x,size.height),2f) }
                 }
             }
@@ -113,42 +132,46 @@ import kotlin.math.*
 }
 @Composable internal fun InsightShareChart(label:String,share:InsightShare?) {
     val colors=LocalDashboardColors.current
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
+    val accents = insightChartColors
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("콜 ${insightNumber(share?.call,"%")}", Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
-            Text("풋 ${insightNumber(share?.put,"%")}", Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary,
-                textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            InsightChartKey("콜 ${insightNumber(share?.call,"%")}", accents.blue, Modifier.weight(1f))
+            InsightChartKey("풋 ${insightNumber(share?.put,"%")}", accents.violet, Modifier.weight(1f), endAligned = true)
         }
         val call=share?.call; val put=share?.put
         if(call!=null && put!=null && call>=0 && put>=0 && call+put>0) Canvas(Modifier.fillMaxWidth().height(12.dp).clearAndSetSemantics{}) {
             val width=(size.width*call/(call+put)).toFloat()
-            drawRect(colors.success,size=Size(width,size.height)); drawRect(colors.error,Offset(width,0f),Size(size.width-width,size.height))
+            drawRect(accents.blue,size=Size(width,size.height)); drawRect(accents.violet,Offset(width,0f),Size(size.width-width,size.height))
+            if (width > 0f && width < size.width) drawLine(colors.background, Offset(width, 0f), Offset(width, size.height), 2.dp.toPx())
         }
     }
 }
 @Composable internal fun InsightTargetChart(target:InsightTarget?,price:Double?) {
     val colors=LocalDashboardColors.current
+    val accents = insightChartColors
     val points=listOfNotNull(target?.low,target?.high,target?.mean,price)
     if(points.size<2) return
     val low=points.min();val high=points.max();val span=(high-low).coerceAtLeast(1.0)
     Canvas(Modifier.fillMaxWidth().height(36.dp).semantics { contentDescription="목표가 범위와 현재가. 정확한 값은 다음 행에 표시됩니다." }) {
         fun x(v:Double)=((v-low)/span*(size.width-16.dp.toPx())+8.dp.toPx()).toFloat()
-        drawLine(colors.success.copy(alpha = .45f),Offset(x(target?.low ?: low),size.height/2),Offset(x(target?.high ?: high),size.height/2),6.dp.toPx())
-        target?.mean?.let{drawCircle(colors.success,6.dp.toPx(),Offset(x(it),size.height/2))}
+        drawLine(accents.teal,Offset(x(target?.low ?: low),size.height/2),Offset(x(target?.high ?: high),size.height/2),6.dp.toPx())
+        target?.mean?.let{drawCircle(colors.background,8.dp.toPx(),Offset(x(it),size.height/2));drawCircle(accents.blue,6.dp.toPx(),Offset(x(it),size.height/2))}
         price?.let{drawLine(colors.textPrimary,Offset(x(it),0f),Offset(x(it),size.height),3.dp.toPx())}
     }
 }
 
 @Composable internal fun InsightRevenueChart(revenue: InsightRevenue) {
-    val colors = LocalDashboardColors.current
+    val accents = insightChartColors
     val quarters = revenue.quarters
     if (quarters.isEmpty()) { Text("제공된 분기 매출이 없습니다."); return }
     var selected by remember(revenue) { mutableIntStateOf(0) }
     val maxRevenue = remember(revenue) { quarters.mapNotNull { it.revenue }.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0 }
     Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            InsightChartKey("선택 분기", accents.blue)
+            InsightChartKey("다른 분기", accents.teal)
+        }
         Canvas(Modifier.fillMaxWidth().height(150.dp).semantics {
             contentDescription = "회계 분기별 매출 막대 차트. 아래 분기 버튼과 전체 정확한 값에서 확인하세요."
         }.pointerInput(revenue) {
@@ -158,17 +181,27 @@ import kotlin.math.*
             quarters.forEachIndexed { i, q ->
                 q.revenue?.let { value ->
                     val height = (value / maxRevenue * size.height).toFloat().coerceIn(0f, size.height)
-                    drawRect(if (i == selected) colors.success else colors.success.copy(alpha = .45f),
+                    drawRect(if (i == selected) accents.blue else accents.teal,
                         Offset((i + .15f) * step, size.height - height), Size(step * .7f, height))
                 }
             }
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
-            quarters.forEachIndexed { i,q -> TextButton(onClick = { selected = i }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) { Text(insightText(q.label)) } }
+            quarters.forEachIndexed { i,q -> TextButton(onClick = { selected = i }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).then(if (i == selected) Modifier.liquidGlass(radius = 28.dp, role = GlassRole.Control) else Modifier)) { Text(insightText(q.label)) } }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(16.dp))
         val quarter = quarters[selected.coerceIn(quarters.indices)]
         InsightRows(listOf("선택 분기" to insightText(quarter.label), "매출" to insightNumber(quarter.revenue, " USD"), "전년 대비" to insightQuarterChange(quarter)))
+    }
+}
+
+@Composable
+private fun InsightChartKey(label: String, color: Color, modifier: Modifier = Modifier, endAligned: Boolean = false) {
+    Row(modifier, horizontalArrangement = if (endAligned) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically) {
+        Canvas(Modifier.size(8.dp).clearAndSetSemantics {}) { drawCircle(color) }
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = LocalDashboardColors.current.textSecondary)
     }
 }

@@ -112,16 +112,16 @@ internal fun insightLedgerGroups(s: InsightSnapshot): List<InsightLedgerGroup> =
 internal fun InsightLedgerField(row: InsightLedgerValue) {
     val colors = LocalDashboardColors.current
     val fontScale = LocalDensity.current.fontScale
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 4.dp).clearAndSetSemantics {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 6.dp).clearAndSetSemantics {
         contentDescription = "${row.label}, ${row.original}"
     }) {
-        if (maxWidth < 300.dp || fontScale > 1.2f) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (maxWidth < 340.dp || fontScale > 1.2f) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(row.label, color = colors.textSecondary, style = MaterialTheme.typography.bodyMedium)
                 Text(row.value, color = colors.textPrimary, style = MaterialTheme.typography.bodyMedium)
             }
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 Text(row.label, Modifier.weight(1f), color = colors.textSecondary, style = MaterialTheme.typography.bodyMedium)
                 Text(row.value, Modifier.weight(1.8f), color = colors.textPrimary,
                     style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.End)

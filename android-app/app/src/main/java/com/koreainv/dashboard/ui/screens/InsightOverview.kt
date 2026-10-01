@@ -49,9 +49,9 @@ internal fun insightCoreMetrics(s: InsightSnapshot): List<InsightCoreMetric> {
 internal fun InsightCoreGrid(metrics: List<InsightCoreMetric>) {
     val colors = LocalDashboardColors.current
     val columns = if (LocalDensity.current.fontScale > 1.2f) 1 else 2
-    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(32.dp)) {
         metrics.chunked(columns).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 row.forEach { metric ->
                     val direction = metric.metric?.direction
                     val color = when (direction?.lowercase()) {
@@ -61,7 +61,7 @@ internal fun InsightCoreGrid(metrics: List<InsightCoreMetric>) {
                     }
                     Column(Modifier.weight(1f).clearAndSetSemantics {
                         contentDescription = "${metric.label}, ${metric.exactValue}, ${metric.detail}"
-                    }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(metric.label, style = MaterialTheme.typography.bodyMedium, color = colors.textSecondary)
                         val compact = if (metric.metric?.value == null) metric.exactValue
                             else if (metric.unit == " USD") insightCompactMoney(metric.metric.value) else metric.exactValue
@@ -111,7 +111,7 @@ private fun InsightRangeMarker(label: String, range: InsightRange, price: Double
             }) {
                 drawLine(colors.surfaceBorderPrimary, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 3.dp.toPx())
                 val x = ((current - low) / (high - low)).coerceIn(0.0, 1.0).toFloat() * size.width
-                drawCircle(colors.success, 5.dp.toPx(), Offset(x, size.height / 2))
+                drawCircle(colors.primary, 5.dp.toPx(), Offset(x, size.height / 2))
             }
         }
     }
