@@ -150,6 +150,7 @@ data class TradeHistoryResponse(
     val profitEstimated: Boolean = false,
     val unpricedSellCount: Int = 0,
     val accountErrors: List<String> = emptyList(),
+    val tossHistoryNotes: List<String> = emptyList(),
 )
 
 data class TradePeriod(
@@ -182,6 +183,11 @@ data class Trade(
     val accountId: String = "",
     val accountLabel: String = "",
     val broker: String = Broker.KIS,
+    val profitExchangeRate: Double? = null,
+    val profitRateSource: String = "",
+    val profitEstimateReason: String = "",
+    val profitHistoryStartDate: String = "",
+    val profitHistoryComplete: Boolean? = null,
 )
 
 data class AuthToken(

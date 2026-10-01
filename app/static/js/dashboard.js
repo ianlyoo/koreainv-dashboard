@@ -1091,12 +1091,13 @@
             if (!payload || payload.status !== 'success') return '';
             const notes = [];
             if (payload.profit_estimated === true) {
-                notes.push('토스 추정 손익 포함');
+                notes.push('토스 추정 손익 포함 · 매도 시점 참고환율(midRate) · 환차손익 제외');
             }
             if (payload.profit_complete === false) {
                 const missing = Number(payload.unpriced_sell_count || 0);
-                notes.push(missing > 0 ? `원가 부족 ${missing}건 미산출` : '일부 계좌 손익 미완성');
+                notes.push(missing > 0 ? `원가·환율·체결 정보 부족 ${missing}건 미산출` : '일부 계좌 손익 미완성');
             }
+            if (Array.isArray(payload.toss_history_notes)) notes.push(...payload.toss_history_notes);
             return notes.length ? ` · ${notes.join(' · ')}` : '';
         }
 
@@ -1117,7 +1118,7 @@
             if (summaryPayload.profit_available === false) {
                 valueEl.innerText = '-';
                 valueEl.className = 'summary-value';
-                subEl.innerText = '토스 매수 원가 이력이 부족해 추정 손익을 산출하지 못했습니다';
+                subEl.innerText = `토스 손익 미산출: 원가·환율·체결 정보를 확인하세요${realizedProfitCoverageNote(summaryPayload)}`;
                 return;
             }
 
@@ -1671,7 +1672,7 @@
                         <td>${formatNumber(Number(trade.quantity || 0))}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.unit_price) : `${trade.currency || ''} ${formatNumber(Number(trade.unit_price || 0).toFixed(2))}`}</td>
                         <td>${trade.currency === 'KRW' ? formatPlainKrw(trade.amount) : `${trade.currency || ''} ${formatNumber(Number(trade.amount || 0).toFixed(2))}`}</td>
-                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : `${formatSignedKrw(trade.realized_profit_krw)}${trade.realized_profit_estimated ? '<span class="profit-estimate-chip">추정</span>' : ''}`}</td>
+                        <td class="${profitClassName(trade.realized_profit_krw)}">${trade.realized_profit_krw == null ? '-' : `${formatSignedKrw(trade.realized_profit_krw)}${trade.realized_profit_estimated ? '<span class="profit-estimate-chip">추정</span>' : ''}`}<small>${escapeHtml(trade.profit_estimate_reason || trade.profit_rate_source || '')}${trade.realized_profit_krw != null && trade.profit_exchange_rate ? ` · ${formatNumber(trade.profit_exchange_rate)} KRW/USD` : ''}</small></td>
                         <td class="${profitClassName(trade.realized_return_rate)}">${trade.realized_return_rate == null ? '-' : formatSignedPercent(trade.realized_return_rate)}</td>
                     </tr>
                 `).join('');

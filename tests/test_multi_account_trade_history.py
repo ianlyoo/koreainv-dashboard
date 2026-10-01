@@ -140,6 +140,22 @@ class MultiAccountTradeHistoryTests(unittest.TestCase):
                 account_id="missing",
             )
 
+    @patch("app.services.trade_history_aggregation.toss_proxy_client.is_configured", return_value=False)
+    @patch("app.services.trade_history_aggregation.toss_api_client.get_trade_history")
+    def test_toss_gap_row_and_history_metadata_survive_aggregation(self, get_history, proxy):
+        get_history.return_value = {
+            "items": [{"date": "20260802", "side": "매도", "currency": "USD", "market": "NASD",
+                       "realized_profit_krw": None, "profit_estimate_reason": "매수 원가 이력 부족"}],
+            "profit_available": False, "profit_complete": False, "profit_estimated": True,
+            "unpriced_sell_count": 1, "profit_history_start_date": "20260401", "profit_history_complete": True,
+        }
+        payload = fetch_aggregated_trade_history([self.accounts[2]], "20260801", "20260815")
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(payload["items"][0]["profit_estimate_reason"], "매수 원가 이력 부족")
+        self.assertFalse(payload["profit_available"])
+        self.assertEqual(payload["unpriced_sell_count"], 1)
+        self.assertIn("20260401", payload["toss_history_notes"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

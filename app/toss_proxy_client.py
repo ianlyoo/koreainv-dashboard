@@ -15,7 +15,7 @@ def is_configured() -> bool:
     return has_url
 
 
-def _post(path: str, payload: Mapping[str, str]) -> dict[str, object]:
+def _post(path: str, payload: Mapping[str, str], *, timeout: float = 30) -> dict[str, object]:
     if not is_configured():
         raise RuntimeError("Toss proxy remote URL and token are required")
     response = requests.post(
@@ -25,7 +25,7 @@ def _post(path: str, payload: Mapping[str, str]) -> dict[str, object]:
             "Authorization": f"Bearer {config.TOSS_PROXY_REMOTE_TOKEN}",
             "Accept": "application/json",
         },
-        timeout=30,
+        timeout=timeout,
     )
     try:
         body = response.json()
@@ -83,6 +83,29 @@ def get_trade_history(
             "start_date": start_date,
             "end_date": end_date,
         },
+        # Annual ranges can require hundreds of throttled historical FX reads.
+        timeout=300,
     )
     result = body.get("result")
-    return dict(result) if isinstance(result, Mapping) else {}
+    result = dict(result) if isinstance(result, Mapping) else {}
+    raw_rows = result.get("items")
+    rows = raw_rows if isinstance(raw_rows, list) else []
+    summary = result.get("summary", {})
+    overseas_sales = any(
+        isinstance(row, Mapping) and row.get("side") in {"SELL", "매도"}
+        and row.get("currency") != "KRW"
+        for row in rows
+    )
+    overseas_profit = isinstance(summary, Mapping) and bool(summary.get("overseas_realized_profit_krw"))
+    if result.get("profit_fx_basis") != "sale_historical_mid_rate" and (overseas_sales or overseas_profit):
+        reason = "개인 서버 업데이트 필요: 매도 시점 참고환율 미지원"
+        for row in rows:
+            if isinstance(row, dict) and row.get("side") in {"SELL", "매도"}:
+                row.update(realized_profit_krw=None, realized_return_rate=None,
+                           realized_profit_estimated=True, profit_estimate_reason=reason)
+        result.update(
+            summary={}, daily=[], profit_available=False, profit_complete=False,
+            profit_history_complete=False, profit_history_note=reason,
+            unpriced_sell_count=sum(isinstance(row, Mapping) and row.get("side") in {"SELL", "매도"} for row in rows),
+        )
+    return result
