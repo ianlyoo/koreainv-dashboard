@@ -1,0 +1,15 @@
+{
+  "base": "510391e",
+  "external_network": "blocked; chart runtimes replayed locally",
+  "harness_warnings": [
+    "Cannot read properties of null (reading 'dataset')",
+    "Cannot read properties of null (reading 'dataset')",
+    "Cannot read properties of null (reading 'dataset')",
+    "Cannot read properties of null (reading 'dataset')",
+    "Cannot read properties of null (reading 'dataset')",
+    "Cannot read properties of null (reading 'dataset')",
+    "Cannot read properties of null (reading 'dataset')",
+    "Cannot read properties of null (reading 'dataset')"
+  ],
+  "harness_warning_explanation": "The initial capture init script wrote a root data attribute before documentElement existed. The earlier localStorage preference succeeded, and the original theme script applied it. Before screenshots were captured before product edits; this warning is not an app error."
+}

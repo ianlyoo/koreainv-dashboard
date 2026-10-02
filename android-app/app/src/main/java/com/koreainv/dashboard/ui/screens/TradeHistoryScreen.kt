@@ -251,12 +251,14 @@ fun TradeHistoryScreen(
                         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = paddingValues.calculateTopPadding() + 8.dp, bottom = dashboardBottomContentPadding()),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        if (isLoading) item { DashboardStatusLine("선택한 기간의 거래내역을 확인하고 있습니다.") }
                         if (warningMessage != null) {
                             item {
                                 DashboardErrorNotice(
                                     message = warningMessage,
                                     onRetry = { loadTradeHistory(forceRefresh = true) },
                                     usingCachedData = errorMessage != null && snapshots.complete != null,
+                                    isRetrying = isLoading,
                                 )
                             }
                         }

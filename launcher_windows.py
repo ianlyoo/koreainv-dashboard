@@ -21,7 +21,7 @@ from typing import Optional
 import requests
 import uvicorn
 
-from app import runtime_paths
+from app import runtime_paths, launcher_presentation as presentation
 from app.version import APP_VERSION
 
 HOST = "127.0.0.1"
@@ -167,15 +167,17 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
     def on_open(icon, item):
         run_deferred(lambda: webbrowser.open(DASHBOARD_URL), delay_seconds=0.05)
 
+    def on_settings(icon, item):
+        run_deferred(lambda: webbrowser.open(DASHBOARD_URL + "/#settings"), delay_seconds=0.05)
+
     def on_version(icon, item):
         def show_version_dialog():
             release = _latest_release_info(logger)
-            latest_tag = release.get("tag_name", "확인 실패") if release else "확인 실패"
+            latest_tag = release.get("tag_name") if release else None
             policy = _update_policy(release) if release else "unknown"
-            policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
             _show_info_message(
-                f"현재 버전: {_display_version(APP_VERSION)}\n최신 버전: {_display_version(latest_tag)}\n업데이트 정책: {policy_text}",
-                "KISDashboard 버전 정보",
+                presentation.version_info(APP_VERSION, latest_tag, policy),
+                presentation.VERSION_LABEL,
             )
 
         run_deferred(show_version_dialog)
@@ -194,12 +196,13 @@ def _run_tray(server_thread: threading.Thread, logger: logging.Logger) -> None:
         icon.stop()
 
     menu = pystray.Menu(
-        pystray.MenuItem("대시보드 열기", on_open, default=True),
-        pystray.MenuItem("버전 확인", on_version),
+        pystray.MenuItem(presentation.OPEN_LABEL, on_open, default=True),
+        pystray.MenuItem(presentation.SETTINGS_LABEL, on_settings),
+        pystray.MenuItem(presentation.VERSION_LABEL, on_version),
         pystray.MenuItem("업데이트 확인", on_check_update),
-        pystray.MenuItem("종료", on_exit),
+        pystray.MenuItem(presentation.EXIT_LABEL, on_exit),
     )
-    icon = pystray.Icon("KISDashboard", tray_image, "KISDashboard", menu)
+    icon = pystray.Icon("KISDashboard", tray_image, "KoreaInv · 조회 전용", menu)
 
     def watch_server():
         while server_thread.is_alive():
@@ -247,7 +250,7 @@ def _show_version_info() -> None:
         ctypes.windll.user32.MessageBoxW(
             0,
             f"현재 버전: {_display_version(APP_VERSION)}",
-            "KISDashboard 버전 정보",
+            presentation.VERSION_LABEL,
             mb_ok | mb_icon_info | mb_topmost,
         )
     except Exception:
@@ -432,6 +435,7 @@ def main() -> int:
             webbrowser.open(DASHBOARD_URL)
             return 0
         logger.error("Port %d is already in use.", PORT)
+        _show_info_message(presentation.PORT_BUSY, presentation.APP_TITLE)
         return 1
 
     server_thread = threading.Thread(target=_run_server, args=(logger,), daemon=True)
@@ -441,6 +445,7 @@ def main() -> int:
         if not server_thread.is_alive():
             logger.error("Server thread exited unexpectedly. Check traceback above.")
         logger.error("Server did not become ready in time.")
+        _show_info_message(presentation.STARTUP_FAILED, presentation.APP_TITLE)
         return 1
 
     logger.info("Server ready. Opening browser: %s", DASHBOARD_URL)

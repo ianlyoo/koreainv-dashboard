@@ -1,0 +1,179 @@
+{
+  "fixture_only": true,
+  "external_requests_forwarded": 0,
+  "checks": [
+    "desktop-light: no document overflow",
+    "desktop-light: no automated WCAG A/AA findings",
+    "desktop-dark: no document overflow",
+    "desktop-dark: no automated WCAG A/AA findings",
+    "mobile-light: no document overflow",
+    "mobile-light: no automated WCAG A/AA findings",
+    "mobile-dark: no document overflow",
+    "mobile-dark: no automated WCAG A/AA findings",
+    "mobile-narrow: no document overflow",
+    "mobile-narrow: no automated WCAG A/AA findings",
+    "tablet-light: no document overflow",
+    "tablet-light: no automated WCAG A/AA findings",
+    "compact-desktop: no document overflow",
+    "compact-desktop: no automated WCAG A/AA findings",
+    "wide-dark: no document overflow",
+    "wide-dark: no automated WCAG A/AA findings",
+    "loading-390: no overflow",
+    "loading-390: no automated WCAG A/AA findings",
+    "error-1440: no overflow",
+    "error-1440: no automated WCAG A/AA findings",
+    "error-390: no overflow",
+    "error-390: no automated WCAG A/AA findings",
+    "empty-390: no overflow",
+    "empty-390: no automated WCAG A/AA findings",
+    "partial-1440: no overflow",
+    "partial-1440: no automated WCAG A/AA findings",
+    "missing chart runtime preserves successful data",
+    "no-chart-1440: no overflow",
+    "no-chart-1440: no automated WCAG A/AA findings",
+    "stale snapshot survives failure and retry recovers",
+    "account scope, sort and keyboard currency switch",
+    "cash and realized profit summaries remain accessible",
+    "settings-desktop: no automated WCAG A/AA findings",
+    "invalid account form remains open",
+    "dialog focus trap, nested dismissal and trigger restoration",
+    "history-desktop: no automated WCAG A/AA findings",
+    "historical trade tabs and period selection",
+    "insight-desktop: no automated WCAG A/AA findings",
+    "keyboard search opens insight and closes results",
+    "search renders provider content as text",
+    "holding content cannot inject elements or event attributes",
+    "theme preference persists across reload",
+    "mobile insight is focused and fits",
+    "insight-mobile: no automated WCAG A/AA findings",
+    "mobile settings fits",
+    "settings-mobile: no automated WCAG A/AA findings",
+    "mobile history fits",
+    "history-mobile: no automated WCAG A/AA findings",
+    "login-mobile: no automated WCAG A/AA findings",
+    "empty setup validation does not navigate away",
+    "setup-mobile: no automated WCAG A/AA findings",
+    "no JavaScript runtime errors",
+    "all accessibility scans passed"
+  ],
+  "screenshots": [
+    "desktop-light.png",
+    "desktop-light-full.png",
+    "desktop-dark.png",
+    "desktop-dark-full.png",
+    "mobile-light.png",
+    "mobile-light-full.png",
+    "mobile-dark.png",
+    "mobile-dark-full.png",
+    "mobile-narrow.png",
+    "tablet-light.png",
+    "compact-desktop.png",
+    "wide-dark.png",
+    "loading-390.png",
+    "error-1440.png",
+    "error-390.png",
+    "empty-390.png",
+    "partial-1440.png",
+    "no-chart-1440.png",
+    "stale-desktop.png",
+    "settings-desktop.png",
+    "history-desktop.png",
+    "insight-desktop.png",
+    "insight-mobile.png",
+    "settings-mobile.png",
+    "history-mobile.png",
+    "login-mobile.png",
+    "setup-mobile.png"
+  ],
+  "page_errors": [],
+  "axe": [
+    {
+      "screen": "desktop-light",
+      "violations": []
+    },
+    {
+      "screen": "desktop-dark",
+      "violations": []
+    },
+    {
+      "screen": "mobile-light",
+      "violations": []
+    },
+    {
+      "screen": "mobile-dark",
+      "violations": []
+    },
+    {
+      "screen": "mobile-narrow",
+      "violations": []
+    },
+    {
+      "screen": "tablet-light",
+      "violations": []
+    },
+    {
+      "screen": "compact-desktop",
+      "violations": []
+    },
+    {
+      "screen": "wide-dark",
+      "violations": []
+    },
+    {
+      "screen": "loading-390",
+      "violations": []
+    },
+    {
+      "screen": "error-1440",
+      "violations": []
+    },
+    {
+      "screen": "error-390",
+      "violations": []
+    },
+    {
+      "screen": "empty-390",
+      "violations": []
+    },
+    {
+      "screen": "partial-1440",
+      "violations": []
+    },
+    {
+      "screen": "no-chart-1440",
+      "violations": []
+    },
+    {
+      "screen": "settings-desktop",
+      "violations": []
+    },
+    {
+      "screen": "history-desktop",
+      "violations": []
+    },
+    {
+      "screen": "insight-desktop",
+      "violations": []
+    },
+    {
+      "screen": "insight-mobile",
+      "violations": []
+    },
+    {
+      "screen": "settings-mobile",
+      "violations": []
+    },
+    {
+      "screen": "history-mobile",
+      "violations": []
+    },
+    {
+      "screen": "login-mobile",
+      "violations": []
+    },
+    {
+      "screen": "setup-mobile",
+      "violations": []
+    }
+  ]
+}

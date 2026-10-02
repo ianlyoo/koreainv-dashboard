@@ -67,9 +67,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -214,6 +211,7 @@ fun PortfolioScreen(
                                     message = errorMessage.orEmpty(),
                                     onRetry = { loadDashboard(forceRefresh = true) },
                                     usingCachedData = true,
+                                    isRetrying = isLoading,
                                 )
                             }
                         }
@@ -227,14 +225,15 @@ fun PortfolioScreen(
                                 )
                             }
                         }
+                        if (isLoading) item { DashboardStatusLine("최신 자산 정보를 확인하고 있습니다.") }
                         item {
                             PortfolioSummarySection(data = data, currencyMode = currencyMode)
                         }
 
                         item {
                             Column(
-                                modifier = Modifier.padding(top = 24.dp),
-                                verticalArrangement = Arrangement.spacedBy(28.dp),
+                                modifier = Modifier.padding(top = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
                             ) {
                                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                                     val metadataMaxWidth = maxWidth * 0.6f
@@ -252,6 +251,7 @@ fun PortfolioScreen(
                                         )
                                     }
                                 }
+                                DashboardScopeNote(portfolioScopeDescription(activeAccountId != null))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Box(Modifier.weight(1f)) {
                                         DashboardInlineButton(
@@ -323,46 +323,6 @@ fun PortfolioScreen(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-/** Confined to the screen's UI coroutine context; never owns repository caches. */
-internal class ScreenRequestOwner {
-    var version: Long = 0
-        private set
-    private var job: Job? = null
-
-    fun accepts(requestVersion: Long): Boolean = version == requestVersion
-
-    fun cancel() {
-        version += 1
-        job?.cancel()
-        job = null
-    }
-
-    fun <T> launch(
-        scope: CoroutineScope,
-        load: suspend (requestVersion: Long) -> T,
-        onSuccess: (T) -> Unit,
-        onFailure: (Throwable) -> Unit,
-        onFinished: () -> Unit,
-    ) {
-        cancel()
-        val requestVersion = version
-        job = scope.launch {
-            try {
-                val result = load(requestVersion)
-                currentCoroutineContext().ensureActive()
-                if (accepts(requestVersion)) onSuccess(result)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                currentCoroutineContext().ensureActive()
-                if (accepts(requestVersion)) onFailure(error)
-            } finally {
-                if (accepts(requestVersion)) onFinished()
             }
         }
     }

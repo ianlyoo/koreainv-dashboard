@@ -72,7 +72,7 @@ fun SettingsScreen(
             ) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Column(Modifier.selectableGroup()) {
-                        SettingsHeading("화면 모드")
+                        SettingsHeading("화면 표시")
                         Text("기기 설정을 따르거나 원하는 화면 모드를 선택하세요.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -123,7 +123,7 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SettingsHeading("계정")
+                        SettingsHeading("계좌와 잠금")
                         SettingsAction("계좌 관리", onManageAccountsClick)
                         SettingsAction("로그아웃", onLogoutClick)
                     }
@@ -145,7 +145,7 @@ fun SettingsScreen(
                     }
                 }
                 Text(
-                    text = "© 2026 Youngin",
+                    text = "KoreaInv · 조회 전용\n© 2026 Youngin",
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

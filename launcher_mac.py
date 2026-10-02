@@ -26,7 +26,7 @@ from AppKit import (
 )
 from Foundation import NSObject
 
-from app import runtime_paths
+from app import runtime_paths, launcher_presentation as presentation
 from app.version import APP_VERSION
 
 HOST = "127.0.0.1"
@@ -367,11 +367,15 @@ class AppDelegate(NSObject):
 
         app_menu = NSMenu.alloc().init()
 
-        item_open = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("대시보드 열기", "onOpenDashboard:", "o")
+        item_open = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(presentation.OPEN_LABEL, "onOpenDashboard:", "o")
         item_open.setTarget_(self)
         app_menu.addItem_(item_open)
 
-        item_version = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("버전 확인", "onVersionInfo:", "v")
+        item_settings = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(presentation.SETTINGS_LABEL, "onOpenSettings:", ",")
+        item_settings.setTarget_(self)
+        app_menu.addItem_(item_settings)
+
+        item_version = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(presentation.VERSION_LABEL, "onVersionInfo:", "v")
         item_version.setTarget_(self)
         app_menu.addItem_(item_version)
 
@@ -381,7 +385,7 @@ class AppDelegate(NSObject):
 
         app_menu.addItem_(NSMenuItem.separatorItem())
 
-        item_quit = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("종료", "onQuit:", "q")
+        item_quit = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(presentation.EXIT_LABEL, "onQuit:", "q")
         item_quit.setTarget_(self)
         app_menu.addItem_(item_quit)
 
@@ -405,7 +409,7 @@ class AppDelegate(NSObject):
 
         if not _wait_until_ready_or_dead(self.server_thread):
             self.logger.error("Server failed to start or crashed during startup")
-            _show_info_message("서버 실행에 실패했습니다.")
+            _show_info_message(presentation.STARTUP_FAILED, presentation.APP_TITLE)
             NSApp.terminate_(None)
             return
 
@@ -421,14 +425,16 @@ class AppDelegate(NSObject):
     def onOpenDashboard_(self, _sender):
         webbrowser.open(DASHBOARD_URL)
 
+    def onOpenSettings_(self, _sender):
+        webbrowser.open(DASHBOARD_URL + "/#settings")
+
     def onVersionInfo_(self, _sender):
         latest = _latest_release_info(self.logger)
-        latest_tag = latest.get("tag_name", "확인 실패") if latest else "확인 실패"
+        latest_tag = latest.get("tag_name") if latest else None
         policy = _update_policy(latest) if latest else "unknown"
-        policy_text = "필수" if policy == "mandatory" else ("권장" if policy == "recommended" else "확인 실패")
         _show_info_message(
-            f"현재 버전: {_display_version(APP_VERSION)}\n최신 버전: {_display_version(latest_tag)}\n업데이트 정책: {policy_text}",
-            "KISDashboard 버전",
+            presentation.version_info(APP_VERSION, latest_tag, policy),
+            presentation.VERSION_LABEL,
         )
 
     def onCheckUpdate_(self, _sender):
