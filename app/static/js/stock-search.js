@@ -71,7 +71,10 @@ function handleSearchKeydown(event) {
     if (!stockSearchResults.length) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        stockSearchIndex = (stockSearchIndex + (event.key === 'ArrowDown' ? 1 : -1) + stockSearchResults.length) % stockSearchResults.length;
+        const movingDown = event.key === 'ArrowDown';
+        stockSearchIndex = stockSearchIndex < 0
+            ? (movingDown ? 0 : stockSearchResults.length - 1)
+            : (stockSearchIndex + (movingDown ? 1 : -1) + stockSearchResults.length) % stockSearchResults.length;
         document.querySelectorAll('.search-result').forEach((el, index) => el.setAttribute('aria-selected', String(index === stockSearchIndex)));
         const option = document.getElementById(`stock-result-${stockSearchIndex}`);
         document.getElementById('stockSearchInput').setAttribute('aria-activedescendant', option.id);

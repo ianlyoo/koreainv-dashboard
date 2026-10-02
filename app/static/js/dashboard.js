@@ -786,20 +786,10 @@
             const insightPane = document.getElementById('rightInsightPanel');
             if (!widgetsPane || !insightPane) return;
 
-            if (currentLayoutMode === 'mode1') {
-                widgetsPane.classList.remove('is-hidden');
-                insightPane.classList.remove('is-hidden');
-                return;
-            }
-
-            if (rightPaneState === 'insight') {
-                widgetsPane.classList.add('is-hidden');
-                insightPane.classList.remove('is-hidden');
-            } else {
-                widgetsPane.classList.remove('is-hidden');
-                insightPane.classList.add('is-hidden');
-                scheduleMarketOverviewMount(false);
-            }
+            const showingInsight = rightPaneState === 'insight';
+            widgetsPane.classList.toggle('is-hidden', showingInsight && currentLayoutMode === 'mode2');
+            insightPane.classList.toggle('is-hidden', !showingInsight);
+            if (!showingInsight) scheduleMarketOverviewMount(false);
         }
 
         function applyLayoutMode(mode, persist = true) {
@@ -828,17 +818,13 @@
         }
 
         function openInsightPane() {
-            if (currentLayoutMode === 'mode2') {
-                setRightPaneState('insight');
-            }
+            setRightPaneState('insight');
             window.dashboardUI?.openInsight();
         }
 
         function closeInsightPane() {
+            setRightPaneState('widgets');
             window.dashboardUI?.closeInsight();
-            if (currentLayoutMode === 'mode2') {
-                setRightPaneState('widgets');
-            }
         }
 
         // 환율 모드 토글

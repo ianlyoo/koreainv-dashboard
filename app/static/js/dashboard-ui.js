@@ -55,6 +55,17 @@
         if (insightOrigin?.isConnected) insightOrigin.focus();
         insightOrigin = null;
     }
+    function installSectionNavigation() {
+        document.querySelector('.workspace-nav')?.addEventListener('click', event => {
+            if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+            const link = event.target.closest('a[href^="#"]');
+            const target = link && byId(link.hash.slice(1));
+            if (!target) return;
+            if (!target.getClientRects().length) closeInsightPane();
+            target.focus({ preventScroll: true });
+            // Keep native fragment/history behavior; the target is reachable before it scrolls.
+        });
+    }
     // All dialogs share focus containment/restoration, including nested account dialogs.
     // Existing open/close handlers still own form reset, credentials and confirmation.
     function installDialogs() {
@@ -124,5 +135,8 @@
     window.dashboardUI = { syncState, portfolioState, sortHoldings, openInsight, closeInsight,
         setSort(value) { sort = ['value', 'return', 'profit', 'name'].includes(value) ? value : 'value'; applyPortfolioAccountFilter(); },
     };
-    document.addEventListener('DOMContentLoaded', installDialogs, { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+        installDialogs();
+        installSectionNavigation();
+    }, { once: true });
 })();

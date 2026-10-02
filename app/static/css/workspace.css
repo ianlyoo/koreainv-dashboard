@@ -158,6 +158,8 @@ h1::before { display: none; }
     body { padding: 0 48px; }
     .layout-mode-1 .layout-grid { grid-template-columns: minmax(0, 1.22fr) minmax(0, 1.35fr); }
     .layout-mode-1 .right-pane { display: grid; grid-template-columns: minmax(290px, .65fr) minmax(0, 1fr); gap: 32px; }
+    .layout-mode-1:has(#rightInsightPanel.is-hidden) .layout-grid { grid-template-columns: minmax(0, 1fr) 340px; }
+    .layout-mode-1 .right-pane:has(> #rightInsightPanel.is-hidden) { display: block; }
     .summary-grid { grid-template-columns: 1.3fr 1fr 1fr; gap: 24px; }
     .summary-card:first-child { grid-column: auto; padding: 20px 0; }
     .summary-card:first-child .summary-value { font-size: clamp(24px, 9cqw, 38px); }

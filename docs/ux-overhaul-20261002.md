@@ -31,3 +31,13 @@ Additional evidence: [phone settings](ux-overhaul-20261002/after/settings-mobile
 - macOS/Windows native menus, real provider widgets and live account workflows were not exercised. No host installer, live service restart, deployment, release or mandatory-update change occurred.
 
 Reproduce browser evidence with `scripts/verify_ux.py --chromium <existing-chromium> --vendor <local-vendor-dir>` using Playwright, Chart.js 4.4.8 (`chart.js`), LightweightCharts 3.8.0 (`lightweight.js`) and axe-core 4.10.3 (`axe.js`). The script creates and closes its own fixture server. Portable Android checks use `scripts/check_android_presentation.py --gradle-lib <existing-gradle-lib> --out <temporary-output>`. The PM handoff records exact local commands and redacted secret-scan outcomes.
+
+## Review follow-up · 2026-10-03
+
+The independent Astra review of `3cdedd718ac20d3dd361dd35e62dc9c8603b399d` accepted the direction with no P1/P2 findings. Three P3 interactions were reproduced before correction: expanded-mode Close left the insight visible; allocation/market links navigated to hidden widgets; first ArrowUp selected the penultimate result.
+
+Close now dismisses the insight in either layout, restores the original trigger's focus, and collapses the unused wide-screen column. Section links reveal hidden content before native fragment navigation and focus. First ArrowUp selects the last result and first ArrowDown selects the first; subsequent presses wrap normally.
+
+[Before regression results](ux-overhaul-20261002/review-interactions/before.json) record four failing assertions across those three defects. [After results](ux-overhaul-20261002/review-interactions/after.json) record 18 passing focused checks, including desktop/mobile close and reopen, focus restoration, both section links, search initialization/wrap/selection and layout-switch dismissal. One affected search-race unit test, syntax checks for the three changed JavaScript files, and unchanged-boundary checks also passed. The accepted broad suites, native builds and independent review were not repeated; the limits above still apply.
+
+Only the changed Close interaction has new captures: [before Close](ux-overhaul-20261002/review-interactions/before-expanded-close.png) and [after Close](ux-overhaul-20261002/review-interactions/after-expanded-close.png). Original screenshot proof is unchanged. Reproduce with `scripts/verify_review_interactions.py --chromium <existing-chromium> --vendor <local-vendor-dir> --phase after`; `--phase before` is intended for the reviewed source revision. Both phases use isolated synthetic fixtures and block external requests.

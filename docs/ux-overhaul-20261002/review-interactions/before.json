@@ -1,0 +1,66 @@
+{
+  "phase": "before",
+  "fixture_only": true,
+  "external_requests_forwarded": 0,
+  "head_at_test": "3cdedd718ac20d3dd361dd35e62dc9c8603b399d",
+  "ui_sha256": {
+    "app/static/js/dashboard.js": "0d71930afc7da9b394e8cb6019d3b797c5cf2dc6f556ed1a1c6d05255052e011",
+    "app/static/js/dashboard-ui.js": "fe8a25dc50b91b17ee2a310aa931942027fc666946ec6ded895eceead0a209c5",
+    "app/static/js/stock-search.js": "ad812c23d010552b9fd31879cc32a0ba10c61695b776792ed3094ce5f7df10ea",
+    "app/static/css/workspace.css": "be08dd1cd931690ca6a1afee99e127cf02dc2c29a4c593af9957e5f2c5a9025f"
+  },
+  "checks": [
+    {
+      "case": "close-mode1-2560",
+      "passed": false,
+      "observed": {
+        "insight_visible": true,
+        "widgets_visible": true,
+        "origin_focused": true,
+        "document_fits": true
+      }
+    },
+    {
+      "case": "section-allocation",
+      "passed": false,
+      "observed": {
+        "visible": false,
+        "focused": false,
+        "top": 0,
+        "viewport": 1000,
+        "hash": "#allocation",
+        "insightVisible": true
+      }
+    },
+    {
+      "case": "section-markets",
+      "passed": false,
+      "observed": {
+        "visible": false,
+        "focused": false,
+        "top": 0,
+        "viewport": 1000,
+        "hash": "#markets",
+        "insightVisible": true
+      }
+    },
+    {
+      "case": "initial-ArrowUp",
+      "passed": false,
+      "observed": {
+        "active": "stock-result-5",
+        "expected": "stock-result-6"
+      }
+    },
+    {
+      "case": "initial-ArrowDown",
+      "passed": true,
+      "observed": {
+        "active": "stock-result-0",
+        "expected": "stock-result-0"
+      }
+    }
+  ],
+  "page_errors": [],
+  "unexpected_requests": []
+}
