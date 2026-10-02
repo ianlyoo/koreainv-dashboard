@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.CircularProgressIndicator
@@ -56,6 +57,7 @@ fun DashboardErrorNotice(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     usingCachedData: Boolean = false,
+    isRetrying: Boolean = false,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
@@ -66,7 +68,7 @@ fun DashboardErrorNotice(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Info, contentDescription = null, tint = InfoColor, modifier = Modifier.size(20.dp))
                 Text(
-                    if (usingCachedData) "새로고침하지 못했습니다" else "정보를 불러오지 못했습니다",
+                    feedbackTitle(usingCachedData),
                     style = MaterialTheme.typography.titleSmall,
                     color = TextPrimary,
                     modifier = Modifier.weight(1f).semantics { heading() },
@@ -76,7 +78,7 @@ fun DashboardErrorNotice(
             if (usingCachedData) {
                 Text("마지막으로 불러온 정보를 표시하고 있습니다.", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
             }
-            OutlinedButton(onClick = onRetry) { Text("다시 시도") }
+            OutlinedButton(onClick = onRetry, enabled = !isRetrying, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (isRetrying) "확인 중…" else "다시 시도") }
         }
     }
 }
@@ -89,7 +91,7 @@ fun DashboardEmptyState(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = SurfacePrimary) {
+    Surface(modifier.fillMaxWidth(), color = Color.Transparent) {
         Column(
             Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -100,7 +102,7 @@ fun DashboardEmptyState(
                 modifier = Modifier.semantics { heading() })
             Text(message, style = MaterialTheme.typography.bodyMedium, color = TextSecondary, textAlign = TextAlign.Center)
             if (actionLabel != null && onAction != null) {
-                OutlinedButton(onClick = onAction) { Text(actionLabel) }
+                OutlinedButton(onClick = onAction, modifier = Modifier.heightIn(min = 48.dp)) { Text(actionLabel) }
             }
         }
     }
@@ -109,7 +111,7 @@ fun DashboardEmptyState(
 @Composable
 fun DashboardLoadingState(message: String, modifier: Modifier = Modifier) {
     Column(
-        modifier.fillMaxWidth().padding(32.dp),
+        modifier.fillMaxWidth().padding(32.dp).semantics { liveRegion = LiveRegionMode.Polite },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -141,4 +143,20 @@ fun ResponsiveDetailRow(
             }
         }
     }
+}
+
+/** Low emphasis progress/status keeps the last successful values readable. */
+@Composable
+fun DashboardStatusLine(message: String, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth().padding(vertical = 12.dp)
+        .semantics { liveRegion = LiveRegionMode.Polite },
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(Modifier.size(16.dp), color = InfoColor, strokeWidth = 2.dp)
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+    }
+}
+
+@Composable
+fun DashboardScopeNote(message: String, modifier: Modifier = Modifier) {
+    Text(message, modifier.fillMaxWidth(), style = MaterialTheme.typography.bodySmall, color = TextSecondary)
 }

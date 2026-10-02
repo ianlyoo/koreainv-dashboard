@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.onConsumedWindowInsetsChanged
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
@@ -69,43 +71,46 @@ fun DashboardScaffold(
     val bottomPadding = WindowInsets.safeDrawing.exclude(consumedInsets)
         .asPaddingValues().calculateBottomPadding()
 
-    Box(modifier.fillMaxSize().onConsumedWindowInsetsChanged { consumedInsets = it }) {
-        // The source includes its own opaque canvas, and excludes both scrim and header.
-        CompositionLocalProvider(LocalGlassControls provides null) {
-            Box(
-                Modifier.fillMaxSize()
-                    .then(if (liveGlass) Modifier
-                        .onGloballyPositioned { bodyBackdrop.sourceCoordinates = it }
-                        .layerBackdrop(recording) else Modifier)
-                    .background(colors.background),
-            ) {
-                content(PaddingValues(top = topBarHeight, bottom = bottomPadding))
-            }
-        }
-        Box(
-            Modifier.fillMaxWidth().height(topBarHeight + 24.dp).drawWithCache {
-                val scrim = Brush.verticalGradient(
-                    0f to colors.background,
-                    0.65f to colors.background.copy(alpha = 0.96f),
-                    1f to Color.Transparent,
-                )
-                onDrawBehind { drawRect(scrim) }
-            },
-        )
-        // Occluded rows must not receive taps through the title/empty header space.
-        // Actual header controls are placed later and take precedence in hit testing.
-        Box(Modifier.fillMaxWidth().height(topBarHeight).pointerInput(Unit) {
-            awaitPointerEventScope {
-                while (true) {
-                    awaitPointerEvent().changes.forEach { it.consume() }
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.widthIn(max = DashboardContentMaxWidth.dp).fillMaxSize()
+            .onConsumedWindowInsetsChanged { consumedInsets = it }) {
+            // The source includes its own opaque canvas, and excludes both scrim and header.
+            CompositionLocalProvider(LocalGlassControls provides null) {
+                Box(
+                    Modifier.fillMaxSize()
+                        .then(if (liveGlass) Modifier
+                            .onGloballyPositioned { bodyBackdrop.sourceCoordinates = it }
+                            .layerBackdrop(recording) else Modifier)
+                        .background(colors.background),
+                ) {
+                    content(PaddingValues(top = topBarHeight, bottom = bottomPadding))
                 }
             }
-        })
-        CompositionLocalProvider(LocalGlassControls provides if (liveGlass) bodyBackdrop else null) {
-            Box(Modifier.fillMaxWidth().onSizeChanged {
-                topBarHeight = with(density) { it.height.toDp() }
-            }) {
-                topBar()
+            Box(
+                Modifier.fillMaxWidth().height(topBarHeight + 24.dp).drawWithCache {
+                    val scrim = Brush.verticalGradient(
+                        0f to colors.background,
+                        0.65f to colors.background.copy(alpha = 0.96f),
+                        1f to Color.Transparent,
+                    )
+                    onDrawBehind { drawRect(scrim) }
+                },
+            )
+            // Occluded rows must not receive taps through the title/empty header space.
+            // Actual header controls are placed later and take precedence in hit testing.
+            Box(Modifier.fillMaxWidth().height(topBarHeight).pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            })
+            CompositionLocalProvider(LocalGlassControls provides if (liveGlass) bodyBackdrop else null) {
+                Box(Modifier.fillMaxWidth().onSizeChanged {
+                    topBarHeight = with(density) { it.height.toDp() }
+                }) {
+                    topBar()
+                }
             }
         }
     }

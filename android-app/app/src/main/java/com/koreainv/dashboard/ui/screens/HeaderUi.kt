@@ -346,7 +346,7 @@ fun HeaderIconButton(
             .size(48.dp)
             .clickable(interactionSource = interactionSource, indication = null,
                 enabled = enabled && !isLoading, role = Role.Button, onClick = onClick)
-            .semantics { this.contentDescription = contentDescription }
+            .semantics { this.contentDescription = if (isLoading) "$contentDescription, 확인 중" else contentDescription }
             .glassPressFeedback(interactionSource)
             .liquidGlass(radius = 24.dp, role = GlassRole.Control)
             .clip(RoundedCornerShape(24.dp))
@@ -466,7 +466,7 @@ fun InlineTitleWithSync(
         )
         lastSynced?.takeIf { it.isNotBlank() }?.let {
             Text(
-                text = "동기화 ${formatRelativeSyncText(it)}",
+                text = "최근 조회 ${formatRelativeSyncText(it)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
             )

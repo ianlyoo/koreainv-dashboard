@@ -1,124 +1,5 @@
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-
-/* Original deep-dark/gold identity, with an ivory light counterpart. */
-:root {
-    color-scheme: dark;
-    --logo-background: #ffffff;
-    --bg-base: #050507;
-    --bg-grad-1: #0a0b10;
-    --bg-grad-2: #12141d;
-    --panel-bg: rgba(22, 24, 32, .65);
-    --panel-bg-primary: rgba(28, 31, 41, .85);
-    --panel-bg-secondary: rgba(15, 17, 23, .5);
-    --panel-border: rgba(255,255,255,.06);
-    --panel-border-primary: rgba(255,255,255,.12);
-    --panel-hover: rgba(30,33,43,.8);
-    --surface-subtle: rgba(255,255,255,.04);
-    --surface-hover: rgba(255,255,255,.08);
-    --border-subtle: rgba(255,255,255,.06);
-    --text-main: #f3f4f6;
-    --text-sub: #9ca3af;
-    --text-muted: #7d8595;
-    --accent-blue: #3b82f6;
-    --accent-gold: #fbbf24;
-    --accent-gold-hover: #f59e0b;
-    --accent-surface: rgba(251,191,36,.1);
-    --accent-border: rgba(251,191,36,.26);
-    --on-accent: #11100b;
-    --profit: #10b981;
-    --profit-bg: rgba(16,185,129,.1);
-    --loss: #ef4444;
-    --loss-bg: rgba(239,68,68,.1);
-    --warning: #fbbf24;
-    --warning-bg: rgba(251,191,36,.08);
-    --badge-kor: rgba(59,130,246,.15);
-    --badge-kor-text: #60a5fa;
-    --badge-usa: rgba(244,63,94,.15);
-    --badge-usa-text: #fb7185;
-    --badge-jpn: rgba(168,85,247,.15);
-    --badge-jpn-text: #c084fc;
-    --glass-bg: rgba(23,25,32,.72);
-    --glass-highlight: rgba(255,255,255,.16);
-    --glass-shadow: 0 12px 32px rgba(0,0,0,.24);
-    --overlay-bg: rgba(0,0,0,.65);
-    --chart-tone-1: #3b82f6;
-    --chart-tone-2: #8b5cf6;
-    --chart-tone-3: #ec4899;
-    --chart-tone-4: #f43f5e;
-    --chart-tone-5: #f97316;
-    --chart-tone-6: #fbbf24;
-    --chart-text: var(--text-sub);
-    --chart-grid: rgba(255,255,255,.06);
-    --chart-border: var(--panel-border);
-    --chart-tooltip-bg: #171922;
-    --chart-tooltip-text: var(--text-main);
-    --chart-up: var(--profit);
-    --chart-down: var(--loss);
-    --chart-volume-up: rgba(16,185,129,.35);
-    --chart-volume-down: rgba(239,68,68,.35);
-    --chart-marker: var(--accent-gold);
-    --chart-surface: #0f1117;
-    --chart-tone-7: #10b981;
-    --chart-tone-8: #14b8a6;
-    --chart-tone-9: #0ea5e9;
-}
-:root[data-theme="light"] {
-    color-scheme: light;
-    --bg-base: #faf9f6;
-    --bg-grad-1: #f6f4ef;
-    --bg-grad-2: #f0eee8;
-    --panel-bg: rgba(255,255,255,.82);
-    --panel-bg-primary: rgba(255,255,255,.95);
-    --panel-bg-secondary: rgba(255,255,255,.65);
-    --panel-border: rgba(64,52,28,.09);
-    --panel-border-primary: rgba(64,52,28,.2);
-    --panel-hover: rgba(250,247,239,.96);
-    --surface-subtle: rgba(64,52,28,.035);
-    --surface-hover: rgba(64,52,28,.065);
-    --border-subtle: rgba(64,52,28,.09);
-    --text-main: #23211e;
-    --text-sub: #676157;
-    --text-muted: #777066;
-    --accent-blue: #2563eb;
-    --accent-gold-hover: #805900;
-    --accent-surface: rgba(180,126,0,.09);
-    --accent-border: rgba(146,102,0,.26);
-    --on-accent: #ffffff;
-    --profit: #007c53;
-    --profit-bg: rgba(0,124,83,.08);
-    --loss: #c72d38;
-    --loss-bg: rgba(199,45,56,.08);
-    --warning: #926600;
-    --warning-bg: rgba(180,126,0,.08);
-    --badge-kor: rgba(37,99,235,.08);
-    --badge-kor-text: #2455b2;
-    --badge-usa: rgba(190,38,72,.08);
-    --badge-usa-text: #b12f4a;
-    --badge-jpn: rgba(124,58,237,.08);
-    --badge-jpn-text: #7543af;
-    --glass-bg: rgba(255,255,255,.74);
-    --glass-highlight: rgba(255,255,255,.95);
-    --glass-shadow: 0 12px 32px rgba(53,43,21,.09);
-    --overlay-bg: rgba(45,39,27,.3);
-    --chart-tone-1: #2563eb;
-    --chart-tone-2: #7c3aed;
-    --chart-tone-3: #db2777;
-    --chart-tone-4: #e11d48;
-    --chart-tone-5: #ea580c;
-    --chart-tone-6: #c28b00;
-    --chart-grid: rgba(64,52,28,.08);
-    --chart-volume-up: rgba(0,124,83,.3);
-    --chart-volume-down: rgba(199,45,56,.3);
-    --accent-gold: #926600;
-    --chart-surface: #faf9f6;
-    --chart-tooltip-bg: #ffffff;
-    --chart-tone-7: #059669;
-    --chart-tone-8: #0d9488;
-    --chart-tone-9: #0284c7;
-}
-
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: radial-gradient(ellipse at top, var(--bg-grad-2), var(--bg-base) 75%); color: var(--text-main); min-height: 100svh; display: flex; padding: 88px 24px 56px; -webkit-font-smoothing: antialiased; }
+body { font-family: var(--font-ui); background: radial-gradient(ellipse at top, var(--bg-grad-2), var(--bg-base) 75%); color: var(--text-main); min-height: 100svh; display: flex; padding: 88px 24px 56px; -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; }
 .login-stage { width: min(100%, 430px); margin: auto; }
 .login-aura { display: none; }
@@ -164,3 +45,20 @@ button:disabled { opacity: .5; cursor: default; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .appearance-control select { background: var(--panel-bg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 @media (max-width: 480px) { body { padding: 80px 16px 44px; } .login-container { padding: 30px 22px; border-radius: 20px; } .appearance-control { right: 18px; top: 18px; } input.pin-input { font-size: 22px; letter-spacing: 6px; } }
+
+/* The same quiet canvas as the portfolio, with a single clear action. */
+body { background: var(--bg-base); }
+.login-container { padding: 32px 20px; border: 0; border-radius: 0; box-shadow: none; background: none; }
+.login-header { text-align: left; }
+.eyebrow { font-family: var(--font-ui); font-size: 12px; letter-spacing: .4px; }
+.logo-icon { margin-left: 0; width: 48px; height: 48px; border-radius: 14px; }
+.login-header h1 { font-size: 32px; font-weight: 600; margin-top: 28px; }
+.login-header p { font-size: 14px; line-height: 1.8; }
+input { min-height: 48px; background: var(--surface-subtle); }
+input.pin-input { padding: 18px 14px; }
+.btn-submit { min-height: 52px; border-radius: 28px; font-size: 15px; }
+.account-card { padding: 24px 0 8px; border: 0; border-radius: 0; border-top: 1px solid var(--panel-border-primary); }
+.account-card-title { font-size: 14px; color: var(--text-main); }
+.btn-remove-account { width: 44px; height: 44px; }
+.appearance-control select { min-height: 44px; border-color: var(--panel-border-primary); box-shadow: none; }
+@media (max-width: 480px) { .login-container { padding: 24px 8px; } }

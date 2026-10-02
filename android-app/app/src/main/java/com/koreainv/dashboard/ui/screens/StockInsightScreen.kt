@@ -66,13 +66,16 @@ fun StockInsightScreen(
                     Text("오프라인 · 마지막 성공 데이터를 표시합니다. 원래 시점은 아래에서 확인하세요.")
                 })
             }
-            if (notice != null) add(InsightListItem("notice", "overview") { Text(notice) })
-            add(InsightListItem("company", "overview") {
-                InsightCompany(s, displayName, symbol, marketType)
+            if (notice != null) add(InsightListItem("notice", "overview") {
+                if (error != null) DashboardErrorNotice(notice, onRetry = retry, usingCachedData = true)
+                else DashboardScopeNote(notice)
             })
             add(InsightListItem("chart", "overview") {
                 InsightSectionNotice(s, "bars", retry)
                 InsightPriceChart(s.bars)
+            })
+            add(InsightListItem("company", "overview") {
+                InsightCompany(s, displayName, symbol, marketType)
             })
             addAll(insightSectionItems(s, expanded, toggle, retry))
         }
@@ -90,17 +93,15 @@ fun StockInsightScreen(
             ) {
                 when {
                     !supportedMarket -> item("unsupported") {
-                        Text("현재 미국 종목(USA)의 인사이트만 지원합니다. 이 시장은 지원하지 않습니다.")
+                        DashboardEmptyState("지원하지 않는 시장입니다", "종목 인사이트는 현재 미국 종목(USA)에서 제공됩니다.")
                     }
                     !mayShow -> item("connect") {
-                        Text("종목 인사이트를 보려면 SaveTicker에 다시 연결해 주세요.")
-                        TextButton(onClick = onConnectClick, modifier = Modifier.heightIn(min = 48.dp)) { Text("연결 설정") }
+                        DashboardEmptyState("인사이트 연결이 필요합니다", "SaveTicker 연결을 확인한 뒤 이 종목으로 돌아올 수 있습니다.", actionLabel = "연결 설정", onAction = onConnectClick)
                     }
                     snapshot == null -> item("loading") {
-                        if (loading) Text("인사이트를 불러오는 중입니다…") else {
-                            Text(error ?: "아직 제공된 데이터가 없습니다.")
-                            TextButton(onClick = retry, modifier = Modifier.heightIn(min = 48.dp)) { Text("다시 시도") }
-                        }
+                        if (loading) DashboardLoadingState("인사이트를 불러오는 중입니다…")
+                        else if (error != null) DashboardErrorNotice(error.orEmpty(), onRetry = retry)
+                        else DashboardEmptyState("제공된 인사이트가 없습니다", "잠시 후 다시 확인해 주세요.", actionLabel = "다시 시도", onAction = retry)
                     }
                     else -> items(contentItems, key = { it.key }) {
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) { it.content() }

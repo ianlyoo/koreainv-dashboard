@@ -1,0 +1,171 @@
+{
+  "phase": "after",
+  "fixture_only": true,
+  "external_requests_forwarded": 0,
+  "head_at_test": "3cdedd718ac20d3dd361dd35e62dc9c8603b399d",
+  "ui_sha256": {
+    "app/static/js/dashboard.js": "c4150182d7713dd7f7886af37bea4557a9f14ca014d713676a5d2a2152db8f6b",
+    "app/static/js/dashboard-ui.js": "49e8c753bf7bc73d4c38edf67851824f17736d6873188db6c14c80c168a703bf",
+    "app/static/js/stock-search.js": "d67454695b0e03e1e410b561b3b0543ed5937ad1375d38420587cb45ac07ecb8",
+    "app/static/css/workspace.css": "f17396c6ca88059f8bf50f76538166793bfe32fac9135b526f1e4056483e8d61"
+  },
+  "checks": [
+    {
+      "case": "close-mode1-2560",
+      "passed": true,
+      "observed": {
+        "insight_visible": false,
+        "widgets_visible": true,
+        "origin_focused": true,
+        "document_fits": true
+      }
+    },
+    {
+      "case": "reopen-mode1-2560",
+      "passed": true,
+      "observed": {
+        "ticker": "MSFT"
+      }
+    },
+    {
+      "case": "section-allocation",
+      "passed": true,
+      "observed": {
+        "visible": true,
+        "focused": true,
+        "top": 23.6875,
+        "viewport": 1000,
+        "hash": "#allocation",
+        "insightVisible": false
+      }
+    },
+    {
+      "case": "section-markets",
+      "passed": true,
+      "observed": {
+        "visible": true,
+        "focused": true,
+        "top": 195.6875,
+        "viewport": 1000,
+        "hash": "#markets",
+        "insightVisible": false
+      }
+    },
+    {
+      "case": "initial-ArrowUp",
+      "passed": true,
+      "observed": {
+        "active": "stock-result-6",
+        "expected": "stock-result-6"
+      }
+    },
+    {
+      "case": "wrap-ArrowUp",
+      "passed": true,
+      "observed": {
+        "active": "stock-result-0",
+        "expected": "stock-result-0"
+      }
+    },
+    {
+      "case": "initial-ArrowDown",
+      "passed": true,
+      "observed": {
+        "active": "stock-result-0",
+        "expected": "stock-result-0"
+      }
+    },
+    {
+      "case": "wrap-ArrowDown",
+      "passed": true,
+      "observed": {
+        "active": "stock-result-6",
+        "expected": "stock-result-6"
+      }
+    },
+    {
+      "case": "initial-ArrowUp-Enter-selects-last",
+      "passed": true,
+      "observed": {
+        "ticker": "7203"
+      }
+    },
+    {
+      "case": "close-mode1-1440",
+      "passed": true,
+      "observed": {
+        "insight_visible": false,
+        "widgets_visible": true,
+        "origin_focused": true,
+        "document_fits": true
+      }
+    },
+    {
+      "case": "reopen-mode1-1440",
+      "passed": true,
+      "observed": {
+        "ticker": "MSFT"
+      }
+    },
+    {
+      "case": "close-mode2-1440",
+      "passed": true,
+      "observed": {
+        "insight_visible": false,
+        "widgets_visible": true,
+        "origin_focused": true,
+        "document_fits": true
+      }
+    },
+    {
+      "case": "reopen-mode2-1440",
+      "passed": true,
+      "observed": {
+        "ticker": "MSFT"
+      }
+    },
+    {
+      "case": "close-mode1-390",
+      "passed": true,
+      "observed": {
+        "insight_visible": false,
+        "widgets_visible": true,
+        "origin_focused": true,
+        "document_fits": true
+      }
+    },
+    {
+      "case": "reopen-mode1-390",
+      "passed": true,
+      "observed": {
+        "ticker": "MSFT"
+      }
+    },
+    {
+      "case": "close-mode2-390",
+      "passed": true,
+      "observed": {
+        "insight_visible": false,
+        "widgets_visible": true,
+        "origin_focused": true,
+        "document_fits": true
+      }
+    },
+    {
+      "case": "reopen-mode2-390",
+      "passed": true,
+      "observed": {
+        "ticker": "MSFT"
+      }
+    },
+    {
+      "case": "layout-switch-retains-dismissal",
+      "passed": true,
+      "observed": {
+        "insight_visible": false
+      }
+    }
+  ],
+  "page_errors": [],
+  "unexpected_requests": []
+}

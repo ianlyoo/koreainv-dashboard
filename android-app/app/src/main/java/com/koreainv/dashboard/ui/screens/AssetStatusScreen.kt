@@ -147,8 +147,10 @@ fun AssetStatusScreen(
                                 message = errorMessage.orEmpty(),
                                 onRetry = { loadDashboard(forceRefresh = true) },
                                 usingCachedData = true,
+                                isRetrying = isLoading,
                             )
                         }
+                        if (isLoading) DashboardStatusLine("최신 자산 정보를 확인하고 있습니다.")
                         TotalAssetsCard(data)
                         CashBalanceCard(data)
                         Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))

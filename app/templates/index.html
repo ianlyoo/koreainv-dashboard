@@ -6,7 +6,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard</title>
+    <title>내 투자 · KoreaInv Dashboard</title>
     <script src="/static/js/theme.js?v=__ASSET_VERSION__"></script>
     <script src="/static/js/glass.js?v=__ASSET_VERSION__" defer></script>
     <!-- Favicon -->
@@ -21,60 +21,47 @@
     <!-- TradingView Lightweight Charts (for KOR/JPN fallback) -->
     <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
 
+    <link rel="stylesheet" href="/static/css/tokens.css?v=__ASSET_VERSION__">
     <link rel="stylesheet" href="/static/css/dashboard.css?v=__ASSET_VERSION__">
+    <link rel="stylesheet" href="/static/css/workspace.css?v=__ASSET_VERSION__">
+    <script src="/static/js/dashboard-ui.js?v=__ASSET_VERSION__" defer></script>
+    <script src="/static/js/market-calendar.js?v=__ASSET_VERSION__" defer></script>
+    <script src="/static/js/stock-search.js?v=__ASSET_VERSION__" defer></script>
 </head>
 
 <body class="layout-mode-2">
-    <!-- Loading Overlay -->
-    <div class="loader-overlay" id="loading">
-        <div class="spinner"></div>
-        <div style="color: var(--text-main); font-weight: 600; letter-spacing: 1px;">자산 동기화 중...</div>
-    </div>
-
-        <div class="header animate-enter">
+    <a class="skip-link" href="#holdings">보유 종목으로 건너뛰기</a>
+        <header class="header">
             <div style="display:flex; align-items:center;">
-                <h1>Dashboard</h1>
+                <a class="brand" href="/" aria-label="KoreaInv 첫 화면"><span class="brand-mark" aria-hidden="true">K</span>KoreaInv<span class="read-only-label">조회 전용</span></a>
                 <div class="header-meta">
                     <div class="today-date" id="today_date">2026년 03월 01일 (일)</div>
                 </div>
             </div>
 
             <div class="controls">
-                <label class="appearance-control" for="appearanceMode">
-                    <span class="sr-only">화면 테마</span>
-                    <select id="appearanceMode" aria-label="화면 테마">
-                        <option value="system">시스템</option>
-                        <option value="light">라이트</option>
-                        <option value="dark">다크</option>
-                    </select>
-                </label>
-                <!-- 종목 검색 -->
-                <div class="layout-mode-switch" id="layoutModeToggle">
-                    <button class="layout-mode-btn" id="layoutModeBtn1" type="button" onclick="applyLayoutMode('mode1')">확장</button>
-                    <button class="layout-mode-btn" id="layoutModeBtn2" type="button" onclick="applyLayoutMode('mode2')">기본</button>
-                </div>
                 <div style="position:relative;">
                     <div style="display:flex; align-items:center; height:40px; background:var(--surface-subtle); border:1px solid var(--panel-border); border-radius:10px; padding:0 12px; gap:6px; transition:border-color 0.2s;"
                         id="searchWrapper">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted); flex-shrink:0;">
                         <title>종목 검색</title>
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    <input type="text" id="stockSearchInput" aria-label="종목 검색" placeholder="종목 검색..." autocomplete="off"
+                    <input type="text" id="stockSearchInput" aria-label="종목 검색" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="searchDropdown" placeholder="종목명 또는 티커 검색" autocomplete="off"
                         style="background:transparent; border:none; outline:none; color:var(--text-main); font-size:13px; width:140px; padding:0;"
                         oninput="searchStock(this.value)"
                         onkeydown="handleSearchKeydown(event)"
                         onfocus="document.getElementById('searchWrapper').style.borderColor='var(--accent-gold)'"
-                        onblur="setTimeout(()=>{document.getElementById('searchWrapper').style.borderColor='var(--panel-border)'; document.getElementById('searchDropdown').style.display='none';}, 200)">
+                        onblur="closeStockSearchOnBlur()">
                 </div>
-                <div id="searchDropdown"
+                <div id="searchDropdown" role="listbox" aria-label="검색 결과"
                     style="display:none; position:absolute; top:100%; left:0; right:0; margin-top:4px; background:var(--glass-bg); border:1px solid var(--panel-border); border-radius:10px; max-height:240px; overflow-y:auto; z-index:100; box-shadow:var(--glass-shadow); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);">
                 </div>
             </div>
             <button class="btn-history" type="button" onclick="openRealizedProfitModal()">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <title>거래내역</title>
                     <path d="M3 3v18h18"></path>
                     <path d="M7 14l4-4 3 3 5-6"></path>
@@ -83,7 +70,7 @@
             </button>
 
             <button class="btn-history btn-account" type="button" onclick="openAccountModal()">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <title>계좌 관리</title>
                     <rect x="2" y="5" width="20" height="14" rx="2"></rect>
                     <line x1="2" y1="10" x2="22" y2="10"></line>
@@ -93,7 +80,7 @@
             </button>
 
             <button class="btn-sync" type="button" onclick="syncData(true)" id="syncBtn">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round" id="syncIcon">
                     <title>새로고침</title>
                     <path d="M20 11a8 8 0 0 0-14.85-4"></path>
@@ -104,7 +91,7 @@
                 <span id="syncText">새로고침</span>
             </button>
             <button class="btn-reset" type="button" onclick="lockScreen()" id="lockBtn" title="화면 잠금">
-                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
                     stroke-linecap="round" stroke-linejoin="round">
                     <title>화면 잠금</title>
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
@@ -112,68 +99,63 @@
                 </svg>
                 화면 잠금
             </button>
-            <button class="btn-logout" type="button" onclick="logoutAndReset()" id="logoutBtn" title="로그아웃 (설정 초기화)">
-                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <title>로그아웃</title>
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                    <polyline points="16 17 21 12 16 7"></polyline>
-                    <line x1="21" y1="12" x2="9" y2="12"></line>
-                </svg>
-                로그아웃
-            </button>
         </div>
-    </div>
+    </header>
 
+    <section class="workspace-heading" aria-labelledby="workspaceTitle">
+        <div><p class="eyebrow">PORTFOLIO OVERVIEW</p><h1 id="workspaceTitle">내 투자 한눈에</h1><p class="workspace-description">보유 자산부터 시장 흐름까지, 차분하게 살펴보세요.</p></div>
+        <nav class="workspace-nav" aria-label="대시보드 영역"><a href="#holdings">보유 종목</a><a href="#allocation">자산 구성</a><a href="#markets">시장 흐름</a></nav>
+    </section>
+    <div id="loading" class="sync-notice" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span><span id="syncNoticeText">자산을 불러오는 중입니다.</span><button id="syncRetry" type="button" onclick="syncData(true)" hidden>다시 시도</button></div>
     <div id="accountSyncWarning" class="account-sync-warning" role="status" aria-live="polite" hidden></div>
 
     <!-- Main Layout -->
-    <div class="layout-grid" id="layoutRoot">
+    <main class="layout-grid" id="layoutRoot" aria-label="투자 현황">
 
         <!-- 1. LEFT COLUMN -->
         <div class="col-panel col-left">
-            <div class="summary-grid">
+            <div class="summary-grid" aria-label="계좌별 평가 요약">
                 <div class="glass-card primary summary-card flip-card animate-enter" id="assetSummaryCard"
                     onclick="toggleAssetCard()" onkeydown="handleAssetCardKeydown(event)"
-                    role="button" tabindex="0" aria-label="총 평가금액 통화 상세 전환">
+                    role="button" tabindex="0" aria-label="주식 평가금액, 통화별 보기">
                     <div class="flip-card-inner">
                         <div class="flip-card-face flip-card-front">
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <title>총 평가금액</title>
+                                    <title>주식 평가금액</title>
                                     <rect x="2" y="6" width="20" height="12" rx="2"></rect>
                                     <path d="M12 12h.01"></path>
                                     <path d="M17 12h.01"></path>
                                     <path d="M7 12h.01"></path>
                                 </svg>
-                                총 평가금액
+                                주식 평가금액
                             </div>
-                            <div class="summary-value" id="val_total_assets">₩204,466,770</div>
+                            <div class="summary-value" id="val_total_assets">—</div>
                             <div class="summary-sub" style="color: var(--text-muted);">매입금액: <span
-                                    id="val_purchase">₩198,883,755</span>
+                                    id="val_purchase">—</span>
                             </div>
                         </div>
                         <div class="flip-card-face flip-card-back">
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <title>통화 기준 평가금액</title>
+                                    <title>통화별 주식 평가금액</title>
                                     <rect x="2" y="6" width="20" height="12" rx="2"></rect>
                                     <path d="M12 12h.01"></path>
                                     <path d="M17 12h.01"></path>
                                     <path d="M7 12h.01"></path>
                                 </svg>
-                                통화 기준 평가금액
+                                통화별 주식 평가금액
                             </div>
                             <div class="asset-card-back-content">
                                 <div class="asset-card-row">
                                     <span class="label">달러 자산</span>
-                                    <span class="value" id="val_total_assets_usd">$151,456.87</span>
+                                    <span class="value" id="val_total_assets_usd">—</span>
                                 </div>
                                 <div class="asset-card-row">
                                     <span class="label">원화 자산</span>
-                                    <span class="value" id="val_total_assets_krw">₩204,466,770</span>
+                                    <span class="value" id="val_total_assets_krw">—</span>
                                 </div>
                             </div>
                         </div>
@@ -183,20 +165,20 @@
                 <!-- Header & Date moved back up -->
 
                 <div class="glass-card primary summary-card profit-card animate-enter" style="animation-delay: 0.25s;"
-                    id="profitSummaryCard" onclick="toggleProfitCard()" onkeydown="handleProfitCardKeydown(event)"
-                    role="button" tabindex="0" aria-label="총 평가손익과 이번 달 실현손익 전환">
+                    id="profitSummaryCard" onclick="toggleProfitCard()"
+                    role="group" aria-label="평가손익과 이번 달 실현손익 전환">
                     <div class="profit-card-inner">
                         <div class="profit-card-face profit-card-front">
                             <div class="summary-label">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <title>총 평가손익</title>
+                                    <title>평가손익</title>
                                     <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
                                 </svg>
-                                총 평가손익
+                                평가손익
                             </div>
-                            <div class="summary-value profit-plus" id="val_total_profit">+₩5,583,015</div>
-                            <div class="summary-sub" id="val_total_rt"><span class="profit-badge bg-plus">+2.81%</span></div>
+                            <div class="summary-value profit-plus" id="val_total_profit">—</div>
+                            <div class="summary-sub" id="val_total_rt">—</div>
                         </div>
                         <div class="profit-card-face profit-card-back">
                             <div class="summary-label">
@@ -216,9 +198,10 @@
                                 </div>
                             </div>
                             <div class="summary-value" id="val_realized_profit_month">조회 중...</div>
-                            <div class="summary-sub" id="val_realized_profit_month_sub">이번 달 누적 기준</div>
+                            <div class="summary-sub" id="val_realized_profit_month_sub">매도 거래 기준</div>
                         </div>
                     </div>
+                    <button type="button" class="profit-summary-toggle" id="profitSummaryToggle" aria-pressed="false" onclick="event.stopPropagation(); toggleProfitCard()">실현손익 보기 ↗</button>
                 </div>
 
                 <!-- NEW CASH PANEL -->
@@ -238,9 +221,9 @@
                                 </svg>
                                 보유 현금
                             </div>
-                            <div class="summary-value cash-summary-value" id="val_total_cash">₩61,783</div>
+                            <div class="summary-value cash-summary-value" id="val_total_cash">—</div>
                             <div class="summary-sub cash-summary-sub">
-                                총 예수금 · 현금 (원화 환산)
+                                전체 계좌 · 원화 환산
                             </div>
                         </div>
                         <div class="flip-card-face flip-card-back">
@@ -258,15 +241,15 @@
                             <div class="asset-card-back-content">
                                 <div class="asset-card-row">
                                     <span class="label">KRW</span>
-                                    <span class="value" id="val_krw_cash">₩0</span>
+                                    <span class="value" id="val_krw_cash">—</span>
                                 </div>
                                 <div class="asset-card-row">
                                     <span class="label">USD</span>
-                                    <span class="value" id="val_usd_cash">$0.00</span>
+                                    <span class="value" id="val_usd_cash">—</span>
                                 </div>
                                 <div class="asset-card-row">
                                     <span class="label">JPY</span>
-                                    <span class="value" id="val_jpy_cash">¥0</span>
+                                    <span class="value" id="val_jpy_cash">—</span>
                                 </div>
                             </div>
                         </div>
@@ -275,10 +258,10 @@
             </div>
 
             <!-- Holdings Table -->
-            <div class="glass-card table-container animate-enter" style="animation-delay: 0.3s;">
+            <div class="glass-card table-container" id="holdings" tabindex="-1">
                 <div class="table-header portfolio-table-header">
                     <div class="portfolio-table-title">
-                        <span class="portfolio-table-heading">보유 자산 상세</span>
+                        <h2 class="portfolio-table-heading">보유 종목 <span id="holdingCount" class="holding-count"></span></h2>
                         <span id="sync-status-badge"
                             style="font-size: 12px; color: var(--text-muted); font-weight: 400; background: var(--surface-subtle); padding: 4px 10px; border-radius: 20px; transition: all 0.3s ease;">
                             <span id="last-sync-text">마지막 동기화: -</span>
@@ -287,20 +270,23 @@
                     <div class="portfolio-table-actions">
                         <label class="account-filter-control" for="portfolioAccountFilter">
                             <span>계좌</span>
-                            <select id="portfolioAccountFilter" onchange="setPortfolioAccountFilter(this.value)">
+                            <select id="portfolioAccountFilter" aria-label="보유 종목 계좌" onchange="setPortfolioAccountFilter(this.value)">
                                 <option value="all">통합</option>
                             </select>
                         </label>
 
-                        <div class="currency-toggle" id="currencyToggle" onclick="toggleCurrency()">
+                        <label class="account-filter-control" for="holdingSort"><span class="sr-only">종목 정렬</span><select id="holdingSort" onchange="window.dashboardUI.setSort(this.value)"><option value="value">평가금액순</option><option value="return">수익률순</option><option value="profit">평가손익순</option><option value="name">이름순</option></select></label>
+                        <button type="button" aria-label="금액 표시: 현지 통화. 원화로 전환" aria-pressed="false" class="currency-toggle" id="currencyToggle" onclick="toggleCurrency()">
                             <div class="currency-slider"></div>
-                            <div class="currency-option active" id="opt-local">$</div>
-                            <div class="currency-option" id="opt-krw">원</div>
-                        </div>
+                            <span class="currency-option active" id="opt-local">현지</span>
+                            <span class="currency-option" id="opt-krw">원화</span>
+                        </button>
                     </div>
                 </div>
+                <p class="scope-note" id="portfolioScope">전체 계좌 · 주식 평가금액 기준</p>
+                <div class="portfolio-empty" id="portfolioEmpty" hidden><h3>보유 종목이 없습니다</h3><p>선택한 계좌의 보유 종목이 여기에 표시됩니다.</p><button type="button" onclick="openAccountModal()">계좌 확인</button></div>
                 <div class="table-wrapper">
-                    <table class="holdings-table">
+                    <table class="holdings-table" aria-label="보유 종목과 평가손익">
                         <thead>
                             <tr>
                                 <th>자산명/티커</th>
@@ -323,9 +309,10 @@
             <!-- 2. RIGHT WIDGET STACK -->
             <div class="col-panel col-middle right-widgets-stack" id="rightWidgetsStack">
                 <!-- Chart & Allocation -->
-                <div class="glass-card chart-area animate-enter" style="animation-delay: 0.35s;">
+                <div class="glass-card chart-area" id="allocation" tabindex="-1">
+                    <div class="section-intro"><h2>자산 구성</h2><p>선택한 계좌 · 주식 평가금액 기준</p></div>
                     <div class="chart-container">
-                        <canvas id="portfolioChart"></canvas>
+                        <canvas id="portfolioChart" role="img" aria-label="주식 평가금액 비중. 정확한 비중은 아래 목록에서 확인하세요."></canvas>
                         <div class="chart-center-text">
                             <div class="chart-center-title">자산 구성</div>
                             <div class="chart-center-val" id="chart_center_val"></div>
@@ -336,9 +323,9 @@
                 </div>
 
                 <!-- Major Indices -->
-                <div class="bottom-widgets animate-enter" style="animation-delay: 0.4s;">
+                <div class="bottom-widgets" id="markets" tabindex="-1">
                     <div class="indices-section animate-enter" style="animation-delay: 0.4s;">
-                        <div class="indices-header mode1-only">주요 지표 추이</div>
+                        <div class="indices-header">주요 지표 추이</div>
                         <div class="indices-widget-frame">
                             <!-- TradingView Widget BEGIN -->
                             <div class="tradingview-widget-container" id="marketOverviewWidgetContainer" style="height: 100%; width: 100%;">
@@ -353,15 +340,15 @@
 
                     <!-- Market Calendar -->
                     <div class="calendar-section animate-enter" style="animation-delay: 0.45s;">
-                        <div class="calendar-header mode1-only">증시 캘린더</div>
-                        <div class="calendar-card" id="calendar_list">
+                        <div class="calendar-header">증시 캘린더</div>
+                        <div class="calendar-card" id="calendar_list" role="region" tabindex="0" aria-label="증시 캘린더" aria-live="polite">
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- 3. RIGHT INSIGHT -->
-            <div class="col-panel col-right right-insight-panel is-hidden" id="rightInsightPanel">
+            <div class="col-panel col-right right-insight-panel is-hidden" id="rightInsightPanel" tabindex="-1" aria-label="종목 인사이트">
                 <!-- Insight Section -->
                 <div class="insight-section animate-enter" style="animation-delay: 0.45s;">
                      <div class="insight-header">
@@ -369,12 +356,12 @@
                              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                                  style="color: var(--accent-gold);">
-                                 <title>종목정보</title>
+                                 <title>종목 인사이트</title>
                                  <circle cx="12" cy="12" r="10"></circle>
                                  <line x1="12" y1="16" x2="12" y2="12"></line>
                                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
                              </svg>
-                             종목정보
+                             종목 인사이트
                          </h2>
                          <div class="insight-header-actions">
                              <a class="insight-source-link" id="insightSaveTickerLink" href="https://saveticker.com/" target="_blank" rel="noopener noreferrer" hidden>SaveTicker 원문 ↗</a>
@@ -383,14 +370,14 @@
                      </div>
                      <div class="insight-content" id="insight_content">
                          <div style="color:var(--text-muted); text-align:center; padding:20px;">
-                             종목을 선택하면 상세 정보가 표시됩니다.
+                             보유 종목을 선택하거나 검색해 인사이트를 확인하세요.
                          </div>
                     </div>
                 </div>
             </div>
         </div>
 
-    </div>
+    </main>
     <script src="/static/js/dashboard.js?v=__ASSET_VERSION__"></script>
 
     <!-- Custom Modals -->
@@ -427,7 +414,7 @@
                 <div class="profit-detail-toolbar">
                     <label class="account-filter-control profit-account-filter" for="realizedProfitAccountFilter">
                         <span>계좌</span>
-                        <select id="realizedProfitAccountFilter" onchange="setRealizedProfitAccountFilter(this.value)">
+                        <select id="realizedProfitAccountFilter" aria-label="거래내역 계좌" onchange="setRealizedProfitAccountFilter(this.value)">
                             <option value="all">통합</option>
                         </select>
                     </label>
@@ -439,8 +426,8 @@
                         <button type="button" data-profit-preset="oneYear" onclick="setRealizedPreset('oneYear', true)">최근 1년</button>
                     </div>
                     <div class="profit-range-inputs">
-                        <input type="date" id="realizedProfitStart" onchange="onRealizedRangeInputChange()">
-                        <input type="date" id="realizedProfitEnd" onchange="onRealizedRangeInputChange()">
+                        <input type="date" id="realizedProfitStart" aria-label="조회 시작일" onchange="onRealizedRangeInputChange()">
+                        <input type="date" id="realizedProfitEnd" aria-label="조회 종료일" onchange="onRealizedRangeInputChange()">
                         <button type="button" class="profit-range-fetch" onclick="fetchRealizedProfitFromInputs()">조회</button>
                     </div>
                 </div>
@@ -536,14 +523,30 @@
         <div class="profit-detail-modal account-modal" onclick="handleAccountModalClick(event)">
             <div class="profit-detail-header">
                 <div class="profit-detail-title-wrap">
-                    <h2>설정 · 계좌 관리</h2>
-                    <p id="accountModalCaption">등록된 투자 계좌를 확인하고 계좌를 추가하거나 삭제할 수 있습니다.</p>
+                    <h2>설정</h2>
+                    <p id="accountModalCaption">화면 표시와 조회할 계좌, 외부 정보 연결을 관리합니다.</p>
                 </div>
                 <div class="profit-detail-header-actions">
                     <button class="profit-detail-close" type="button" onclick="closeAccountModal()" aria-label="계좌 관리 닫기">&times;</button>
                 </div>
             </div>
             <div class="profit-detail-body account-body">
+                <section class="preferences-section" aria-label="화면 표시"><h3>화면 표시</h3><div class="preferences-controls">                <label class="appearance-control" for="appearanceMode">
+                    <span class="sr-only">화면 테마</span>
+                    <select id="appearanceMode" aria-label="화면 테마">
+                        <option value="system">시스템</option>
+                        <option value="light">라이트</option>
+                        <option value="dark">다크</option>
+                    </select>
+                </label>
+                <!-- 대화면 배치 -->
+                <div class="layout-mode-switch" role="group" aria-label="대화면 배치" id="layoutModeToggle">
+                    <button class="layout-mode-btn" id="layoutModeBtn1" type="button" onclick="applyLayoutMode('mode1')">확장</button>
+                    <button class="layout-mode-btn" id="layoutModeBtn2" type="button" onclick="applyLayoutMode('mode2')">기본</button>
+                </div>
+
+</div></section>
+                <h3>연결된 계좌</h3>
                 <div class="profit-detail-loading" id="accountListLoading">계좌 목록을 불러오는 중입니다...</div>
                 <div class="account-list" id="accountList"></div>
                 <div class="profit-detail-empty" id="accountListEmpty">등록된 계좌가 없습니다.</div>
@@ -554,8 +557,7 @@
                     <button type="button" class="btn-modal btn-cancel" onclick="openSaveTickerSettings()">SaveTicker 연결 설정 ›</button>
                 </div>
 
-                <div class="account-add-section">
-                    <div class="account-add-title">새 계좌 추가</div>
+                <details class="account-add-section"><summary>새 계좌 연결</summary>
                     <form class="account-form account-add-form" id="accountAddForm" onsubmit="submitAddAccount(event)" novalidate>
                         <div class="account-form-grid">
                             <label class="account-field">
@@ -605,7 +607,18 @@
                             <button type="submit" class="btn-modal btn-confirm" id="accountAddSubmitBtn">계좌 추가</button>
                         </div>
                     </form>
-                </div>
+                </details>
+                <section class="reset-section"><h3>등록 정보 초기화</h3><p>이 기기의 모든 계좌 연결과 PIN을 지웁니다. 화면만 잠그려면 상단의 화면 잠금을 사용하세요.</p>            <button class="btn-logout" type="button" onclick="logoutAndReset()" id="logoutBtn" title="등록 정보 초기화">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <title>등록 정보 초기화</title>
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+                등록 정보 초기화
+            </button>
+</section>
             </div>
         </div>
     </div>
@@ -713,12 +726,7 @@
         </div>
     </div>
 
-    <!-- Footer -->
-    <div
-        style="position: fixed; bottom: 12px; width: 100%; text-align: center; color: var(--text-muted); font-size: 11px; z-index: 9999; pointer-events: none;">
-        © Youngin all rights reserved.
-    </div>
-
+    <footer class="workspace-footer">KoreaInv Dashboard <span>조회 전용 · © Youngin</span></footer>
 
     <div class="profit-detail-overlay account-overlay" id="saveTickerSettings" role="dialog" aria-modal="true" aria-labelledby="stSettingsTitle">
         <div class="profit-detail-modal account-modal">

@@ -354,6 +354,10 @@
         }
 
         function escapeAttributeValue(value) {
+            return escapeHtml(value);
+        }
+
+        function escapeSelectorValue(value) {
             return String(value ?? '')
                 .replace(/\\/g, '\\\\')
                 .replace(/"/g, '\\"');
@@ -409,7 +413,7 @@
 
             const totalProfitAmt = totalEvalKrw - totalPurchaseKrw;
             const totalProfitRt = totalPurchaseKrw > 0 ? (totalProfitAmt / totalPurchaseKrw) * 100 : 0;
-            const profitSign = totalProfitAmt > 0 ? '+' : '';
+            const profitSign = totalProfitAmt > 0 ? '+' : totalProfitAmt < 0 ? '-' : '';
             const profitClass = totalProfitAmt > 0 ? 'profit-plus' : (totalProfitAmt < 0 ? 'profit-minus' : '');
 
             document.getElementById('val_total_assets').innerText = `₩${formatNumber(Math.round(totalEvalKrw))}`;
@@ -458,6 +462,7 @@
             cachedItems = cachedAllItems
                 .filter((item) => activePortfolioAccountId === 'all' || String(item.account_id || '') === activePortfolioAccountId)
                 .sort((a, b) => b.evalAmtKrw - a.evalAmtKrw);
+            if (window.dashboardUI) cachedItems = window.dashboardUI.sortHoldings(cachedItems);
             renderPortfolioSummary(cachedItems);
             renderTable();
             updateChart(cachedItems, cachedTotalEvalKrw);
@@ -507,7 +512,7 @@
             const safeTicker = escapeHtml(tickerText);
             const safeName = escapeHtml(nameText);
             const safeTickerAttr = escapeAttributeValue(normalizedTicker);
-            const onClickArgs = `${JSON.stringify(tickerText)}, ${JSON.stringify(String(item.type || ''))}`;
+
 
             let displayAvg = item.avg_price;
             let displayNow = item.now_price;
@@ -558,10 +563,10 @@
             let profitAmtFormatted = `${profitAmtSign}${pricePrefix}${formatNumber(Math.abs(profitAmtLocal).toFixed(dp))}`;
 
             return `
-                <tr data-ticker="${safeTickerAttr}" onclick='fetchAssetInsight(${onClickArgs})' style="cursor: pointer; transition: background 0.2s;">
+                <tr data-ticker="${safeTickerAttr}" data-insight-ticker="${escapeAttributeValue(tickerText)}" data-market="${escapeAttributeValue(item.type || '')}" onclick="fetchAssetInsight(this.dataset.insightTicker, this.dataset.market)" style="cursor: pointer; transition: background 0.2s;">
                     <td>
                         <div class="ticker-cell">
-                            <span class="ticker-name">${safeName}</span>
+                            <span class="ticker-name"><button type="button" class="holding-link" onclick="event.stopPropagation(); fetchAssetInsight(this.closest('tr').dataset.insightTicker, this.closest('tr').dataset.market)" aria-label="${escapeAttributeValue(nameText)} 인사이트 보기">${safeName}</button></span>
                             <div class="ticker-meta-row">
                                 ${badgeHtml}
                                 ${quoteBadgeHtml}
@@ -570,12 +575,12 @@
                             </div>
                         </div>
                     </td>
-                    <td>${formatNumber(item.qty)}</td>
-                    <td class="js-eval" style="color:var(--text-main); font-weight:600;">${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}</td>
-                    <td style="color:var(--text-sub);">${pricePrefix}${formatNumber(displayAvg.toFixed(dp))}</td>
-                    <td class="js-now">${pricePrefix}${formatNumber(displayNow.toFixed(dp))}</td>
-                    <td class="holding-profit-amount ${profitAmtClass}">${profitAmtFormatted}</td>
-                    <td class="js-profit">${formatProfit(profitPct, false)}</td>
+                    <td data-label="수량">${formatNumber(item.qty)}</td>
+                    <td data-label="평가금액" class="js-eval" style="color:var(--text-main); font-weight:600;">${pricePrefix}${formatNumber(totalValLocal.toFixed(dp))}</td>
+                    <td data-label="평균단가" style="color:var(--text-sub);">${pricePrefix}${formatNumber(displayAvg.toFixed(dp))}</td>
+                    <td data-label="현재가" class="js-now">${pricePrefix}${formatNumber(displayNow.toFixed(dp))}</td>
+                    <td data-label="평가손익" class="holding-profit-amount ${profitAmtClass}">${profitAmtFormatted}</td>
+                    <td data-label="수익률" class="js-profit">${formatProfit(profitPct, false)}</td>
                 </tr>
             `;
         }
@@ -584,7 +589,7 @@
             changedTickers.forEach((ticker) => {
                 const item = cachedItems.find((entry) => entry.type === 'USA' && normalizeTicker(entry.ticker) === ticker);
                 if (!item) return;
-                const selectorTicker = escapeAttributeValue(ticker);
+                const selectorTicker = escapeSelectorValue(ticker);
                 const row = document.querySelector(`#all_list tr[data-ticker="${selectorTicker}"]`);
                 if (row) {
                     row.outerHTML = buildHoldingRowHtml(item).trim();
@@ -771,6 +776,8 @@
 
             btnMode1.classList.toggle('active', currentLayoutMode === 'mode1');
             btnMode2.classList.toggle('active', currentLayoutMode === 'mode2');
+            btnMode1.setAttribute('aria-pressed', String(currentLayoutMode === 'mode1'));
+            btnMode2.setAttribute('aria-pressed', String(currentLayoutMode === 'mode2'));
         }
 
         function setRightPaneState(state) {
@@ -779,20 +786,10 @@
             const insightPane = document.getElementById('rightInsightPanel');
             if (!widgetsPane || !insightPane) return;
 
-            if (currentLayoutMode === 'mode1') {
-                widgetsPane.classList.remove('is-hidden');
-                insightPane.classList.remove('is-hidden');
-                return;
-            }
-
-            if (rightPaneState === 'insight') {
-                widgetsPane.classList.add('is-hidden');
-                insightPane.classList.remove('is-hidden');
-            } else {
-                widgetsPane.classList.remove('is-hidden');
-                insightPane.classList.add('is-hidden');
-                scheduleMarketOverviewMount(false);
-            }
+            const showingInsight = rightPaneState === 'insight';
+            widgetsPane.classList.toggle('is-hidden', showingInsight && currentLayoutMode === 'mode2');
+            insightPane.classList.toggle('is-hidden', !showingInsight);
+            if (!showingInsight) scheduleMarketOverviewMount(false);
         }
 
         function applyLayoutMode(mode, persist = true) {
@@ -821,15 +818,13 @@
         }
 
         function openInsightPane() {
-            if (currentLayoutMode === 'mode2') {
-                setRightPaneState('insight');
-            }
+            setRightPaneState('insight');
+            window.dashboardUI?.openInsight();
         }
 
         function closeInsightPane() {
-            if (currentLayoutMode === 'mode2') {
-                setRightPaneState('widgets');
-            }
+            setRightPaneState('widgets');
+            window.dashboardUI?.closeInsight();
         }
 
         // 환율 모드 토글
@@ -849,12 +844,15 @@
                 optKrw.classList.remove('active');
                 optLocal.classList.add('active');
             }
+            toggle.setAttribute('aria-pressed', String(currentCurrencyMode === 'krw'));
+            toggle.setAttribute('aria-label', currentCurrencyMode === 'krw' ? '금액 표시: 원화. 현지 통화로 전환' : '금액 표시: 현지 통화. 원화로 전환');
             renderTable();
         }
 
         // 테이블 렌더링
         function renderTable() {
             document.getElementById('all_list').innerHTML = cachedItems.map((item) => buildHoldingRowHtml(item)).join('');
+            window.dashboardUI?.portfolioState(cachedItems, activePortfolioAccountId, cachedAccounts);
         }
 
 
@@ -876,7 +874,7 @@
                 const color = chartColors[idx % chartColors.length];
                 bgColors.push(color);
 
-                const percent = ((i.evalAmtKrw / totalEval) * 100).toFixed(1);
+                const percent = (totalEval > 0 ? (i.evalAmtKrw / totalEval) * 100 : 0).toFixed(1);
                 listHtml += `
                     <div class="alloc-item">
                         <div class="alloc-info">
@@ -889,71 +887,67 @@
             });
 
             const defaultCenterTicker = '';
-            document.getElementById('allocation_list').innerHTML = listHtml;
+            document.getElementById('allocation_list').innerHTML = listHtml || '<p class="scope-note">보유 주식이 생기면 비중을 확인할 수 있습니다.</p>';
+            document.getElementById('portfolioChart').hidden = !items.length || typeof Chart === 'undefined';
             document.getElementById('chart_center_val').innerText = defaultCenterTicker;
 
-            if (myChart) {
-                myChart.data.labels = labels;
-                myChart.data.datasets[0].data = data;
-                myChart.data.datasets[0].backgroundColor = bgColors;
-                myChart.update();
-            } else {
-                Chart.defaults.color = themeColor('--chart-text');
-                Chart.defaults.font.family = "'Pretendard', sans-serif";
+            if (typeof Chart === 'undefined') return;
+            if (myChart) { myChart.destroy(); myChart = null; }
+            Chart.defaults.color = themeColor('--chart-text');
+            Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
 
-                myChart = new Chart(ctx, {
-                    type: 'doughnut',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            data: data,
-                            backgroundColor: bgColors,
-                            borderWidth: 0,
-                            hoverOffset: 10,
-                            borderRadius: 4
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        cutout: '80%', /* 도넛의 얇기를 조절해 세련되게 */
-                        layout: { padding: 10 },
-                        plugins: {
-                            legend: { display: false },
-                            tooltip: {
-                                ...portfolioTooltipTheme(),
-                                bodyFont: { size: 14, weight: 'bold' },
-                                borderWidth: 1,
-                                padding: 16,
-                                cornerRadius: 12,
-                                displayColors: true,
-                                callbacks: {
-                                    label: function (context) {
-                                        let value = context.raw;
-                                        let percent = ((value / totalEval) * 100).toFixed(1);
-                                        return ` ₩${formatNumber(Math.round(value))} (${percent}%)`;
-                                    }
+            myChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: bgColors,
+                        borderWidth: 0,
+                        hoverOffset: 10,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? false : { duration: 180 },
+                    cutout: '80%', /* 도넛의 얇기를 조절해 세련되게 */
+                    layout: { padding: 10 },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            ...portfolioTooltipTheme(),
+                            bodyFont: { size: 14, weight: 'bold' },
+                            borderWidth: 1,
+                            padding: 16,
+                            cornerRadius: 12,
+                            displayColors: true,
+                            callbacks: {
+                                label: function (context) {
+                                    let value = context.raw;
+                                    let percent = ((value / totalEval) * 100).toFixed(1);
+                                    return ` ₩${formatNumber(Math.round(value))} (${percent}%)`;
                                 }
                             }
-                        },
-                        onHover: (event, chartElement) => {
-                            // 마우스 호버 시 중앙 텍스트 변경
-                            const centerText = document.getElementById('chart_center_val');
-                            if (chartElement.length > 0) {
-                                const index = chartElement[0].index;
-                                centerText.innerText = items[index].ticker || items[index].name;
-                                centerText.style.color = bgColors[index];
-                            } else {
-                                centerText.innerText = defaultCenterTicker;
-                                centerText.style.color = "var(--text-main)";
-                            }
+                        }
+                    },
+                    onHover: (event, chartElement) => {
+                        // 마우스 호버 시 중앙 텍스트 변경
+                        const centerText = document.getElementById('chart_center_val');
+                        if (chartElement.length > 0) {
+                            const index = chartElement[0].index;
+                            centerText.innerText = items[index].ticker || items[index].name;
+                            centerText.style.color = bgColors[index];
+                        } else {
+                            centerText.innerText = defaultCenterTicker;
+                            centerText.style.color = "var(--text-main)";
                         }
                     }
-                });
+                }
+            });
 
-                // 초기 중앙 텍스트 세팅
-                document.getElementById('chart_center_val').innerText = defaultCenterTicker;
-            }
+            document.getElementById('chart_center_val').innerText = defaultCenterTicker;
         }
 
         // 메인 데이터 동기화 함수
@@ -964,6 +958,7 @@
             syncRequestInFlight = true;
             const loading = document.getElementById('loading');
             loading.classList.add('active');
+            window.dashboardUI?.syncState('loading');
             try {
                 const syncUrl = manualTrigger ? '/api/sync?manual_refresh=1' : '/api/sync';
                 const res = await fetch(syncUrl);
@@ -973,7 +968,9 @@
                     return;
                 }
 
+                if (!res.ok) throw new Error('Portfolio unavailable');
                 const data = await res.json();
+                if (data.status !== 'success') throw new Error('Portfolio unavailable');
 
                 if (data.status === "success") {
                     updateAccountFilterOptions(data.accounts);
@@ -1074,16 +1071,18 @@
                         }
                     }
 
-                    // Static mode only.
+                    window.dashboardUI?.syncState('success');
                     return data;
                 }
             } catch (err) {
-                console.error(err);
-                alert("데이터를 불러오는 중 오류가 발생했습니다.");
+                window.dashboardUI?.syncState('error');
                 return null;
             } finally {
                 syncRequestInFlight = false;
-                loading.classList.remove('active');
+                if (!window.dashboardUI) loading.classList.remove('active');
+                const button = document.getElementById('syncBtn');
+                if (button) { button.disabled = false; button.setAttribute('aria-busy', 'false'); }
+                document.getElementById('layoutRoot')?.setAttribute('aria-busy', 'false');
             }
         }
 
@@ -1233,6 +1232,11 @@
             if (!card) return;
             profitCardShowingRealized = !!showRealized;
             card.classList.toggle('is-flipped', profitCardShowingRealized);
+            const toggle = document.getElementById('profitSummaryToggle');
+            if (toggle) {
+                toggle.setAttribute('aria-pressed', String(profitCardShowingRealized));
+                toggle.textContent = profitCardShowingRealized ? '평가손익 보기 ↗' : '실현손익 보기 ↗';
+            }
             if (profitCardShowingRealized) {
                 const cacheKey = `${activeProfitAccountId}:${activeRealizedSummaryMonth}`;
                 const cached = getFreshRealizedCacheEntry(realizedProfitSummaryCache, cacheKey);
@@ -1766,6 +1770,7 @@
             else realizedProfitBuyPage = 1;
             document.querySelectorAll('[data-profit-tab]').forEach((button) => {
                 button.classList.toggle('active', button.dataset.profitTab === activeProfitModalTab);
+                button.setAttribute('aria-pressed', String(button.dataset.profitTab === activeProfitModalTab));
             });
             document.getElementById('buyHistoryPanel').classList.toggle('active', activeProfitModalTab === 'buy');
             document.getElementById('sellHistoryPanel').classList.toggle('active', activeProfitModalTab === 'sell');
@@ -1783,6 +1788,7 @@
             realizedProfitSellPage = 1;
             document.querySelectorAll('[data-profit-market]').forEach((button) => {
                 button.classList.toggle('active', button.dataset.profitMarket === activeProfitMarketFilter);
+                button.setAttribute('aria-pressed', String(button.dataset.profitMarket === activeProfitMarketFilter));
             });
 
             const start = document.getElementById('realizedProfitStart').value;
@@ -1821,141 +1827,6 @@
                 return;
             }
             loadRealizedProfitDetail(start, end, true);
-        }
-
-        // ========== 종목 검색 ==========
-        let searchTimer = null;
-        let lastSearchResults = [];
-        async function searchStock(query) {
-            clearTimeout(searchTimer);
-            const dropdown = document.getElementById('searchDropdown');
-            if (!query || query.length < 1) {
-                lastSearchResults = [];
-                dropdown.style.display = 'none';
-                return;
-            }
-            searchTimer = setTimeout(async () => {
-                try {
-                    const res = await fetch(`/api/stock-search?q=${encodeURIComponent(query)}`);
-                    const result = await res.json();
-                    if (result.status === 'success' && result.data.length > 0) {
-                        lastSearchResults = result.data;
-                        let html = '';
-                        result.data.forEach(item => {
-                            const mktBadge = item.market === 'KOR' ? '🇰🇷' : (item.market === 'JPN' ? '🇯🇵' : '🇺🇸');
-                            const safeTicker = encodeURIComponent(item.ticker || '');
-                            const safeMarket = item.market || 'USA';
-                            html += `<div data-ticker="${safeTicker}" data-market="${safeMarket}" onclick="selectSearchResult(decodeURIComponent(this.dataset.ticker), this.dataset.market)"
-                                style="padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-subtle); transition:background 0.15s;"
-                                onmouseover="this.style.background='var(--surface-hover)'" onmouseout="this.style.background='transparent'">
-                                <div>
-                                    <div style="font-size:13px; font-weight:600; color:var(--text-main);">${item.name}</div>
-                                    <div style="font-size:11px; color:var(--text-muted);">${item.ticker}</div>
-                                </div>
-                                <span style="font-size:14px;">${mktBadge}</span>
-                            </div>`;
-                        });
-                        dropdown.innerHTML = html;
-                        dropdown.style.display = 'block';
-                    } else {
-                        lastSearchResults = [];
-                        dropdown.innerHTML = '<div style="padding:14px; text-align:center; color:var(--text-muted); font-size:13px;">검색 결과 없음</div>';
-                        dropdown.style.display = 'block';
-                    }
-                } catch (err) {
-                    lastSearchResults = [];
-                    console.error('Search failed:', err);
-                }
-            }, 300);
-        }
-
-        function handleSearchKeydown(event) {
-            if (event.key !== 'Enter') return;
-            const dropdown = document.getElementById('searchDropdown');
-            const firstItem = dropdown.querySelector('[data-ticker][data-market]');
-            if (firstItem) {
-                event.preventDefault();
-                selectSearchResult(decodeURIComponent(firstItem.dataset.ticker), firstItem.dataset.market);
-                return;
-            }
-            if (lastSearchResults.length > 0) {
-                event.preventDefault();
-                const top = lastSearchResults[0];
-                selectSearchResult(top.ticker, top.market);
-            }
-        }
-
-        function selectSearchResult(ticker, market) {
-            document.getElementById('stockSearchInput').value = '';
-            document.getElementById('searchDropdown').style.display = 'none';
-            fetchAssetInsight(ticker, market);
-        }
-
-        async function fetchMarketCalendar() {
-            try {
-                const res = await fetch('/api/market-calendar');
-                const result = await res.json();
-                if (result.status === 'success' && result.data && result.data.length > 0) {
-                    const listContainer = document.getElementById('calendar_list');
-                    listContainer.innerHTML = '';
-
-                    result.data.forEach(item => {
-                        // Create stars representation
-                        let stars = '';
-                        for (let i = 0; i < item.importance; i++) {
-                            stars += '<span style="color:var(--accent-gold);">★</span>';
-                        }
-
-                        let details = '';
-                        if ((item.actual && item.actual !== 'None') || (item.forecast && item.forecast !== 'None') || (item.previous && item.previous !== 'None')) {
-                            details = `<div style = "color: var(--text-muted); font-size: 12px; margin-top: 4px;" > `;
-                            details += `실제: <span style="color:var(--text-main);">${item.actual && item.actual !== 'None' ? item.actual : 'None'}</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
-                            details += `예측: <span style="color:var(--text-main);">${item.forecast && item.forecast !== 'None' ? item.forecast : 'None'}</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
-                            details += `이전: <span style="color:var(--text-main);">${item.previous && item.previous !== 'None' ? item.previous : 'None'}</span>`;
-                            details += `</div> `;
-                        } else {
-                            details = `<div style = "color: var(--text-muted); font-size: 12px; margin-top: 4px;" > `;
-                            details += `실제: <span style="color:var(--text-main);">None</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
-                            details += `예측: <span style="color:var(--text-main);">None</span> <span style="margin:0 4px; color:var(--text-muted);">/</span> `;
-                            details += `이전: <span style="color:var(--text-main);">None</span>`;
-                            details += `</div> `;
-                        }
-
-                        let titleText = item.event;
-                        if (titleText.startsWith(item.currency + " - ")) {
-                            titleText = titleText.substring(item.currency.length + 3);
-                        }
-
-                        listContainer.innerHTML += `
-                                <div class="cal-item" >
-                                <span class="cal-date" style="min-width: 85px; padding-top: 2px;">${item.time}</span>
-                                <div class="cal-desc" style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
-                                    <div style="display: flex; align-items: flex-start; gap: 6px;">
-                                        <div style="font-size: 10px; letter-spacing: 1px; flex-shrink: 0; padding-top: 3px;">${stars}</div>
-                                        <div style="font-weight: 500; color: var(--text-main); line-height: 1.4; word-break: keep-all;">
-                                            <span style="color: var(--text-muted);"></span> ${titleText}
-                                        </div>
-                                    </div>
-                                    ${details}
-                                </div>
-                            </div>
-                                `;
-                    });
-                } else {
-                    document.getElementById('calendar_list').innerHTML = `
-                                <div style = "text-align: center; color: var(--text-muted); font-size: 13px; padding-top: 20px;" >
-                                    오늘 예정된 주요 일정이 없습니다.
-                        </div>
-                                `;
-                }
-            } catch (error) {
-                console.error('Failed to fetch market calendar', error);
-                document.getElementById('calendar_list').innerHTML = `
-                                <div style = "text-align: center; color: var(--loss); font-size: 13px; padding-top: 20px;" >
-                                    캘린더 데이터를 불러오는데 실패했습니다.
-                    </div>
-                                `;
-            }
         }
 
         function getInsightDisplayName(state) {
@@ -2007,7 +1878,7 @@
                 ${buildInsightIdentityHtml(state)}
                 <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:280px; gap:12px; color:var(--text-muted);">
                     <div class="spinner" style="width:32px; height:32px; margin-bottom:0;"></div>
-                    <span>데이터를 분석 중입니다...</span>
+                    <span>종목 정보를 불러오는 중입니다…</span>
                 </div>
             `;
         }
@@ -2017,6 +1888,7 @@
                 ${buildInsightIdentityHtml(state)}
                 <div class="form-notice form-notice--error active animate-enter" style="animation-delay:0.05s;">
                     ${escapeHtml(state?.message || '정보를 불러오는 데 실패했습니다.')}
+                    <button type="button" class="btn-history" onclick="retryAssetInsight()">다시 시도</button>
                 </div>
             `;
         }
@@ -2298,35 +2170,35 @@
                 <p class="st-note">출처: Yahoo Finance${data.saveticker ? ' · SaveTicker 미제공' : ''}</p>
                 <div class="fin-grid animate-enter" style="animation-delay: 0.1s;">
                     <div class="fin-card">
-                        <span>Forward P/E <span style="text-transform:none; opacity:0.6;">선행 PER</span></span>
+                        <span>Forward P/E <span style="text-transform:none; opacity:1;">선행 PER</span></span>
                         <span>${fin.forwardPE !== 'N/A' ? parseFloat(fin.forwardPE).toFixed(2) : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
-                        <span>ROE <span style="text-transform:none; opacity:0.6;">자기자본이익률</span></span>
+                        <span>ROE <span style="text-transform:none; opacity:1;">자기자본이익률</span></span>
                         <span>${fin.returnOnEquity !== 'N/A' ? (parseFloat(fin.returnOnEquity) * 100).toFixed(2) + '%' : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
-                        <span>D/E <span style="text-transform:none; opacity:0.6;">부채비율</span></span>
+                        <span>D/E <span style="text-transform:none; opacity:1;">부채비율</span></span>
                         <span>${fin.debtToEquity !== 'N/A' ? parseFloat(fin.debtToEquity).toFixed(2) : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
-                        <span>Beta <span style="text-transform:none; opacity:0.6;">변동성</span></span>
+                        <span>Beta <span style="text-transform:none; opacity:1;">변동성</span></span>
                         <span>${fin.beta !== 'N/A' ? parseFloat(fin.beta).toFixed(2) : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
-                        <span>Mkt Cap <span style="text-transform:none; opacity:0.6;">시가총액</span></span>
+                        <span>Mkt Cap <span style="text-transform:none; opacity:1;">시가총액</span></span>
                         <span>${fin.marketCap !== 'N/A' ? (fin.marketCap >= 1e12 ? (fin.marketCap / 1e12).toFixed(2) + 'T' : fin.marketCap >= 1e9 ? (fin.marketCap / 1e9).toFixed(2) + 'B' : (fin.marketCap / 1e6).toFixed(0) + 'M') : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
-                        <span>Short <span style="text-transform:none; opacity:0.6;">공매도비중</span></span>
+                        <span>Short <span style="text-transform:none; opacity:1;">공매도비중</span></span>
                         <span style="color: ${fin.shortPercentOfFloat !== 'N/A' && parseFloat(fin.shortPercentOfFloat) > 0.1 ? 'var(--loss)' : 'var(--text-main)'}">${fin.shortPercentOfFloat !== 'N/A' ? (parseFloat(fin.shortPercentOfFloat) * 100).toFixed(2) + '%' : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
-                        <span>Target <span style="text-transform:none; opacity:0.6;">목표가</span></span>
+                        <span>Target <span style="text-transform:none; opacity:1;">목표가</span></span>
                         <span style="color: ${fin.targetMeanPrice !== 'N/A' && parseFloat(fin.targetMeanPrice) > rc ? 'var(--profit)' : (fin.targetMeanPrice !== 'N/A' ? 'var(--loss)' : 'var(--text-main)')}">${fin.targetMeanPrice !== 'N/A' ? fin.currency + ' ' + parseFloat(fin.targetMeanPrice).toFixed(2) : 'N/A'}</span>
                     </div>
                     <div class="fin-card">
-                        <span style="text-transform: none;">Analyst <span style="opacity:0.6;">분석가 평가</span></span>
+                        <span style="text-transform: none;">Analyst <span style="opacity:1;">분석가 평가</span></span>
                         <span style="text-transform: capitalize; color: ${fin.recommendation === 'buy' || fin.recommendation === 'strong_buy' ? 'var(--profit)' : (fin.recommendation === 'sell' || fin.recommendation === 'strong_sell' ? 'var(--loss)' : 'var(--text-main)')}">${(fin.recommendation || 'N/A').replace('_', ' ')}</span>
                     </div>
                 </div>`;
@@ -2425,9 +2297,9 @@
                         </div>
                         <div>
                             <div style="display:flex; justify-content:space-between; font-size:12px; font-weight: 500; margin-bottom:6px;">
-                                <span style="color:var(--profit);">콜 ${callPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(callVol)}계약)</span></span>
+                                <span style="color:var(--profit);">콜 ${callPct}% <span style="font-size: 10px; opacity: 1;">(${formatNumber(callVol)}계약)</span></span>
                                 <span style="font-size:11px; color:var(--text-muted);">PCR(${pcrBasis}) ${pcr}</span>
-                                <span style="color:var(--loss);">풋 ${putPct}% <span style="font-size: 10px; opacity: 0.7;">(${formatNumber(putVol)}계약)</span></span>
+                                <span style="color:var(--loss);">풋 ${putPct}% <span style="font-size: 10px; opacity: 1;">(${formatNumber(putVol)}계약)</span></span>
                             </div>
                             <div style="width:100%; height:8px; background:var(--surface-subtle); border-radius:4px; display:flex; overflow:hidden;">
                                 <div style="width:${callPct}%; background:var(--profit);"></div>
@@ -2513,10 +2385,12 @@
                         allow_symbol_change: true,
                         container_id: 'tv_chart_container',
                     });
-                } catch (tvErr) {
-                    console.warn('TradingView widget failed:', tvErr);
+                    return;
+                } catch (_tvErr) {
+                    insightChart = null;
+                    insightChartKind = null;
+                    // Retain readable information and use available daily bars on widget failure.
                 }
-                return;
             }
 
             const historyData = data.history || [];
@@ -2602,6 +2476,10 @@
             initializeInsightDetailCharts(currentInsightState);
         }
 
+        function retryAssetInsight() {
+            if (currentInsightState) fetchAssetInsight(currentInsightState.ticker, currentInsightState.marketType);
+        }
+
         // Asset Insight Fetcher
         async function fetchAssetInsight(ticker, marketType) {
             marketType = marketType || 'USA';
@@ -2627,7 +2505,8 @@
             renderCurrentInsightContent();
 
             try {
-                const res = await fetch(`/api/asset-insight?ticker=${ticker}&market_type=${marketType}`);
+                const res = await fetch(`/api/asset-insight?ticker=${encodeURIComponent(ticker)}&market_type=${encodeURIComponent(marketType)}`);
+                if (res.status === 401) { window.location.href = '/login'; return; }
                 const result = await res.json();
                 if (requestSeq !== currentInsightRequestSeq) {
                     return;
@@ -2636,24 +2515,7 @@
                 if (result.status === 'success') {
                     const data = result.data;
                     const fin = data.financials || {};
-                    let tvLogoUrl = '';
-                    let cleanTicker = ticker;
-                    if (ticker.endsWith('.KS') || ticker.endsWith('.KQ')) {
-                        cleanTicker = ticker.split('.')[0];
-                        tvLogoUrl = `https://s3-symbol-logo.tradingview.com/${cleanTicker}--big.svg`;
-                    } else if (!ticker.includes('.')) {
-                        tvLogoUrl = `https://s3-symbol-logo.tradingview.com/${cleanTicker.toLowerCase()}--big.svg`;
-                    }
-
-                    const fallbackAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(fin.shortName || ticker)}&background=random&color=fff&size=64`;
-                    let imgHtml = '';
-                    if (tvLogoUrl) {
-                        imgHtml = `<img src="${tvLogoUrl}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=function(){this.onerror=null; this.src='${fallbackAvatar}';}; this.src='${fin.logo_url ? fin.logo_url : fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: var(--logo-background); padding: 2px;">`;
-                    } else if (fin.logo_url) {
-                        imgHtml = `<img src="${fin.logo_url}" alt="${escapeHtml(fin.shortName || ticker)} 로고" onerror="this.onerror=null; this.src='${fallbackAvatar}';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: var(--logo-background); padding: 2px;">`;
-                    } else {
-                        imgHtml = `<img src="${fallbackAvatar}" alt="${escapeHtml(fin.shortName || ticker)} 로고" style="width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: var(--logo-background); padding: 2px;">`;
-                    }
+                    const imgHtml = `<div class="stock-avatar" aria-hidden="true">${escapeHtml(String(ticker).slice(0, 2))}</div>`;
 
                     currentInsightState = {
                         status: 'success',
@@ -2746,9 +2608,9 @@
 
         function logoutAndReset() {
             showModal({
-                title: '로그아웃 및 설정 초기화',
-                desc: '정말 로그아웃 하시겠습니까?\n등록된 한국투자증권 API 정보와 간편비밀번호가 기기에서 완전히 삭제되며 처음부터 다시 설정해야 합니다.',
-                confirmText: '초기화 및 로그아웃',
+                title: '등록 정보 초기화',
+                desc: '등록 정보를 초기화하시겠습니까?\n이 기기에 등록한 모든 계좌 연결과 간편비밀번호(PIN)를 지웁니다. 다시 사용하려면 계좌를 연결해야 합니다.',
+                confirmText: '등록 정보 지우기',
                 isDanger: true,
                 iconHtml: `<svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>`,
                 onConfirm: async () => {
@@ -2939,10 +2801,7 @@
             document.getElementById('accountModal').classList.add('active');
             document.addEventListener('keydown', handleAccountModalKeydown);
             loadAccountList();
-            window.setTimeout(() => {
-                const firstField = document.getElementById('new_account_label');
-                if (firstField) firstField.focus();
-            }, 80);
+
         }
 
         function closeAccountModal() {
@@ -3422,6 +3281,7 @@
 
             await syncData(false);
             scheduleDeferredBootTasks();
+            if (window.location.hash === '#settings') openAccountModal();
         });
 
         window.addEventListener('pagehide', () => {

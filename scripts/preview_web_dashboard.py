@@ -115,6 +115,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
         if path == "/api/sync":
             wide = parse_qs(urlsplit(self.headers.get("Referer", "")).query).get("fixture") == ["wide"]
             return self.payload(SYNC_WIDE if wide else SYNC)
+        if path == "/api/saveticker/connection": return self.payload({"connected": False, "saved": False})
         if path == "/api/accounts": return self.payload({"status": "success", "accounts": ACCOUNTS})
         if path.startswith("/api/realized-profit/"): return self.payload(history_payload(query))
         if path == "/api/market-calendar":
@@ -147,7 +148,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
             if INSIGHT_SNAPSHOTS:
                 symbols = html.escape(', '.join(sorted(INSIGHT_SNAPSHOTS)))
                 caption = f'계좌: 합성 데이터 · {symbols} 종목정보: SaveTicker 조회 스냅샷'
-            notice = f'<div role="note" style="position:fixed;bottom:12px;left:16px;font:11px system-ui;color:var(--text-muted);z-index:99999;pointer-events:none">{caption}</div>'
+            notice = f'<div role="note" style="padding:8px 0;font:11px system-ui;color:var(--text-muted);pointer-events:none">{caption}</div>'
             data = data.replace(b"</body>", notice.encode() + b"</body>")
         self.send_response(200)
         self.send_header("Content-Type", mimetypes.guess_type(file.name)[0] or "application/octet-stream")
@@ -182,5 +183,6 @@ if __name__ == "__main__":
         ):
             parser.error('Insight snapshot must map tickers to successful SaveTicker insight responses.')
         INSIGHT_SNAPSHOTS.update({ticker.upper(): value for ticker, value in snapshots.items()})
-    print(f"Fictional dashboard preview: http://127.0.0.1:{args.port}", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", args.port), PreviewHandler).serve_forever()
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), PreviewHandler)
+    print(f"Fictional dashboard preview: http://127.0.0.1:{server.server_port}", flush=True)
+    server.serve_forever()

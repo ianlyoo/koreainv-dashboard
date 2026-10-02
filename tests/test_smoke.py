@@ -198,7 +198,8 @@ class DashboardSmokeTests(unittest.TestCase):
         dashboard_js = Path("app/static/js/dashboard.js").read_text(encoding="utf-8")
 
         self.assertIn("function escapeHtml(value)", dashboard_js)
-        self.assertIn("onclick='fetchAssetInsight(${onClickArgs})'", dashboard_js)
+        self.assertIn("data-insight-ticker=", dashboard_js)
+        self.assertIn("fetchAssetInsight(this.dataset.insightTicker, this.dataset.market)", dashboard_js)
         self.assertIn(
             "if (hasUsHoldings && lastUsMarketStatus?.session === 'day_market') {",
             dashboard_js,
