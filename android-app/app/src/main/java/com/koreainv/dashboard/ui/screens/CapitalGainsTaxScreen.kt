@@ -105,6 +105,8 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
                             Text("예상 세액${if (estimate.incomplete) " · 추정" else ""}", color = TextSecondary)
                             Text(taxWon(estimate.estimatedTaxKrw), style = MaterialTheme.typography.headlineLarge,
                                 fontWeight = FontWeight.Bold, color = TextPrimary)
+                            Text("추정 ${estimate.estimatedCount - estimate.missingCount}건 포함 · 미산출 ${estimate.missingCount}건", color = TextSecondary,
+                                style = MaterialTheme.typography.bodySmall)
                             Text("소득세 20% + 지방소득세 2%", color = TextSecondary,
                                 style = MaterialTheme.typography.bodySmall)
                         }
@@ -122,8 +124,8 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
                     item { TaxMetricRow("기본공제", taxWon(estimate.basicDeductionKrw), "1인당 연 250만원 · 두 증권사 합산 1회") }
                     item { TaxMetricRow("과세표준", taxWon(estimate.taxableBaseKrw), "양도차익 합계 − 기본공제 · 최소 0원") }
                     item { TaxMetricRow("신고기한", "${year + 1}년 5월", estimate.filingPeriod) }
-                    item { TaxMetricRow("해외 매도 거래", "${estimate.eligibleCount}/${estimate.totalOverseasCount}건",
-                        "산출 가능/전체 · 추정 ${estimate.estimatedCount}건 (미산출 ${estimate.missingCount}건 포함)") }
+                    item { TaxMetricRow("해외 매도 거래", "${estimate.totalOverseasCount - estimate.missingCount}/${estimate.totalOverseasCount}건",
+                        "산출 가능(추정 포함)/전체 · 추정 ${estimate.estimatedCount}건 · 미산출 ${estimate.missingCount}건") }
                     item { TaxMetricRow("국내 상장주식", "비과세", "소액주주 장내거래 가정 · ${estimate.domesticCount}건 · 대주주 계산 제외") }
                     item {
                         Text("참고용 추정이며, 실제 신고는 증권사 신고대행 또는 홈택스 기준.", color = TextSecondary,

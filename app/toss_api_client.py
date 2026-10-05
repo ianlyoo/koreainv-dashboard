@@ -627,6 +627,8 @@ def get_trade_history(
     account_seq: str,
     start_date: str,
     end_date: str,
+    *,
+    tax_estimate: bool = False,
 ) -> dict[str, object]:
     safe_seq = str(account_seq or "").strip()
     if not safe_seq.isdigit() or not (0 < int(safe_seq) <= 9_223_372_036_854_775_807):
@@ -649,10 +651,40 @@ def get_trade_history(
         start_date="0001-01-01",
         end_date=safe_end,
     )
+    if tax_estimate:
+        # Reuse the account-scoped historical quote cache. Only lots consumed by
+        # selected sales need acquisition FX; unrelated/fully sold lots need none.
+        positions: dict[tuple[str, str], list[list[object]]] = {}
+        needed: set[str] = set()
+        for row in sorted(all_items, key=lambda r: (str(r["date"]), str(r["time"]), str(r["order_no"]))):
+            key = (str(row["symbol"]), str(row["currency"]))
+            lots = positions.setdefault(key, [])
+            quantity = _as_float(row["quantity"])
+            if row["side"] == "매수":
+                lots.append([quantity, row])
+                continue
+            selected = (row["currency"] == "USD"
+                        and safe_start.replace("-", "") <= str(row["date"]) <= safe_end.replace("-", ""))
+            if selected:
+                needed.add(str(row["order_no"]))
+            while quantity > 1e-9 and lots:
+                lot = lots[0]
+                covered = min(quantity, float(lot[0]))
+                if selected:
+                    needed.add(str(lot[1]["order_no"]))
+                quantity -= covered
+                lot[0] = float(lot[0]) - covered
+                if float(lot[0]) <= 1e-9:
+                    lots.pop(0)
+        for row in all_items:
+            if str(row["order_no"]) in needed:
+                row["tax_reference_fx"] = _get_historical_usd_mid_rate(
+                    client_id, client_secret, str(row["filled_at"]),
+                )
     for row in all_items:
         if (row["side"] == "매도" and row["currency"] == "USD"
                 and safe_start.replace("-", "") <= str(row["date"]) <= safe_end.replace("-", "")):
-            row["profit_exchange_rate"] = _get_historical_usd_mid_rate(
+            row["profit_exchange_rate"] = row["tax_reference_fx"] if "tax_reference_fx" in row else _get_historical_usd_mid_rate(
                 client_id, client_secret, str(row["filled_at"]),
             )
     estimate = _estimate_realized_profit(
@@ -670,7 +702,7 @@ def get_trade_history(
     items.sort(key=lambda row: (str(row.get("date", "")), str(row.get("time", ""))), reverse=True)
     summary = dict(_as_mapping(estimate.get("summary")))
     summary["trade_days"] = len({str(row.get("date", "")) for row in items})
-    return {
+    result = {
         "items": items,
         "summary": summary,
         "daily": estimate["daily"],
@@ -685,3 +717,7 @@ def get_trade_history(
         "estimated_sell_count": estimate["estimated_sell_count"],
         "unpriced_sell_count": estimate["unpriced_sell_count"],
     }
+    if tax_estimate:
+        result["tax_executions"] = all_items
+        result["tax_fx_basis"] = "fifo_acquisition_and_sale_historical_mid_rate"
+    return result

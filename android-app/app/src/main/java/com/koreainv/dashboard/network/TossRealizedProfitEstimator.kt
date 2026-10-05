@@ -22,6 +22,7 @@ internal data class TossEstimatedProfit(
     val returnRate: Double?,
     val exchangeRate: Double,
     val rateSource: String,
+    val buyAmountNative: Double = 0.0,
 )
 
 internal data class TossProfitEstimateResult(
@@ -131,6 +132,7 @@ internal fun estimateTossRealizedProfit(
                     returnRate = if (allocatedCost > 0.0) profitNative / allocatedCost * 100.0 else null,
                     exchangeRate = exchangeRate,
                     rateSource = if (currency == "USD") TOSS_HISTORICAL_FX_SOURCE else "원화 거래",
+                    buyAmountNative = allocatedCost,
                 )
                 estimatedSellCount += 1
                 totalBuyAmount += buyAmountKrw

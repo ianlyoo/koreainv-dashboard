@@ -24,6 +24,7 @@ class TossProxyDashboardRequest(TossProxyCredentialRequest):
 class TossProxyTradeHistoryRequest(TossProxyDashboardRequest):
     start_date: str = Field(min_length=8, max_length=10)
     end_date: str = Field(min_length=8, max_length=10)
+    tax_estimate: bool = False
 
 
 def _require_proxy_access(request: Request) -> None:
@@ -114,6 +115,7 @@ async def load_trade_history(
             payload.account_seq.strip(),
             payload.start_date.strip(),
             payload.end_date.strip(),
+            **({"tax_estimate": True} if payload.tax_estimate else {}),
         )
     except Exception as exc:
         raise HTTPException(

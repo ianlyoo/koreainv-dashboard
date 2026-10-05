@@ -14,6 +14,38 @@ class TossHistoricalProfitTests(unittest.TestCase):
         toss.clear_token_cache()
         self.fixture = json.loads((Path(__file__).parent / "fixtures/toss/orders-and-fx.json").read_text())
 
+    @patch("app.toss_api_client._fetch_closed_orders")
+    @patch("app.toss_api_client._get_usd_exchange_rate", return_value=1700)
+    @patch("app.toss_api_client._get_historical_usd_mid_rate")
+    def test_tax_opt_in_relays_buy_quotes_and_independent_native_cost(self, fx, spot, fetch):
+        orders = self.fixture["orders"]["result"]["orders"]
+        fetch.return_value = (orders, True)
+        quotes = {row["execution"]["filledAt"]: rate for row, rate in zip(orders, [1200, 1300, 1400, 1300])}
+        fx.side_effect = lambda client, secret, timestamp: quotes[timestamp]
+        result = toss.get_trade_history("fake-client", "fake-secret", "9", "2026-09-01", "2026-09-30", tax_estimate=True)
+        self.assertEqual(len(result["tax_executions"]), 4)
+        self.assertEqual([row["tax_reference_fx"] for row in result["tax_executions"]], [1200, 1300, 1400, 1300])
+        self.assertAlmostEqual(result["tax_executions"][2]["buy_amount_native"], 125.25)
+        self.assertEqual(fx.call_count, 4)
+        self.assertEqual(result["tax_fx_basis"], "fifo_acquisition_and_sale_historical_mid_rate")
+        fetch.assert_called_once_with("fake-client", "fake-secret", "9", end_date="2026-09-30")
+
+    @patch("app.toss_api_client._fetch_closed_orders")
+    @patch("app.toss_api_client._get_usd_exchange_rate", return_value=1700)
+    @patch("app.toss_api_client._get_historical_usd_mid_rate", return_value=1400)
+    def test_tax_opt_in_skips_unrelated_buys_and_keeps_missing_cost_sale(self, fx, spot, fetch):
+        orders = copy.deepcopy(self.fixture["orders"]["result"]["orders"])
+        unrelated = copy.deepcopy(orders[0])
+        unrelated.update(orderId="unrelated-buy", symbol="OTHER")
+        unrelated["execution"]["filledAt"] = "2026-06-05T09:00:30+09:00"
+        orders = [unrelated, orders[2]]  # sell has no acquisition history
+        fetch.return_value = (orders, True)
+        result = toss.get_trade_history("fake-client", "fake-secret", "9", "2026-09-01", "2026-09-30", tax_estimate=True)
+        self.assertEqual(len(result["tax_executions"]), 2)
+        self.assertNotIn("tax_reference_fx", result["tax_executions"][0])
+        self.assertNotIn("buy_amount_native", result["tax_executions"][1])
+        self.assertEqual(fx.call_count, 1)
+
     def rows(self):
         return toss._normalize_order_rows(
             self.fixture["orders"]["result"]["orders"], usd_exchange_rate=1700,

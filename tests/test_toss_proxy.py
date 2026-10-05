@@ -16,6 +16,20 @@ class TossProxyRouteTests(unittest.TestCase):
         app.include_router(router)
         self.client = TestClient(app)
 
+    @patch("app.routes.toss_proxy.toss_api_client.get_trade_history", return_value={"tax_executions": []})
+    def test_tax_opt_in_is_forwarded_without_new_account_lookup(self, get_trade_history):
+        with (
+            patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_ENABLED", True),
+            patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_TOKEN", "fake-private-token"),
+        ):
+            response = self.client.post("/api/toss-proxy/trade-history",
+                headers={"Authorization": "Bearer fake-private-token"},
+                json={"client_id": "fake-client", "client_secret": "fake-secret", "account_seq": "9",
+                      "start_date": "2026-01-01", "end_date": "2026-10-05", "tax_estimate": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["tax_executions"], [])
+        get_trade_history.assert_called_once_with("fake-client", "fake-secret", "9", "2026-01-01", "2026-10-05", tax_estimate=True)
+
     def test_proxy_is_hidden_when_disabled(self):
         with patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_ENABLED", False):
             response = self.client.post(

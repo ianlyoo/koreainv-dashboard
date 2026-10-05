@@ -278,18 +278,21 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
     override suspend fun fetchCapitalGainsHistory(year: Int): TradeHistoryResponse {
         checkFixture()
         if (fixture == "tax-missing") return trades(null)
-        fun payment(amount: String, date: String, fx: String?) = TaxPayment(java.math.BigDecimal(amount), "USD",
-            java.time.LocalDate.parse(date), fx?.let { java.math.BigDecimal(it) })
+        fun json(value: String) = com.google.gson.JsonParser.parseString(value).asJsonObject
+        // Exercise production adapters with synthetic recorded field shapes, not precomputed tax bases.
+        val kisSale = parseKisTaxSale(json("""{"trad_day":"${year}0810","ovrs_pdno":"AVGO","ovrs_item_name":"Broadcom Inc.","slcl_qty":"10","frcr_sll_amt_smtl1":"10000","pchs_avg_pric":"600","frcr_pchs_amt1":"6000","stck_sll_tlex":"0","frst_bltn_exrt":"1400"}"""), "NASD", "USD")!!
+        val kisBuy = parseKisTaxFill(json("""{"ord_dt":"${year}0310","pdno":"AVGO","ccld_qty":"10","ft_ccld_amt3":"6000","sll_buy_dvsn_cd":"02","odno":"fake-kis-buy","crcy_cd":"USD","frst_bltn_exrt":"1300"}"""), "NASD")!!
+        val kisBases = buildCapitalGainsBases(listOf(kisBuy, kisSale), 1350.0)
+        val tossBuy = parseTossTaxExecution(json("""{"date":"${year - 1}1220","order_no":"fake-toss-buy","symbol":"NVDA","side":"매수","currency":"USD","quantity":"10","amount_native":"1300","commission_native":"0","tax_native":"0","tax_reference_fx":"1200"}"""))!!
+        val tossSale = parseTossTaxExecution(json("""{"date":"${year}0903","order_no":"fake-toss-sell","symbol":"NVDA","side":"매도","currency":"USD","quantity":"10","amount_native":"1200","buy_amount_native":"1300","commission_native":"2","tax_native":"0","tax_reference_fx":"1400"}"""))!!
+        val noCost = parseTossTaxExecution(json("""{"date":"${year}0901","order_no":"fake-no-cost","symbol":"MSFT","side":"매도","currency":"USD","quantity":"3","amount_native":"1260","commission_native":"0","tax_native":"0","tax_reference_fx":"1400"}"""))!!
+        val tossBases = buildCapitalGainsBases(listOf(tossBuy, tossSale, noCost), 1350.0)
         val sales = listOf(
-            allTrades[2].copy(capitalGainsBasis = CapitalGainsBasis(
-                payment("1200", "$year-09-04", "1400"),
-                listOf(payment("1300", "${year - 1}-12-20", "1200")),
-                listOf(payment("2", "$year-09-04", "1400")), true, estimated = true)),
+            allTrades[2].copy(capitalGainsBasis = tossBases[tossSale.key]),
             allTrades[2].copy(ticker = "AVGO", name = "Broadcom Inc.", accountId = "demo-kis", accountLabel = "데모 한국투자",
                 broker = Broker.KIS, realizedProfitEstimated = false,
-                capitalGainsBasis = CapitalGainsBasis(payment("10000", "$year-08-10", "1400"),
-                    listOf(payment("6000", "$year-03-10", "1300")), emptyList(), true)),
-            allTrades[3], allTrades[0],
+                capitalGainsBasis = kisBases[kisSale.key]),
+            allTrades[3].copy(capitalGainsBasis = tossBases[noCost.key]), allTrades[0],
         )
         return trades(null).copy(trades = sales)
     }

@@ -1,0 +1,7 @@
+{
+  "note": "Synthetic values, recorded TTTS3039R / TTTS3035R field names only; no live account data.",
+  "usdSale": {"trad_day":"20260902","ovrs_pdno":"FAKE","ovrs_item_name":"합성 미국주식","ovrs_excg_cd":"NASD","slcl_qty":"10","avg_sll_unpr":"130","frcr_sll_amt_smtl1":"1300","pchs_avg_pric":"100","frcr_pchs_amt1":"1000","ovrs_rlzt_pfls_amt":"298","pftrt":"29.8","stck_sll_tlex":"2","exrt":"0","frst_bltn_exrt":"1400"},
+  "jpySale": {"trad_day":"20260902","ovrs_pdno":"FAKE-JP","ovrs_item_name":"합성 일본주식","ovrs_excg_cd":"TKSE","slcl_qty":"10","avg_sll_unpr":"10000","frcr_sll_amt_smtl1":"100000","pchs_avg_pric":"8000","frcr_pchs_amt1":"80000","ovrs_rlzt_pfls_amt":"19900","pftrt":"24.875","stck_sll_tlex":"100","exrt":"0","frst_bltn_exrt":"950"},
+  "buyOne": {"ord_dt":"20260601","pdno":"FAKE","ovrs_item_name":"합성 미국주식","ccld_qty":"4","ft_ccld_amt3":"320","ft_ccld_unpr2":"80","sll_buy_dvsn_cd":"02","ord_tmd":"100000","odno":"fake-buy-one","crcy_cd":"USD","frst_bltn_exrt":"1200"},
+  "buyTwo": {"ord_dt":"20260701","pdno":"FAKE","ovrs_item_name":"합성 미국주식","ccld_qty":"6","ft_ccld_amt3":"720","ft_ccld_unpr2":"120","sll_buy_dvsn_cd":"02","ord_tmd":"100000","odno":"fake-buy-two","crcy_cd":"USD","frst_bltn_exrt":"1300"}
+}

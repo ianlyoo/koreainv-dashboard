@@ -351,11 +351,12 @@ class KisRepository(
         account: AccountCredential,
         startDate: String,
         endDate: String,
+        taxEstimate: Boolean = false,
     ): TradeHistoryLoadData {
         val payload = if (account.centralServerBaseUrl.isNotBlank() && account.centralServerApiToken.isNotBlank()) {
-            getTossProxyTradeHistory(account, startDate, endDate)
+            getTossProxyTradeHistory(account, startDate, endDate, taxEstimate)
         } else {
-            getTossDirectTradeHistory(account, startDate, endDate)
+            getTossDirectTradeHistory(account, startDate, endDate, taxEstimate)
         }
         return TradeHistoryLoadData(
             account = account,
@@ -378,6 +379,7 @@ class KisRepository(
         account: AccountCredential,
         startDate: String,
         endDate: String,
+        taxEstimate: Boolean = false,
     ): TossTradeHistoryPayload {
         val baseUrl = account.centralServerBaseUrl.trim().trimEnd('/')
         val payload = JsonObject().apply {
@@ -386,6 +388,7 @@ class KisRepository(
             addProperty("account_seq", account.cano)
             addProperty("start_date", LocalDate.parse(startDate, JSON_FORMAT).toString())
             addProperty("end_date", LocalDate.parse(endDate, JSON_FORMAT).toString())
+            if (taxEstimate) addProperty("tax_estimate", true)
         }
         val request = Request.Builder()
             .url("$baseUrl/api/toss-proxy/trade-history")
@@ -408,6 +411,13 @@ class KisRepository(
             number(result, "usd_exchange_rate").takeIf { it > 0.0 }?.let { lastKnownUsdRate = it }
             val summary = jsonObject(result, "summary") ?: JsonObject()
             val trades = normalizeTossTradeRows(normalizeRows(result.get("items")), lastKnownUsdRate)
+            if (taxEstimate) {
+                val executions = normalizeRows(result.get("tax_executions")).mapNotNull(::parseTossTaxExecution)
+                // Older proxies still expose independent native acquisition cost for a sale-rate fallback.
+                val inputs = executions.ifEmpty { normalizeRows(result.get("items")).mapNotNull(::parseTossTaxExecution) }
+                val bases = buildCapitalGainsBases(inputs, lastKnownUsdRate)
+                trades.forEach { it.capitalGainsBasis = bases[tossTradeEstimateKey(it)] }
+            }
             // Older central deployments use today's FX. Preserve their rows,
             // but require a redeploy before presenting historical-rate profit.
             if (!supportsTossHistoricalProxyProfit(result) && trades.any { it.side == "매도" && it.currency != "KRW" }) {
@@ -448,6 +458,7 @@ class KisRepository(
         account: AccountCredential,
         startDate: String,
         endDate: String,
+        taxEstimate: Boolean = false,
     ): TossTradeHistoryPayload {
         val token = requireToken(account) ?: throw IllegalStateException("TOSS_TOKEN_FAILURE[trade-history]")
         val endIso = LocalDate.parse(endDate, JSON_FORMAT).toString()
@@ -506,8 +517,10 @@ class KisRepository(
             ?: lastKnownUsdRate
         if (usdRate > 0.0) lastKnownUsdRate = usdRate
         val allTrades = normalizeTossTradeRows(orders, usdRate)
+        val taxFxKeys = if (taxEstimate) taxFxExecutionKeys(orders.mapNotNull(::parseTossTaxExecution),
+            LocalDate.parse(startDate, JSON_FORMAT), LocalDate.parse(endDate, JSON_FORMAT)) else emptySet()
         val executions = orders.mapNotNull(::parseTossExecutionForEstimate).distinctBy { it.key }.map { execution ->
-            if (execution.side == "SELL" && execution.currency == "USD" && execution.date in startDate..endDate) {
+            if (execution.currency == "USD" && (execution.key in taxFxKeys || execution.side == "SELL" && execution.date in startDate..endDate)) {
                 execution.copy(saleMidRate = getTossHistoricalMidRate(account, token, execution.filledAt))
             } else execution
         }
@@ -518,6 +531,15 @@ class KisRepository(
             usdExchangeRate = usdRate,
             historyComplete = historyComplete,
         )
+        if (taxEstimate) {
+            val rates = executions.associate { it.key to it.saleMidRate }
+            val inputs = orders.mapNotNull(::parseTossTaxExecution).map { input ->
+                input.copy(fx = rates[input.key]?.takeIf { it > 0.0 }?.let(java.math.BigDecimal::valueOf),
+                    nativeCost = estimate.profitsByExecutionKey[input.key]?.buyAmountNative?.let(java.math.BigDecimal::valueOf))
+            }
+            val bases = buildCapitalGainsBases(inputs, usdRate)
+            allTrades.forEach { it.capitalGainsBasis = bases[tossTradeEstimateKey(it)] }
+        }
         allTrades.forEach { trade ->
             if (trade.side == "매도" && trade.date in startDate..endDate) {
                 trade.realizedProfitEstimated = true
@@ -722,6 +744,51 @@ class KisRepository(
         }
     }
 
+    override suspend fun fetchCapitalGainsHistory(year: Int): TradeHistoryResponse = session.run {
+        withContext(Dispatchers.IO) {
+            tradeHistoryLoadMutex.withLock {
+                ensureActiveSession()
+                val resolved = capitalGainsQueryPeriod(year, OffsetDateTime.now(ZoneOffset.ofHours(9)).toLocalDate())
+                val start = resolved.first.format(JSON_FORMAT)
+                val end = resolved.second.format(JSON_FORMAT)
+                val results = coroutineScope {
+                    accounts.map { account -> async {
+                        accountSemaphore.withPermit {
+                            account to runCatching {
+                                if (Broker.normalize(account.broker) == Broker.TOSS) loadTossTradeHistory(account, start, end, taxEstimate = true)
+                                else loadKisCapitalGainsHistory(account, start, end, year)
+                            }.onFailure { if (it is CancellationException) throw it }
+                        }
+                    } }.awaitAll()
+                }
+                ensureActiveSession()
+                val loaded = results.mapNotNull { it.second.getOrNull() }
+                if (loaded.isEmpty()) throw IllegalStateException("TAX_HISTORY_UNAVAILABLE")
+                buildTradeHistoryResponse(resolved, loaded, true,
+                    results.filter { it.second.isFailure }.map { "${it.first.label}: 연간 거래 조회 실패" }, accounts)
+            }
+        }
+    }
+
+    private suspend fun loadKisCapitalGainsHistory(account: AccountCredential, start: String, end: String, year: Int): TradeHistoryLoadData = coroutineScope {
+        val salesDeferred = async { getOverseasRealizedTradeProfit(account, start, end) }
+        val fillsDeferred = async { getOverseasTradeHistoryCcnl(account, LocalDate.of(year - 1, 1, 1).format(JSON_FORMAT), end) }
+        val domesticDeferred = async { getDomesticTradeHistory(account, start, end) }
+        val sales = salesDeferred.await().mapNotNull { it.taxExecution }
+        val canonicalDates = sales.map { it.date to it.symbol }.toSet()
+        val fills = fillsDeferred.await().mapNotNull { it.taxExecution }.filter { it.buy || (it.date to it.symbol) !in canonicalDates }
+        val bases = buildCapitalGainsBases(fills + sales, lastKnownUsdRate)
+        val rows = sales.map { sale -> TradeRow(
+            date = sale.date.format(JSON_FORMAT), market = sale.market, symbol = sale.symbol, name = sale.name,
+            side = "매도", currency = sale.currency, quantity = sale.quantity.toDouble(),
+            unitPrice = sale.amount.divide(sale.quantity, java.math.MathContext.DECIMAL128).toDouble(),
+            amountNative = sale.amount.toDouble(), amountKrw = 0.0, time = sale.time,
+            capitalGainsBasis = bases[sale.key],
+        ) }
+        TradeHistoryLoadData(account, emptyList(), emptyList(), 0.0, domesticDeferred.await() + rows,
+            profitAvailable = true, profitEstimated = true)
+    }
+
     private suspend fun loadKisTradeHistory(
         account: AccountCredential,
         startDate: String,
@@ -819,6 +886,7 @@ class KisRepository(
                     profitEstimateReason = trade.profitEstimateReason,
                     profitHistoryStartDate = trade.profitHistoryStartDate,
                     profitHistoryComplete = trade.profitHistoryComplete,
+                    capitalGainsBasis = trade.capitalGainsBasis,
                     accountId = account.id,
                     accountLabel = account.label,
                     broker = Broker.normalize(account.broker),
@@ -1231,6 +1299,7 @@ class KisRepository(
                             buyAmountKrw = nativeToKrw(buyAmount, group.currencyCode, exchangeRate),
                             realizedReturnRate = string(row, "pftrt").takeIf { it.isNotBlank() }?.toDoubleOrNull(),
                             exchangeCode = string(row, "ovrs_excg_cd").ifBlank { group.exchangeCode },
+                            taxExecution = parseKisTaxSale(row, group.exchangeCode, group.currencyCode),
                         )
                     }
                 }
@@ -1649,6 +1718,7 @@ class KisRepository(
                 amountKrw = amountKrw,
                 time = string(row, "ord_tmd").ifBlank { string(row, "ccld_tmd") }.ifBlank { string(row, "trad_tmd") },
                 orderNo = string(row, "odno").ifBlank { string(row, "ord_no") }.ifBlank { string(row, "ODNO") },
+                taxExecution = parseKisTaxFill(row, fallbackMarket),
             )
         }
 
@@ -1954,6 +2024,7 @@ private data class RealizedTradeProfitRow(
     val buyAmountKrw: Double,
     val realizedReturnRate: Double?,
     val exchangeCode: String = "",
+    val taxExecution: TaxExecution? = null,
 )
 
     private data class TradeRow(
@@ -1979,6 +2050,8 @@ private data class RealizedTradeProfitRow(
         var profitEstimateReason: String = "",
         var profitHistoryStartDate: String = "",
         var profitHistoryComplete: Boolean? = null,
+        val taxExecution: TaxExecution? = null,
+        var capitalGainsBasis: CapitalGainsBasis? = null,
     )
 
 private fun normalizeSide(code: String, label: String): String {

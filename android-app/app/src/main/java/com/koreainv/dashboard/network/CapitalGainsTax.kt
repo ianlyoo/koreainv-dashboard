@@ -3,8 +3,10 @@ package com.koreainv.dashboard.network
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
-/** A KRW-per-currency-unit reference FX rate for this payment's own settlement date.
+/** Legal tax uses this payment's own settlement-date reference FX.
+ * Estimated adapters may supply a labelled trade-date/reference-rate approximation.
  * JPY rates must be normalized to one yen, not 100 yen. Null means unavailable.
  */
 data class TaxPayment(
@@ -30,6 +32,7 @@ data class CapitalGainsBasis(
     val expenses: List<TaxPayment>,
     val costsComplete: Boolean,
     val estimated: Boolean = false,
+    val estimateReason: String = "",
 )
 
 data class CapitalGainsTradeResult(
@@ -70,7 +73,10 @@ internal fun capitalGainsQueryPeriod(year: Int, today: LocalDate): Triple<LocalD
 fun estimateCapitalGainsTax(year: Int, history: TradeHistoryResponse): CapitalGainsEstimate {
     val rows = history.trades.filter { it.side == "매도" || it.side.uppercase() == "SELL" }.mapNotNull { trade ->
         val basis = trade.capitalGainsBasis
-        if (basis != null && basis.proceeds.settlementDate.year != year) return@mapNotNull null
+        val settlement = basis?.proceeds?.settlementDate ?: runCatching {
+            estimatedSettlementDate(LocalDate.parse(trade.date.replace("-", ""), DateTimeFormatter.BASIC_ISO_DATE), trade.market)
+        }.getOrNull()
+        if (settlement != null && settlement.year != year) return@mapNotNull null
         if (trade.market.uppercase() in setOf("KOR", "KRX", "KOSPI", "KOSDAQ", "KONEX")) {
             return@mapNotNull CapitalGainsTradeResult(trade, null, basis == null, true,
                 "비과세 · 국내 상장주식 장내거래 소액주주 가정 · 증권거래세 매도 시 원천징수")
@@ -92,7 +98,7 @@ fun estimateCapitalGainsTax(year: Int, history: TradeHistoryResponse): CapitalGa
             }
             val estimated = basis.estimated || trade.realizedProfitEstimated
             CapitalGainsTradeResult(trade, requireNotNull(basis.proceeds.krw()) - costs, estimated, false,
-                if (estimated) "추정 · 원가·환율 포함 참고 계산" else "취득·양도 각각의 결제일 기준환율 · 필요경비 포함")
+                if (estimated) "추정 · ${basis.estimateReason.ifBlank { "원가·환율 포함 참고 계산" }}" else "취득·양도 각각의 결제일 기준환율 · 필요경비 포함")
         }
     }
     val overseas = rows.filter { !it.exempt }
