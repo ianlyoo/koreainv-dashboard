@@ -52,13 +52,15 @@ data class CapitalGainsEstimate(
     val missingCount: Int,
     val domesticCount: Int,
     val accountErrors: List<String>,
+    val historyCompleteness: List<AccountHistoryCompleteness> = emptyList(),
 ) {
     val basicDeductionKrw: BigDecimal = BigDecimal("2500000")
     val taxableBaseKrw: BigDecimal? = netGainKrw?.subtract(basicDeductionKrw)?.max(BigDecimal.ZERO)
     // Reference estimate, whole KRW. Actual filing/payment rounding is handled by the broker/HomeTax.
     val estimatedTaxKrw: BigDecimal? = taxableBaseKrw?.multiply(BigDecimal("0.22"))?.setScale(0, RoundingMode.DOWN)
     val totalOverseasCount: Int = rows.count { !it.exempt }
-    val incomplete: Boolean = estimatedCount > 0 || accountErrors.isNotEmpty()
+    val historyIncomplete: Boolean = accountErrors.isNotEmpty() || historyCompleteness.any { !it.complete }
+    val incomplete: Boolean = estimatedCount > 0 || historyIncomplete
     val filingPeriod: String = "${year + 1}년 5월 1일~31일 (휴일 시 다음 영업일)"
 }
 
@@ -105,7 +107,7 @@ fun estimateCapitalGainsTax(year: Int, history: TradeHistoryResponse): CapitalGa
     val priced = overseas.mapNotNull { it.gainKrw }
     val net = when {
         priced.isNotEmpty() -> priced.fold(BigDecimal.ZERO, BigDecimal::add)
-        overseas.isEmpty() && history.accountErrors.isEmpty() -> BigDecimal.ZERO
+        overseas.isEmpty() && history.accountErrors.isEmpty() && history.historyCompleteness.all { it.complete } -> BigDecimal.ZERO
         else -> null
     }
     return CapitalGainsEstimate(year, rows, net,
@@ -114,5 +116,6 @@ fun estimateCapitalGainsTax(year: Int, history: TradeHistoryResponse): CapitalGa
         missingCount = overseas.count { it.gainKrw == null },
         domesticCount = rows.count { it.exempt },
         accountErrors = history.accountErrors,
+        historyCompleteness = history.historyCompleteness,
     )
 }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -28,7 +28,7 @@ class TossProxyRouteTests(unittest.TestCase):
                       "start_date": "2026-01-01", "end_date": "2026-10-05", "tax_estimate": True})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["result"]["tax_executions"], [])
-        get_trade_history.assert_called_once_with("fake-client", "fake-secret", "9", "2026-01-01", "2026-10-05", tax_estimate=True)
+        get_trade_history.assert_called_once_with("fake-client", "fake-secret", "9", "2026-01-01", "2026-10-05", tax_estimate=True, cancel_event=ANY)
 
     def test_proxy_is_hidden_when_disabled(self):
         with patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_ENABLED", False):

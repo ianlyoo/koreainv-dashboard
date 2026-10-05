@@ -112,13 +112,13 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
                         }
                     }
                     if (estimate.incomplete) item {
-                        Text(if (estimate.missingCount > 0 || estimate.accountErrors.isNotEmpty())
+                        Text(if (estimate.missingCount > 0 || estimate.historyIncomplete)
                             "추정 · 자료 부족 거래는 합계·세액에 미반영. 표시 금액은 확인 가능한 거래의 부분 합계이며 최종 세액이 아닙니다."
                         else "추정 자료가 포함된 참고 계산입니다.", color = TextSecondary,
                             style = MaterialTheme.typography.bodySmall)
                     }
-                    if (estimate.accountErrors.isNotEmpty()) item {
-                        DashboardErrorNotice(message = "일부 계좌 조회 미완료 · 합산 결과 불완전", onRetry = { retry++ })
+                    if (estimate.historyIncomplete) item {
+                        DashboardErrorNotice(message = "거래 이력 조회 미완료 · 누락 거래가 있을 수 있습니다", onRetry = { retry++ })
                     }
                     item { TaxMetricRow("양도차익 합계", taxWon(estimate.netGainKrw), "해외주식 손익통산 · 환차손익 포함") }
                     item { TaxMetricRow("기본공제", taxWon(estimate.basicDeductionKrw), "1인당 연 250만원 · 두 증권사 합산 1회") }

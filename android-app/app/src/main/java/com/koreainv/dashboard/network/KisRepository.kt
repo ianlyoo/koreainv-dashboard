@@ -76,10 +76,11 @@ class KisRepository(
 
     private val session = RepositoryRequestSession(DashboardCache())
     private val accountSemaphore = Semaphore(maxConcurrentAccounts.coerceAtLeast(1))
+    private val taxAccountSemaphore = Semaphore(maxConcurrentAccounts.coerceAtLeast(1))
     private val dashboardLoadMutex = Mutex()
     private val quoteRefreshMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
-    private val tossHistoricalFxMutex = Mutex()
+    private val taxHistoryLoadMutex = Mutex()
     private val tossHistoricalFxCache = TossHistoricalFxCache()
     private val tokenAliases = AuthTokenAliases(accounts)
     private val tokenCoordinator = AuthTokenCoordinator(
@@ -372,6 +373,7 @@ class KisRepository(
             estimatedOverseasProfitKrw = payload.overseasProfitKrw,
             estimatedBuyAmountKrw = payload.totalBuyAmountKrw,
             unpricedSellCount = payload.unpricedSellCount,
+            historyReasons = payload.historyReasons,
         )
     }
 
@@ -397,7 +399,7 @@ class KisRepository(
             .header("Authorization", "Bearer ${account.centralServerApiToken.trim()}")
             .build()
         ensureActiveSession()
-        // The first annual history lookup may hydrate hundreds of FX windows.
+        // Tax hydration is bounded independently; legacy proxy history retains its timeout.
         val historyClient = client.newBuilder().readTimeout(300, TimeUnit.SECONDS).callTimeout(300, TimeUnit.SECONDS).build()
         historyClient.newCall(request).awaitTextResponse().let { response ->
             ensureActiveSession()
@@ -432,6 +434,7 @@ class KisRepository(
                     trades = trades, domesticProfitKrw = 0.0, overseasProfitKrw = 0.0,
                     totalBuyAmountKrw = 0.0, profitAvailable = false, profitComplete = false,
                     unpricedSellCount = trades.count { it.side == "매도" }, historyNotes = listOf(reason),
+                    historyReasons = tossProxyHistoryReasons(result),
                 )
             }
             return TossTradeHistoryPayload(
@@ -446,6 +449,7 @@ class KisRepository(
                     result.get("profit_complete")?.asBoolean ?: true
                 }.getOrDefault(true),
                 unpricedSellCount = number(result, "unpriced_sell_count").toInt(),
+                historyReasons = tossProxyHistoryReasons(result),
                 historyNotes = listOf(tossHistoryNote(
                     string(result, "profit_history_start_date"),
                     runCatching { result.get("profit_history_complete")?.asBoolean ?: false }.getOrDefault(false),
@@ -463,7 +467,7 @@ class KisRepository(
         val token = requireToken(account) ?: throw IllegalStateException("TOSS_TOKEN_FAILURE[trade-history]")
         val endIso = LocalDate.parse(endDate, JSON_FORMAT).toString()
         val orders = mutableListOf<JsonObject>()
-        val seenCursors = mutableSetOf<String>()
+        val pagination = HistoryPagination(100)
         var cursor = ""
         var historyComplete = true
         for (page in 0 until 100) {
@@ -482,7 +486,8 @@ class KisRepository(
                 includeAccount = true,
             )
             val result = payload?.let { jsonObject(it, "result") }
-            if (result == null || result.get("orders")?.isJsonArray != true || result.get("hasNext")?.asJsonPrimitive?.isBoolean != true) {
+            if (result == null || result.get("orders")?.isJsonArray != true || result.getAsJsonArray("orders").any { !it.isJsonObject } ||
+                result.get("hasNext")?.let { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean } != true) {
                 historyComplete = false
                 break
             }
@@ -492,7 +497,7 @@ class KisRepository(
             if (!hasNext) {
                 break
             }
-            if (nextCursor.isBlank() || !seenCursors.add(nextCursor) || page == 99) {
+            if (!pagination.advance(true, nextCursor, page + 1)) {
                 historyComplete = false
                 break
             }
@@ -519,10 +524,15 @@ class KisRepository(
         val allTrades = normalizeTossTradeRows(orders, usdRate)
         val taxFxKeys = if (taxEstimate) taxFxExecutionKeys(orders.mapNotNull(::parseTossTaxExecution),
             LocalDate.parse(startDate, JSON_FORMAT), LocalDate.parse(endDate, JSON_FORMAT)) else emptySet()
-        val executions = orders.mapNotNull(::parseTossExecutionForEstimate).distinctBy { it.key }.map { execution ->
-            if (execution.currency == "USD" && (execution.key in taxFxKeys || execution.side == "SELL" && execution.date in startDate..endDate)) {
-                execution.copy(saleMidRate = getTossHistoricalMidRate(account, token, execution.filledAt))
-            } else execution
+        val rawExecutions = orders.mapNotNull(::parseTossExecutionForEstimate).distinctBy { it.key }
+        fun needsFx(execution: TossExecutionForEstimate) = execution.currency == "USD" &&
+            (execution.key in taxFxKeys || execution.side == "SELL" && execution.date in startDate..endDate)
+        val taxRates = if (taxEstimate) hydrateTaxFx(rawExecutions.filter(::needsFx).map { it.filledAt }) {
+            getTossHistoricalMidRate(account, token, it, bounded = true)
+        } else emptyMap()
+        val executions = rawExecutions.map { execution ->
+            if (needsFx(execution)) execution.copy(saleMidRate = if (taxEstimate) taxRates[execution.filledAt] ?: 0.0
+                else getTossHistoricalMidRate(account, token, execution.filledAt)) else execution
         }
         val estimate = estimateTossRealizedProfit(
             executions = executions,
@@ -535,7 +545,7 @@ class KisRepository(
             val rates = executions.associate { it.key to it.saleMidRate }
             val inputs = orders.mapNotNull(::parseTossTaxExecution).map { input ->
                 input.copy(fx = rates[input.key]?.takeIf { it > 0.0 }?.let(java.math.BigDecimal::valueOf),
-                    nativeCost = estimate.profitsByExecutionKey[input.key]?.buyAmountNative?.let(java.math.BigDecimal::valueOf))
+                    nativeCost = estimate.nativeCostsByExecutionKey[input.key]?.let(java.math.BigDecimal::valueOf))
             }
             val bases = buildCapitalGainsBases(inputs, usdRate)
             allTrades.forEach { it.capitalGainsBasis = bases[tossTradeEstimateKey(it)] }
@@ -564,28 +574,27 @@ class KisRepository(
             profitComplete = estimate.profitComplete,
             unpricedSellCount = estimate.unpricedSellCount,
             historyNotes = listOf(tossHistoryNote(estimate.historyStartDate, historyComplete)),
+            historyReasons = if (historyComplete) emptySet() else setOf(pagination.reason ?: HistoryIncompleteReason.MALFORMED_RESPONSE),
         )
     }
 
-    private suspend fun getTossHistoricalMidRate(account: AccountCredential, token: String, filledAt: String): Double =
-        tossHistoricalFxMutex.withLock {
-            if (runCatching { OffsetDateTime.parse(filledAt) }.getOrNull() == null) return@withLock 0.0
-            val scope = oauthTokenScope(account)
-            tossHistoricalFxCache.get(scope, filledAt, System.currentTimeMillis())?.let { return@withLock it }
+    private suspend fun getTossHistoricalMidRate(account: AccountCredential, token: String, filledAt: String, bounded: Boolean = false): Double {
+        if (runCatching { OffsetDateTime.parse(filledAt) }.getOrNull() == null) return 0.0
+        val scope = oauthTokenScope(account)
+        return tossHistoricalFxCache.getOrLoad(scope, filledAt, System::currentTimeMillis) {
+            // The cache lock never spans delay or network I/O: trade loads remain independent.
             delay(250L)
             val result = try {
-                getTossJson(
-                    account, "/api/v1/exchange-rate",
+                getTossJson(account, "/api/v1/exchange-rate",
                     mapOf("baseCurrency" to "USD", "quoteCurrency" to "KRW", "dateTime" to filledAt),
-                    token, includeAccount = false,
-                )?.let { jsonObject(it, "result") }
+                    token, includeAccount = false, retryOnTokenError = !bounded,
+                    rateLimitRetries = if (bounded) 0 else 2)?.let { jsonObject(it, "result") }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                null
-            }
-            tossHistoricalFxCache.put(scope, filledAt, result, System.currentTimeMillis())
+            } catch (_: Exception) { null }
+            result
         }
+    }
 
     private fun normalizeTossTradeRows(rows: List<JsonObject>, usdRate: Double): List<TradeRow> =
         rows.mapNotNull { row ->
@@ -746,14 +755,14 @@ class KisRepository(
 
     override suspend fun fetchCapitalGainsHistory(year: Int): TradeHistoryResponse = session.run {
         withContext(Dispatchers.IO) {
-            tradeHistoryLoadMutex.withLock {
+            taxHistoryLoadMutex.withLock {
                 ensureActiveSession()
                 val resolved = capitalGainsQueryPeriod(year, OffsetDateTime.now(ZoneOffset.ofHours(9)).toLocalDate())
                 val start = resolved.first.format(JSON_FORMAT)
                 val end = resolved.second.format(JSON_FORMAT)
                 val results = coroutineScope {
                     accounts.map { account -> async {
-                        accountSemaphore.withPermit {
+                        taxAccountSemaphore.withPermit {
                             account to runCatching {
                                 if (Broker.normalize(account.broker) == Broker.TOSS) loadTossTradeHistory(account, start, end, taxEstimate = true)
                                 else loadKisCapitalGainsHistory(account, start, end, year)
@@ -770,23 +779,26 @@ class KisRepository(
         }
     }
 
-    private suspend fun loadKisCapitalGainsHistory(account: AccountCredential, start: String, end: String, year: Int): TradeHistoryLoadData = coroutineScope {
-        val salesDeferred = async { getOverseasRealizedTradeProfit(account, start, end) }
-        val fillsDeferred = async { getOverseasTradeHistoryCcnl(account, LocalDate.of(year - 1, 1, 1).format(JSON_FORMAT), end) }
-        val domesticDeferred = async { getDomesticTradeHistory(account, start, end) }
-        val sales = salesDeferred.await().mapNotNull { it.taxExecution }
-        val canonicalDates = sales.map { it.date to it.symbol }.toSet()
-        val fills = fillsDeferred.await().mapNotNull { it.taxExecution }.filter { it.buy || (it.date to it.symbol) !in canonicalDates }
-        val bases = buildCapitalGainsBases(fills + sales, lastKnownUsdRate)
-        val rows = sales.map { sale -> TradeRow(
-            date = sale.date.format(JSON_FORMAT), market = sale.market, symbol = sale.symbol, name = sale.name,
-            side = "매도", currency = sale.currency, quantity = sale.quantity.toDouble(),
-            unitPrice = sale.amount.divide(sale.quantity, java.math.MathContext.DECIMAL128).toDouble(),
-            amountNative = sale.amount.toDouble(), amountKrw = 0.0, time = sale.time,
-            capitalGainsBasis = bases[sale.key],
-        ) }
-        TradeHistoryLoadData(account, emptyList(), emptyList(), 0.0, domesticDeferred.await() + rows,
-            profitAvailable = true, profitEstimated = true)
+    private suspend fun loadKisCapitalGainsHistory(account: AccountCredential, start: String, end: String, year: Int): TradeHistoryLoadData {
+        val coverage = HistoryCoverage()
+        return withContext(coverage) { coroutineScope {
+            val salesDeferred = async { getOverseasRealizedTradeProfit(account, start, end) }
+            val fillsDeferred = async { getOverseasTradeHistoryCcnl(account, LocalDate.of(year - 1, 1, 1).format(JSON_FORMAT), end) }
+            val domesticDeferred = async { getDomesticTradeHistory(account, start, end) }
+            val sales = salesDeferred.await().mapNotNull { it.taxExecution }
+            val canonicalDates = sales.map { it.date to it.symbol }.toSet()
+            val fills = fillsDeferred.await().mapNotNull { it.taxExecution }.filter { it.buy || (it.date to it.symbol) !in canonicalDates }
+            val bases = buildCapitalGainsBases(fills + sales, lastKnownUsdRate)
+            val rows = sales.map { sale -> TradeRow(
+                date = sale.date.format(JSON_FORMAT), market = sale.market, symbol = sale.symbol, name = sale.name,
+                side = "매도", currency = sale.currency, quantity = sale.quantity.toDouble(),
+                unitPrice = sale.amount.divide(sale.quantity, java.math.MathContext.DECIMAL128).toDouble(),
+                amountNative = sale.amount.toDouble(), amountKrw = 0.0, time = sale.time,
+                capitalGainsBasis = bases[sale.key],
+            ) }
+            TradeHistoryLoadData(account, emptyList(), emptyList(), 0.0, domesticDeferred.await() + rows,
+                profitAvailable = true, profitEstimated = true, historyReasons = coverage.snapshot())
+        } }
     }
 
     private suspend fun loadKisTradeHistory(
@@ -900,6 +912,11 @@ class KisRepository(
             unpricedSellCount = unpricedSellCount,
             accountErrors = accountErrors,
             tossHistoryNotes = accountPayloads.flatMap { it.tossHistoryNotes },
+            historyCompleteness = selectedAccounts.map { account ->
+                AccountHistoryCompleteness(account.id, account.label,
+                    accountPayloads.find { it.account.id == account.id }?.historyReasons
+                        ?: setOf(HistoryIncompleteReason.UNAVAILABLE))
+            },
         )
     }
 
@@ -1199,6 +1216,7 @@ class KisRepository(
                 }
             }.getOrElse { error ->
                 if (error is CancellationException) throw error
+                coroutineContext[HistoryCoverage]?.mark(HistoryIncompleteReason.UNAVAILABLE)
                 Log.w("KisRepository", "overseas ccnl inquiry failed for $exchange", error)
                 emptyList()
             }
@@ -1624,7 +1642,8 @@ class KisRepository(
     ): List<JsonObject> {
         val results = mutableListOf<JsonObject>()
         var currentQuery = LinkedHashMap(query)
-        val seenCursors = mutableSetOf<Pair<String, String>>()
+        val pagination = HistoryPagination(maxPages)
+        val coverage = coroutineContext[HistoryCoverage]
         var continuationHeader = ""
         repeat(maxPages) {
             val page = getJson(
@@ -1634,19 +1653,19 @@ class KisRepository(
                 query = currentQuery,
                 token = token,
                 extraHeaders = if (continuationHeader.isBlank()) emptyMap() else mapOf("tr_cont" to continuationHeader),
-            ) ?: return results
+            ) ?: run { coverage?.mark(HistoryIncompleteReason.UNAVAILABLE); return results }
             results += page
+            if (coverage != null && listOf("output", "output1").none { key ->
+                    page.get(key)?.let { it.isJsonArray || it.isJsonObject } == true
+                }) coverage.mark(HistoryIncompleteReason.MALFORMED_RESPONSE)
             val trCont = string(page, "__tr_cont")
             if (trCont !in setOf("F", "M")) {
                 return results
             }
             val nextFk = string(page, fkField)
             val nextNk = string(page, nkField)
-            if (nextFk.isBlank() && nextNk.isBlank()) {
-                return results
-            }
-            val cursor = nextFk to nextNk
-            if (!seenCursors.add(cursor)) {
+            if (!pagination.advance(true, listOf(nextFk, nextNk).filter { it.isNotBlank() }.joinToString("|"), results.size)) {
+                pagination.reason?.let { coverage?.mark(it) }
                 return results
             }
             currentQuery[fkField.uppercase()] = nextFk
@@ -2002,6 +2021,7 @@ private data class TradeHistoryLoadData(
     val estimatedBuyAmountKrw: Double = 0.0,
     val unpricedSellCount: Int = 0,
     val tossHistoryNotes: List<String> = emptyList(),
+    val historyReasons: Set<HistoryIncompleteReason> = emptySet(),
 )
 
 private data class TossTradeHistoryPayload(
@@ -2013,6 +2033,7 @@ private data class TossTradeHistoryPayload(
     val profitComplete: Boolean,
     val unpricedSellCount: Int,
     val historyNotes: List<String> = emptyList(),
+    val historyReasons: Set<HistoryIncompleteReason> = emptySet(),
 )
 
 private data class RealizedTradeProfitRow(

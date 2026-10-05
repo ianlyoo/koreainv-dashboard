@@ -2,6 +2,8 @@ package com.koreainv.dashboard.network
 
 import com.google.gson.JsonObject
 import java.time.OffsetDateTime
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal const val TOSS_HISTORICAL_FX_SOURCE = "토스 매도 시점 참고환율(midRate) · 환차손익 제외"
 private const val HISTORICAL_FX_WINDOW_TOLERANCE_SECONDS = 600L
@@ -31,8 +33,15 @@ internal fun validatedTossHistoricalMidRate(result: JsonObject, filledAt: String
 
 /** Repository-local cache: credentials stay outside the key; each entry is revalidated for the requested timestamp. */
 internal class TossHistoricalFxCache(private val capacity: Int = 1024) {
+    private val mutex = Mutex()
     private data class Entry(val result: JsonObject?, val expiresAt: Long)
     private val entries = LinkedHashMap<Pair<String, String>, Entry>()
+
+    suspend fun getOrLoad(scope: String, filledAt: String, now: () -> Long, load: suspend () -> JsonObject?): Double {
+        mutex.withLock { get(scope, filledAt, now()) }?.let { return it }
+        val result = load()
+        return mutex.withLock { put(scope, filledAt, result, now()) }
+    }
 
     fun get(scope: String, filledAt: String, now: Long): Double? {
         val key = scope to filledAt

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import OrderedDict
+from contextlib import contextmanager
 import threading
 import time
 from collections.abc import Mapping
@@ -47,31 +48,92 @@ def _validated_historical_mid_rate(result: Mapping[str, object], filled_at: str)
     return rate
 
 
-def _get_historical_usd_mid_rate(client_id: str, client_secret: str, filled_at: str) -> float:
+TAX_FX_SECONDS = 30.0
+TAX_FX_REQUESTS = 40
+TAX_FX_REQUEST_SECONDS = 5.0
+
+
+class TaxWorkCancelled(Exception):
+    pass
+
+
+class FxBudget:
+    """Per annual load, never shared with ordinary trades. Includes retries/throttling."""
+    def __init__(self, cancel_event=None, *, seconds=TAX_FX_SECONDS, max_requests=TAX_FX_REQUESTS):
+        self.cancel_event = cancel_event or threading.Event()
+        self.deadline = time.monotonic() + seconds
+        self.max_requests = max_requests
+        self.requests = 0
+        self.failures = 0
+        self.reason = ""
+
+    def remaining(self):
+        if self.cancel_event.is_set():
+            raise TaxWorkCancelled("Tax history cancelled")
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            self.reason = "time_budget"
+        return max(0.0, remaining)
+
+    def allowed(self):
+        if not self.remaining():
+            return False
+        if self.requests >= self.max_requests:
+            self.reason = "request_budget"
+        return not self.reason
+
+    def pause(self, seconds):
+        if self.cancel_event.wait(min(seconds, self.remaining())):
+            raise TaxWorkCancelled("Tax history cancelled")
+
+    def begin_request(self):
+        if not self.allowed():
+            raise TimeoutError("Tax FX budget exhausted")
+        self.requests += 1
+        # requests applies the timeout to connect and read phases separately.
+        return min(TAX_FX_REQUEST_SECONDS, self.remaining()) / 2
+
+    def record(self, rate):
+        self.failures = 0 if rate > 0 else self.failures + 1
+        if self.failures >= 2:
+            self.reason = "repeated_failures"
+
+
+def _get_historical_usd_mid_rate(client_id: str, client_secret: str, filled_at: str, *, work=None) -> float:
+    if work and not work.allowed():
+        return 0.0
     if _aware_timestamp(filled_at) is None:
         return 0.0
     key = (_scope_key(client_id, client_secret), filled_at)
-    # Serialize misses across concurrent account loads; cap retention and briefly
-    # cache failures to avoid hammering missing historical windows on refresh.
+    # The cache lock protects only memory, never network I/O or throttling.
     with _historical_fx_lock:
         cached = _historical_fx_cache.get(key)
         if cached and time.monotonic() < cached[1]:
             _historical_fx_cache.move_to_end(key)
             return cached[0]
+    if work:
+        work.pause(0.25)
+    else:
         time.sleep(0.25)
-        try:
-            payload = _authorized_get(
-                "/api/v1/exchange-rate", client_id, client_secret,
-                params={"baseCurrency": "USD", "quoteCurrency": "KRW", "dateTime": filled_at},
-            )
-            rate = _validated_historical_mid_rate(_as_mapping(payload.get("result")), filled_at)
-        except Exception:
-            rate = 0.0
+    try:
+        payload = _authorized_get(
+            "/api/v1/exchange-rate", client_id, client_secret,
+            params={"baseCurrency": "USD", "quoteCurrency": "KRW", "dateTime": filled_at},
+            **({"work": work} if work else {}),
+        )
+        rate = _validated_historical_mid_rate(_as_mapping(payload.get("result")), filled_at)
+    except TaxWorkCancelled:
+        raise
+    except Exception:
+        rate = 0.0
+    if work:
+        work.remaining()  # cancellation during the in-flight bounded request
+    with _historical_fx_lock:
         _historical_fx_cache[key] = (rate, time.monotonic() + (86400 if rate > 0 else 60))
         _historical_fx_cache.move_to_end(key)
         while len(_historical_fx_cache) > 1024:
             _historical_fx_cache.popitem(last=False)
-        return rate
+    return rate
 
 
 def _scope_key(client_id: str, client_secret: str) -> str:
@@ -123,13 +185,29 @@ def clear_token_cache() -> None:
         _historical_fx_cache.clear()
 
 
-def get_access_token(client_id: str, client_secret: str, force: bool = False) -> str:
+@contextmanager
+def _token_cache_lock(work):
+    if work:
+        while True:
+            if not work.allowed():
+                raise TimeoutError("Tax FX budget exhausted")
+            if _token_lock.acquire(timeout=min(0.05, work.remaining())):
+                break
+    else:
+        _token_lock.acquire()
+    try:
+        yield
+    finally:
+        _token_lock.release()
+
+
+def get_access_token(client_id: str, client_secret: str, force: bool = False, *, work=None) -> str:
     safe_id = str(client_id or "").strip()
     safe_secret = str(client_secret or "").strip()
     if not safe_id or not safe_secret:
         raise ValueError("Toss client_id and client_secret are required")
     scope = _scope_key(safe_id, safe_secret)
-    with _token_lock:
+    with _token_cache_lock(work):
         cached = _token_cache.get(scope)
         if not force and cached and time.time() < cached[1] - _TOKEN_BUFFER_SECONDS:
             return cached[0]
@@ -142,7 +220,7 @@ def get_access_token(client_id: str, client_secret: str, force: bool = False) ->
                 "client_secret": safe_secret,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=10,
+            timeout=work.begin_request() if work else 10,
         )
         try:
             payload = response.json()
@@ -168,20 +246,21 @@ def _authorized_get(
     params: Mapping[str, str] | None = None,
     retry: bool = True,
     rate_limit_retries: int = 2,
+    work=None,
 ) -> Mapping[str, object]:
-    token = get_access_token(client_id, client_secret)
+    token = get_access_token(client_id, client_secret, **({"work": work} if work else {}))
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     if account_seq is not None:
         headers["X-Tossinvest-Account"] = str(account_seq).strip()
     response = requests.get(
-        f"{BASE_URL}{path}", headers=headers, params=dict(params or {}), timeout=15
+        f"{BASE_URL}{path}", headers=headers, params=dict(params or {}), timeout=work.begin_request() if work else 15
     )
     try:
         payload = response.json()
     except ValueError:
         payload = {}
     if response.status_code == 401 and retry:
-        get_access_token(client_id, client_secret, force=True)
+        get_access_token(client_id, client_secret, force=True, **({"work": work} if work else {}))
         return _authorized_get(
             path,
             client_id,
@@ -190,12 +269,14 @@ def _authorized_get(
             params=params,
             retry=False,
             rate_limit_retries=rate_limit_retries,
+            **({"work": work} if work else {}),
         )
     if response.status_code == 429 and rate_limit_retries > 0:
-        time.sleep(0.5 * (3 - rate_limit_retries))
+        work.pause(0.5 * (3 - rate_limit_retries)) if work else time.sleep(0.5 * (3 - rate_limit_retries))
         return _authorized_get(
             path, client_id, client_secret, account_seq=account_seq,
             params=params, retry=retry, rate_limit_retries=rate_limit_retries - 1,
+            **({"work": work} if work else {}),
         )
     if response.status_code != 200:
         raise RuntimeError(
@@ -237,16 +318,19 @@ def get_dashboard_source(
     return holdings, exchange_rate
 
 
-def _get_usd_exchange_rate(client_id: str, client_secret: str) -> float:
+def _get_usd_exchange_rate(client_id: str, client_secret: str, *, work=None) -> float:
     try:
         payload = _authorized_get(
             "/api/v1/exchange-rate",
             client_id,
             client_secret,
             params={"baseCurrency": "USD", "quoteCurrency": "KRW"},
+            **({"work": work} if work else {}),
         )
         result = _as_mapping(payload.get("result"))
         return _as_float(result.get("rate")) or _as_float(result.get("midRate"))
+    except TaxWorkCancelled:
+        raise
     except Exception:
         return 0.0
 
@@ -579,12 +663,16 @@ def _fetch_closed_orders(
     account_seq: str,
     *,
     end_date: str,
+    cancel_event=None,
 ) -> tuple[list[Mapping[str, object]], bool]:
     orders: list[Mapping[str, object]] = []
     cursor = ""
     seen_cursors: set[str] = set()
     history_complete = True
+    cancel_work = FxBudget(cancel_event, seconds=float("inf"), max_requests=float("inf")) if cancel_event else None
     for _ in range(100):
+        if cancel_event and cancel_event.is_set():
+            raise TaxWorkCancelled("Tax history cancelled")
         params = {
             "status": "CLOSED",
             # Live API defaults to recent history despite the spec's "all"
@@ -601,9 +689,11 @@ def _fetch_closed_orders(
             client_secret,
             account_seq=account_seq,
             params=params,
+            **({"work": cancel_work} if cancel_work else {}),
         )
         result = _as_mapping(payload.get("result"))
-        if not isinstance(result.get("orders"), list) or not isinstance(result.get("hasNext"), bool):
+        if (not isinstance(result.get("orders"), list) or not isinstance(result.get("hasNext"), bool)
+                or any(not isinstance(row, Mapping) for row in result.get("orders", []))):
             history_complete = False
             break
         orders.extend(_as_rows(result.get("orders")))
@@ -629,6 +719,7 @@ def get_trade_history(
     end_date: str,
     *,
     tax_estimate: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, object]:
     safe_seq = str(account_seq or "").strip()
     if not safe_seq.isdigit() or not (0 < int(safe_seq) <= 9_223_372_036_854_775_807):
@@ -638,19 +729,26 @@ def get_trade_history(
     if safe_start > safe_end:
         raise ValueError("Toss trade-history start date must not exceed end date")
 
+    if cancel_event and cancel_event.is_set():
+        raise TaxWorkCancelled("Tax history cancelled")
     orders, history_complete = _fetch_closed_orders(
         client_id,
         client_secret,
         safe_seq,
         end_date=safe_end,
+        **({"cancel_event": cancel_event} if cancel_event else {}),
     )
-    usd_rate = _get_usd_exchange_rate(client_id, client_secret)
+    if cancel_event and cancel_event.is_set():
+        raise TaxWorkCancelled("Tax history cancelled")
+    usd_rate = _get_usd_exchange_rate(client_id, client_secret,
+        **({"work": FxBudget(cancel_event, seconds=float("inf"), max_requests=float("inf"))} if cancel_event else {}))
     all_items = _normalize_order_rows(
         orders,
         usd_exchange_rate=usd_rate,
         start_date="0001-01-01",
         end_date=safe_end,
     )
+    work = FxBudget(cancel_event) if tax_estimate else None
     if tax_estimate:
         # Reuse the account-scoped historical quote cache. Only lots consumed by
         # selected sales need acquisition FX; unrelated/fully sold lots need none.
@@ -678,13 +776,16 @@ def get_trade_history(
                     lots.pop(0)
         for row in all_items:
             if str(row["order_no"]) in needed:
+                if not work.allowed():
+                    break
                 row["tax_reference_fx"] = _get_historical_usd_mid_rate(
-                    client_id, client_secret, str(row["filled_at"]),
+                    client_id, client_secret, str(row["filled_at"]), work=work,
                 )
+                work.record(row["tax_reference_fx"])
     for row in all_items:
         if (row["side"] == "매도" and row["currency"] == "USD"
                 and safe_start.replace("-", "") <= str(row["date"]) <= safe_end.replace("-", "")):
-            row["profit_exchange_rate"] = row["tax_reference_fx"] if "tax_reference_fx" in row else _get_historical_usd_mid_rate(
+            row["profit_exchange_rate"] = row.get("tax_reference_fx", 0.0) if tax_estimate else _get_historical_usd_mid_rate(
                 client_id, client_secret, str(row["filled_at"]),
             )
     estimate = _estimate_realized_profit(
@@ -718,6 +819,8 @@ def get_trade_history(
         "unpriced_sell_count": estimate["unpriced_sell_count"],
     }
     if tax_estimate:
+        result["tax_fx_complete"] = not work.reason
+        result["tax_fx_incomplete_reason"] = work.reason
         result["tax_executions"] = all_items
         result["tax_fx_basis"] = "fifo_acquisition_and_sale_historical_mid_rate"
     return result

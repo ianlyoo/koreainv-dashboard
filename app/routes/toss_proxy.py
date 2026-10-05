@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+from functools import partial
+
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request
@@ -102,23 +106,43 @@ async def load_balances(request: Request, payload: TossProxyDashboardRequest):
     return {"status": "success", "domestic": domestic, "overseas": overseas}
 
 
-@router.post("/trade-history")
-async def load_trade_history(
-    request: Request, payload: TossProxyTradeHistoryRequest
-):
-    _require_proxy_access(request)
+async def _run_tax_history(request: Request, load):
+    cancelled = threading.Event()
+    worker = asyncio.create_task(asyncio.to_thread(load, cancel_event=cancelled))
+
+    async def watch_disconnect():
+        while not await request.is_disconnected():
+            await asyncio.sleep(0.05)
+        cancelled.set()
+
+    watcher = asyncio.create_task(watch_disconnect())
     try:
-        result = await run_in_threadpool(
-            toss_api_client.get_trade_history,
-            payload.client_id.strip(),
-            payload.client_secret.strip(),
-            payload.account_seq.strip(),
-            payload.start_date.strip(),
-            payload.end_date.strip(),
-            **({"tax_estimate": True} if payload.tax_estimate else {}),
-        )
+        done, _ = await asyncio.wait({worker, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        if watcher in done:
+            raise HTTPException(status_code=499, detail="Tax history cancelled")
+        return await worker
+    finally:
+        # Cancelling a thread future alone does not stop its work. The event also
+        # ends pagination/retries and FX hydration; in-flight I/O is capped at 5s.
+        cancelled.set()
+        watcher.cancel()
+        worker.cancel()
+        await asyncio.gather(watcher, worker, return_exceptions=True)
+
+
+@router.post("/trade-history")
+async def load_trade_history(request: Request, payload: TossProxyTradeHistoryRequest):
+    _require_proxy_access(request)
+    load = partial(toss_api_client.get_trade_history,
+        payload.client_id.strip(), payload.client_secret.strip(), payload.account_seq.strip(),
+        payload.start_date.strip(), payload.end_date.strip())
+    try:
+        if payload.tax_estimate:
+            result = await _run_tax_history(request, partial(load, tax_estimate=True))
+        else:
+            result = await run_in_threadpool(load)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Toss trade-history lookup failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"Toss trade-history lookup failed: {exc}") from exc
     return {"status": "success", "result": result}

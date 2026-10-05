@@ -265,8 +265,11 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
     private fun trades(accountId: String?) = TradeHistoryResponse(
         TradePeriod("2026-09-01", "2026-09-05", "이번 달"),
         if (fixture == "empty") TradeSummary(0.0, 0.0, 0.0, 0.0) else TradeSummary(-25000.0, 110000.0, -135000.0, -0.8),
-        if (fixture == "empty") emptyList() else allTrades.filter { accountId == null || it.accountId == accountId },
-        lastSynced = SYNC, accountErrors = if (fixture == "partial") listOf("데모 토스증권: 합성 조회 오류") else emptyList(),
+        if (fixture in listOf("empty", "tax-incomplete")) emptyList() else allTrades.filter { accountId == null || it.accountId == accountId },
+        lastSynced = SYNC,
+        historyCompleteness = if (fixture in listOf("partial", "tax-incomplete")) listOf(
+            com.koreainv.dashboard.network.AccountHistoryCompleteness("demo-toss", "데모 토스증권",
+                setOf(com.koreainv.dashboard.network.HistoryIncompleteReason.PAGE_LIMIT))) else emptyList(),
     )
     private suspend fun checkFixture() {
         android.util.Log.i("UiPreviewFixture", "Synthetic request fixture=$fixture")
@@ -277,7 +280,7 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
     override fun peekDashboard() = if (fixture in listOf("loading", "error")) null else dashboard
     override suspend fun fetchCapitalGainsHistory(year: Int): TradeHistoryResponse {
         checkFixture()
-        if (fixture == "tax-missing") return trades(null)
+        if (fixture in listOf("tax-missing", "tax-incomplete")) return trades(null)
         fun json(value: String) = com.google.gson.JsonParser.parseString(value).asJsonObject
         // Exercise production adapters with synthetic recorded field shapes, not precomputed tax bases.
         val kisSale = parseKisTaxSale(json("""{"trad_day":"${year}0810","ovrs_pdno":"AVGO","ovrs_item_name":"Broadcom Inc.","slcl_qty":"10","frcr_sll_amt_smtl1":"10000","pchs_avg_pric":"600","frcr_pchs_amt1":"6000","stck_sll_tlex":"0","frst_bltn_exrt":"1400"}"""), "NASD", "USD")!!

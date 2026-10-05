@@ -36,6 +36,7 @@ internal data class TossProfitEstimateResult(
     val unpricedSellCount: Int,
     val reasonsByExecutionKey: Map<String, String>,
     val historyStartDate: String,
+    val nativeCostsByExecutionKey: Map<String, Double>,
 )
 
 private data class MovingAveragePosition(
@@ -54,6 +55,7 @@ internal fun estimateTossRealizedProfit(
     val unknownBasis = mutableMapOf<Pair<String, String>, String>()
     val profits = mutableMapOf<String, TossEstimatedProfit>()
     val reasons = mutableMapOf<String, String>()
+    val nativeCosts = mutableMapOf<String, Double>()
     var selectedSellCount = 0
     var estimatedSellCount = 0
     var domesticProfit = 0.0
@@ -106,6 +108,7 @@ internal fun estimateTossRealizedProfit(
                 position.quantity -= execution.quantity
                 position.costNative -= allocatedCost
                 if (position.quantity <= 1e-9) positions.remove(positionKey)
+                nativeCosts[execution.key] = allocatedCost
                 if (!selected) return@forEach
 
                 val exchangeRate = when (currency) {
@@ -153,5 +156,6 @@ internal fun estimateTossRealizedProfit(
         unpricedSellCount = selectedSellCount - estimatedSellCount,
         reasonsByExecutionKey = reasons,
         historyStartDate = executions.minOfOrNull { it.date }.orEmpty(),
+        nativeCostsByExecutionKey = nativeCosts,
     )
 }

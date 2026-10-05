@@ -151,6 +151,7 @@ data class TradeHistoryResponse(
     val unpricedSellCount: Int = 0,
     val accountErrors: List<String> = emptyList(),
     val tossHistoryNotes: List<String> = emptyList(),
+    val historyCompleteness: List<AccountHistoryCompleteness> = emptyList(),
 )
 
 data class TradePeriod(

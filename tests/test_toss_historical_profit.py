@@ -21,7 +21,7 @@ class TossHistoricalProfitTests(unittest.TestCase):
         orders = self.fixture["orders"]["result"]["orders"]
         fetch.return_value = (orders, True)
         quotes = {row["execution"]["filledAt"]: rate for row, rate in zip(orders, [1200, 1300, 1400, 1300])}
-        fx.side_effect = lambda client, secret, timestamp: quotes[timestamp]
+        fx.side_effect = lambda client, secret, timestamp, **kwargs: quotes[timestamp]
         result = toss.get_trade_history("fake-client", "fake-secret", "9", "2026-09-01", "2026-09-30", tax_estimate=True)
         self.assertEqual(len(result["tax_executions"]), 4)
         self.assertEqual([row["tax_reference_fx"] for row in result["tax_executions"]], [1200, 1300, 1400, 1300])
