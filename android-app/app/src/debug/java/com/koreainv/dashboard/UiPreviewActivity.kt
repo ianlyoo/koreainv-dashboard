@@ -255,7 +255,12 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
         Trade("2026-09-03", "매수", "AAPL", "Apple Inc.", "USA", "USD", 5.0, 225.0, 1125.0, 1518750.0, null, null,
             accountId = "demo-toss", accountLabel = "데모 토스증권", broker = Broker.TOSS),
         Trade("2026-09-02", "매도", "NVDA", "NVIDIA Corporation", "USA", "USD", 10.0, 120.0, 1200.0, 1620000.0, -135000.0, -7.69,
-            accountId = "demo-toss", accountLabel = "데모 토스증권", broker = Broker.TOSS),
+            accountId = "demo-toss", accountLabel = "데모 토스증권", broker = Broker.TOSS,
+            realizedProfitEstimated = true, profitRateSource = "토스 매도 시점 참고환율(midRate) · 환차손익 제외",
+            profitEstimateReason = "전체 매수 이력을 확인한 참고 계산입니다"),
+        Trade("2026-09-01", "매도", "MSFT", "Microsoft Corporation", "USA", "USD", 3.0, 420.0, 1260.0, 1701000.0, null, null,
+            accountId = "demo-toss", accountLabel = "데모 토스증권", broker = Broker.TOSS,
+            realizedProfitEstimated = true, profitEstimateReason = "매수 원가 이력 및 매도 시점 환율 자료 부족"),
     )
     private fun trades(accountId: String?) = TradeHistoryResponse(
         TradePeriod("2026-09-01", "2026-09-05", "이번 달"),
@@ -270,6 +275,24 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
         check(fixture != "error" && fixture != "cached-error") { "합성 데이터 오류 — 실제 네트워크 요청 없음" }
     }
     override fun peekDashboard() = if (fixture in listOf("loading", "error")) null else dashboard
+    override suspend fun fetchCapitalGainsHistory(year: Int): TradeHistoryResponse {
+        checkFixture()
+        if (fixture == "tax-missing") return trades(null)
+        fun payment(amount: String, date: String, fx: String?) = TaxPayment(java.math.BigDecimal(amount), "USD",
+            java.time.LocalDate.parse(date), fx?.let { java.math.BigDecimal(it) })
+        val sales = listOf(
+            allTrades[2].copy(capitalGainsBasis = CapitalGainsBasis(
+                payment("1200", "$year-09-04", "1400"),
+                listOf(payment("1300", "${year - 1}-12-20", "1200")),
+                listOf(payment("2", "$year-09-04", "1400")), true, estimated = true)),
+            allTrades[2].copy(ticker = "AVGO", name = "Broadcom Inc.", accountId = "demo-kis", accountLabel = "데모 한국투자",
+                broker = Broker.KIS, realizedProfitEstimated = false,
+                capitalGainsBasis = CapitalGainsBasis(payment("10000", "$year-08-10", "1400"),
+                    listOf(payment("6000", "$year-03-10", "1300")), emptyList(), true)),
+            allTrades[3], allTrades[0],
+        )
+        return trades(null).copy(trades = sales)
+    }
     override suspend fun fetchDashboard(forceRefresh: Boolean): DashboardResponse { checkFixture(); return dashboard }
     override suspend fun refreshDashboardQuotes(): DashboardResponse { checkFixture(); return dashboard }
     override fun peekTradeHistory(range: String, accountId: String?) = if (fixture in listOf("loading", "error")) null else trades(accountId)

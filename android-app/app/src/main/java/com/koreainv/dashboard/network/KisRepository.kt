@@ -1762,6 +1762,7 @@ class KisRepository(
 
     private fun resolveTradeRange(raw: String): Triple<LocalDate, LocalDate, String> {
         val today = OffsetDateTime.now(ZoneOffset.ofHours(9)).toLocalDate()
+        if (raw.startsWith("tax:")) return capitalGainsQueryPeriod(raw.removePrefix("tax:").toInt(), today)
         return when (raw) {
             "last_month" -> {
                 val end = today.withDayOfMonth(1).minusDays(1)

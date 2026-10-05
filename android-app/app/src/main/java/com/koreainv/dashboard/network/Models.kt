@@ -188,6 +188,8 @@ data class Trade(
     val profitEstimateReason: String = "",
     val profitHistoryStartDate: String = "",
     val profitHistoryComplete: Boolean? = null,
+    // Separate from display P&L: never populate from ex-FX profit or today's FX.
+    val capitalGainsBasis: CapitalGainsBasis? = null,
 )
 
 data class AuthToken(

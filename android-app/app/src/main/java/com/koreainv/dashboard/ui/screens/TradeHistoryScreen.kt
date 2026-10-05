@@ -92,6 +92,7 @@ fun TradeHistoryScreen(
     var rangeExpanded by remember { mutableStateOf(false) }
     var filterExpanded by remember { mutableStateOf(false) }
     var accountExpanded by remember { mutableStateOf(false) }
+    var showTax by rememberSaveable { mutableStateOf(false) }
     val requestOwner = remember(repository) { ScreenRequestOwner() }
     val updateSessionState by rememberUpdatedState(onSessionStateChange)
     DisposableEffect(requestOwner) {
@@ -175,6 +176,11 @@ fun TradeHistoryScreen(
         } else if (isTradeHistorySnapshotStale(tradeData)) {
             loadTradeHistory(range = selectedRange, forceRefresh = true)
         }
+    }
+
+    if (showTax) {
+        CapitalGainsTaxScreen(repository = repository, onBack = { showTax = false })
+        return
     }
 
     DashboardScaffold(
@@ -279,6 +285,18 @@ fun TradeHistoryScreen(
                             )
                         }
 
+                        item {
+                            PremiumListItem(onClick = { showTax = true }) {
+                                LedgerRowContent(
+                                    name = "양도소득세 계산",
+                                    identity = "한국투자 · 토스 합산 · 연간 결제일 기준",
+                                    detail = "해외주식 · 기본공제 250만원 · 세율 22%",
+                                    amount = "보기 ›",
+                                    secondary = null,
+                                    secondaryColor = TextSecondary,
+                                )
+                            }
+                        }
                         item {
                             FlowRow(
                                 modifier = Modifier
@@ -564,8 +582,7 @@ fun TradeItemCard(
     val realizedProfit = trade.realizedProfitKrw?.takeIf { !isBuy }
     val profitText = realizedProfit?.let {
         "${if (trade.realizedProfitEstimated) "손익(추정)" else "손익"} ${formatCurrencyAmount(it, currencyMode, usdRate, signed = true)}"
-    }?.let { value -> value + trade.profitRateSource.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty() }
-        ?: trade.profitEstimateReason.takeIf { !isBuy && it.isNotBlank() }?.let { "손익 미산출 · $it" }
+    } ?: if (!isBuy) "손익 미산출" else null
     PremiumListItem(onClick = onClick) {
         LedgerRowContent(
             name = trade.name,
