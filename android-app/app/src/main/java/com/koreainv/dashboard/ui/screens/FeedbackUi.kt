@@ -56,6 +56,7 @@ fun DashboardErrorNotice(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     usingCachedData: Boolean = false,
+    title: String? = null,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
@@ -66,7 +67,7 @@ fun DashboardErrorNotice(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Info, contentDescription = null, tint = InfoColor, modifier = Modifier.size(20.dp))
                 Text(
-                    if (usingCachedData) "새로고침하지 못했습니다" else "정보를 불러오지 못했습니다",
+                    title ?: if (usingCachedData) "새로고침하지 못했습니다" else "정보를 불러오지 못했습니다",
                     style = MaterialTheme.typography.titleSmall,
                     color = TextPrimary,
                     modifier = Modifier.weight(1f).semantics { heading() },

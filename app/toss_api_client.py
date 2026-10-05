@@ -759,6 +759,7 @@ def get_trade_history(
     end_date: str,
     *,
     tax_estimate: bool = False,
+    hydrate_tax_fx: bool = True,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, object]:
     safe_seq = str(account_seq or "").strip()
@@ -789,7 +790,7 @@ def get_trade_history(
         end_date=safe_end,
     )
     work = FxBudget(cancel_event) if tax_estimate else None
-    if tax_estimate:
+    if tax_estimate and hydrate_tax_fx:
         # Reuse the account-scoped historical quote cache. Only lots consumed by
         # selected sales need acquisition FX; unrelated/fully sold lots need none.
         positions: dict[tuple[str, str], list[list[object]]] = {}
@@ -859,8 +860,8 @@ def get_trade_history(
         "unpriced_sell_count": estimate["unpriced_sell_count"],
     }
     if tax_estimate:
-        result["tax_fx_complete"] = not work.reason
-        result["tax_fx_incomplete_reason"] = work.reason
+        result["tax_fx_complete"] = hydrate_tax_fx and not work.reason
+        result["tax_fx_incomplete_reason"] = work.reason if hydrate_tax_fx else "client_daily_range"
         result["tax_executions"] = all_items
-        result["tax_fx_basis"] = "fifo_acquisition_and_sale_historical_mid_rate"
+        result["tax_fx_basis"] = "fifo_acquisition_and_sale_historical_mid_rate" if hydrate_tax_fx else "client_kis_daily_range"
     return result

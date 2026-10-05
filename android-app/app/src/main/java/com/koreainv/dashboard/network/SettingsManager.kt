@@ -29,6 +29,7 @@ class SettingsManager(private val context: Context) {
         private val ENCRYPTED_CREDENTIALS_KEY = stringPreferencesKey("encrypted_credentials")
         private val CREDENTIAL_SALT_KEY = stringPreferencesKey("credential_salt")
         private val CREDENTIAL_IV_KEY = stringPreferencesKey("credential_iv")
+        private val TAX_DAILY_FX_KEY = stringPreferencesKey("tax_kis_daily_fx_v1")
         private val TOKEN_CACHE_KEY = stringPreferencesKey("token_cache")
         // Legacy single-record token keys, kept only to migrate pre-multi-account installs.
         private val TOKEN_SCOPE_KEY = stringPreferencesKey("token_scope")
@@ -214,6 +215,17 @@ class SettingsManager(private val context: Context) {
             preferences.remove(CREDENTIAL_SALT_KEY)
             preferences.remove(CREDENTIAL_IV_KEY)
             clearAuthToken(preferences)
+        }
+    }
+
+    internal suspend fun loadTaxDailyFx(): Map<FxDate, java.math.BigDecimal> =
+        TaxDailyFxCodec.parse(context.dataStore.data.first()[TAX_DAILY_FX_KEY])
+
+    internal suspend fun saveTaxDailyFx(rates: Map<FxDate, java.math.BigDecimal>) {
+        context.dataStore.edit { preferences ->
+            // Preserve the first valid daily value across account/session reloads.
+            val existing = TaxDailyFxCodec.parse(preferences[TAX_DAILY_FX_KEY])
+            preferences[TAX_DAILY_FX_KEY] = TaxDailyFxCodec.serialize(rates + existing)
         }
     }
 

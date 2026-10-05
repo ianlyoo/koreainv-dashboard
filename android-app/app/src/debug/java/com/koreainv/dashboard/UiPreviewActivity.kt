@@ -278,7 +278,7 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
         check(fixture != "error" && fixture != "cached-error") { "합성 데이터 오류 — 실제 네트워크 요청 없음" }
     }
     override fun peekDashboard() = if (fixture in listOf("loading", "error")) null else dashboard
-    override suspend fun fetchCapitalGainsHistory(year: Int): TradeHistoryResponse {
+    override suspend fun fetchCapitalGainsHistory(year: Int, forceRefresh: Boolean): TradeHistoryResponse {
         checkFixture()
         if (fixture in listOf("tax-missing", "tax-incomplete")) return trades(null)
         fun json(value: String) = com.google.gson.JsonParser.parseString(value).asJsonObject

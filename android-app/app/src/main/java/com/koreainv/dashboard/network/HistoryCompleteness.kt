@@ -11,6 +11,7 @@ data class AccountHistoryCompleteness(
     val accountId: String,
     val accountLabel: String,
     val reasons: Set<HistoryIncompleteReason> = emptySet(),
+    val parts: Set<String> = emptySet(),
 ) {
     val complete: Boolean get() = reasons.isEmpty()
 }
@@ -18,8 +19,10 @@ data class AccountHistoryCompleteness(
 /** Load-local context shared by the account's parallel KIS market queries. */
 internal class HistoryCoverage : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<HistoryCoverage>
+    private val parts = Collections.synchronizedSet(mutableSetOf<String>())
     private val failures = Collections.synchronizedSet(mutableSetOf<HistoryIncompleteReason>())
-    fun mark(reason: HistoryIncompleteReason) { failures.add(reason) }
+    fun mark(reason: HistoryIncompleteReason, part: String = "한투 해외 체결") { failures.add(reason); parts.add(part) }
+    fun partSnapshot(): Set<String> = synchronized(parts) { parts.toSet() }
     fun snapshot(): Set<HistoryIncompleteReason> = synchronized(failures) { failures.toSet() }
 }
 

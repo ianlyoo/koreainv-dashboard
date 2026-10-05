@@ -29,6 +29,7 @@ class TossProxyTradeHistoryRequest(TossProxyDashboardRequest):
     start_date: str = Field(min_length=8, max_length=10)
     end_date: str = Field(min_length=8, max_length=10)
     tax_estimate: bool = False
+    hydrate_tax_fx: bool = True
 
 
 def _require_proxy_access(request: Request) -> None:
@@ -138,7 +139,7 @@ async def load_trade_history(request: Request, payload: TossProxyTradeHistoryReq
         payload.start_date.strip(), payload.end_date.strip())
     try:
         if payload.tax_estimate:
-            result = await _run_tax_history(request, partial(load, tax_estimate=True))
+            result = await _run_tax_history(request, partial(load, tax_estimate=True, hydrate_tax_fx=payload.hydrate_tax_fx))
         else:
             result = await run_in_threadpool(load)
     except HTTPException:

@@ -81,6 +81,8 @@ class KisRepository(
     private val quoteRefreshMutex = Mutex()
     private val tradeHistoryLoadMutex = Mutex()
     private val taxHistoryLoadMutex = Mutex()
+    private val kisRequestPacer = KisRequestPacer()
+    private val taxDailyFxCache = TaxDailyFxCache(settingsManager::loadTaxDailyFx, settingsManager::saveTaxDailyFx)
     private val tossHistoricalFxCache = TossHistoricalFxCache()
     private val tokenAliases = AuthTokenAliases(accounts)
     private val tokenCoordinator = AuthTokenCoordinator(
@@ -104,6 +106,7 @@ class KisRepository(
         val base: Pair<Long, DashboardResponse>? = null,
         val dashboard: Pair<Long, DashboardResponse>? = null,
         val tradeHistory: Map<String, Pair<Long, TradeHistoryResponse>> = emptyMap(),
+        val annualTax: Map<Int, TradeHistoryResponse> = emptyMap(),
     )
     private var lastKnownUsdRate: Double = 1350.0
 
@@ -374,6 +377,7 @@ class KisRepository(
             estimatedBuyAmountKrw = payload.totalBuyAmountKrw,
             unpricedSellCount = payload.unpricedSellCount,
             historyReasons = payload.historyReasons,
+            historyParts = if (payload.historyReasons.isEmpty()) emptySet() else setOf("토스 거래 이력"),
         )
     }
 
@@ -390,7 +394,10 @@ class KisRepository(
             addProperty("account_seq", account.cano)
             addProperty("start_date", LocalDate.parse(startDate, JSON_FORMAT).toString())
             addProperty("end_date", LocalDate.parse(endDate, JSON_FORMAT).toString())
-            if (taxEstimate) addProperty("tax_estimate", true)
+            if (taxEstimate) {
+                addProperty("tax_estimate", true)
+                addProperty("hydrate_tax_fx", false)
+            }
         }
         val request = Request.Builder()
             .url("$baseUrl/api/toss-proxy/trade-history")
@@ -417,7 +424,7 @@ class KisRepository(
                 val executions = normalizeRows(result.get("tax_executions")).mapNotNull(::parseTossTaxExecution)
                 // Older proxies still expose independent native acquisition cost for a sale-rate fallback.
                 val inputs = executions.ifEmpty { normalizeRows(result.get("items")).mapNotNull(::parseTossTaxExecution) }
-                val bases = buildCapitalGainsBases(inputs, lastKnownUsdRate)
+                val bases = buildCapitalGainsBases(hydrateCapitalGainsFx(inputs, startDate, endDate), lastKnownUsdRate)
                 trades.forEach { it.capitalGainsBasis = bases[tossTradeEstimateKey(it)] }
             }
             // Older central deployments use today's FX. Preserve their rows,
@@ -527,11 +534,8 @@ class KisRepository(
         val rawExecutions = orders.mapNotNull(::parseTossExecutionForEstimate).distinctBy { it.key }
         fun needsFx(execution: TossExecutionForEstimate) = execution.currency == "USD" &&
             (execution.key in taxFxKeys || execution.side == "SELL" && execution.date in startDate..endDate)
-        val taxRates = if (taxEstimate) hydrateTaxFx(rawExecutions.filter(::needsFx).map { it.filledAt }) {
-            getTossHistoricalMidRate(account, token, it, bounded = true)
-        } else emptyMap()
         val executions = rawExecutions.map { execution ->
-            if (needsFx(execution)) execution.copy(saleMidRate = if (taxEstimate) taxRates[execution.filledAt] ?: 0.0
+            if (needsFx(execution)) execution.copy(saleMidRate = if (taxEstimate) 0.0
                 else getTossHistoricalMidRate(account, token, execution.filledAt)) else execution
         }
         val estimate = estimateTossRealizedProfit(
@@ -547,7 +551,7 @@ class KisRepository(
                 input.copy(fx = rates[input.key]?.takeIf { it > 0.0 }?.let(java.math.BigDecimal::valueOf),
                     nativeCost = estimate.nativeCostsByExecutionKey[input.key]?.let(java.math.BigDecimal::valueOf))
             }
-            val bases = buildCapitalGainsBases(inputs, usdRate)
+            val bases = buildCapitalGainsBases(hydrateCapitalGainsFx(inputs, startDate, endDate), usdRate)
             allTrades.forEach { it.capitalGainsBasis = bases[tossTradeEstimateKey(it)] }
         }
         allTrades.forEach { trade ->
@@ -753,10 +757,11 @@ class KisRepository(
         }
     }
 
-    override suspend fun fetchCapitalGainsHistory(year: Int): TradeHistoryResponse = session.run {
+    override suspend fun fetchCapitalGainsHistory(year: Int, forceRefresh: Boolean): TradeHistoryResponse = session.run {
         withContext(Dispatchers.IO) {
             taxHistoryLoadMutex.withLock {
                 ensureActiveSession()
+                if (!forceRefresh) session.read()?.annualTax?.get(year)?.let { return@withLock it }
                 val resolved = capitalGainsQueryPeriod(year, OffsetDateTime.now(ZoneOffset.ofHours(9)).toLocalDate())
                 val start = resolved.first.format(JSON_FORMAT)
                 val end = resolved.second.format(JSON_FORMAT)
@@ -772,23 +777,64 @@ class KisRepository(
                 }
                 ensureActiveSession()
                 val loaded = results.mapNotNull { it.second.getOrNull() }
-                if (loaded.isEmpty()) throw IllegalStateException("TAX_HISTORY_UNAVAILABLE")
-                buildTradeHistoryResponse(resolved, loaded, true,
-                    results.filter { it.second.isFailure }.map { "${it.first.label}: 연간 거래 조회 실패" }, accounts)
+                val built = buildTradeHistoryResponse(resolved, loaded, true,
+                    results.filter { it.second.isFailure }.map { if (Broker.normalize(it.first.broker) == Broker.TOSS) "토스 거래 이력 미조회" else "한투 연간 거래 미조회" }, accounts)
+                session.update { it.copy(annualTax = it.annualTax + (year to built)) }
+                built
             }
+        }
+    }
+
+    private suspend fun hydrateCapitalGainsFx(inputs: List<TaxExecution>, start: String, end: String, preserveSaleRate: Boolean = false): List<TaxExecution> {
+        val fifoKeys = taxFxExecutionKeys(inputs, LocalDate.parse(start, JSON_FORMAT), LocalDate.parse(end, JSON_FORMAT))
+        val needed = inputs.filter { it.key in fifoKeys && it.currency != "KRW" && (it.buy && it.fx == null || !it.buy && (!preserveSaleRate || it.fx == null)) }
+        val keys = needed.map { FxDate(it.currency, it.date) }.toSet()
+        val account = primaryKisAccount ?: return inputs
+        val rates = taxDailyFxCache.hydrate(keys) { range ->
+            val token = requireToken(account) ?: return@hydrate emptyMap()
+            suspend fun series(symbol: String): Map<LocalDate, java.math.BigDecimal> {
+                val page = getJson(account, "/uapi/overseas-price/v1/quotations/inquire-daily-chartprice", "FHKST03030100",
+                    mapOf("FID_COND_MRKT_DIV_CODE" to "X", "FID_INPUT_ISCD" to symbol,
+                        "FID_INPUT_DATE_1" to range.start.format(JSON_FORMAT), "FID_INPUT_DATE_2" to range.end.format(JSON_FORMAT),
+                        "FID_PERIOD_DIV_CODE" to "D"), token) ?: return emptyMap()
+                return parseKisDailyFx(page)
+            }
+            val usd = series("FX@KRWKFTC")
+            if (range.currency == "USD") usd else {
+                val units = series("FX@${range.currency}")
+                usd.mapNotNull { (date, rate) -> units[date]?.let { date to nativeKrwCrossRate(rate, it) } }.toMap()
+            }
+        }
+        val neededKeys = needed.map { it.key }.toSet()
+        return inputs.map { input ->
+            if (input.key in neededKeys) input.copy(fx = rates[FxDate(input.currency, input.date)],
+                source = input.source + " · 한투 일별 참고환율" +
+                    if (rates[FxDate(input.currency, input.date)] != null && !taxDailyFxCache.isExact(FxDate(input.currency, input.date))) " · 환율 일부 대체(직전 고시일)" else "") else input
         }
     }
 
     private suspend fun loadKisCapitalGainsHistory(account: AccountCredential, start: String, end: String, year: Int): TradeHistoryLoadData {
         val coverage = HistoryCoverage()
         return withContext(coverage) { coroutineScope {
-            val salesDeferred = async { getOverseasRealizedTradeProfit(account, start, end) }
-            val fillsDeferred = async { getOverseasTradeHistoryCcnl(account, LocalDate.of(year - 1, 1, 1).format(JSON_FORMAT), end) }
-            val domesticDeferred = async { getDomesticTradeHistory(account, start, end) }
-            val sales = salesDeferred.await().mapNotNull { it.taxExecution }
+            val sales = getOverseasRealizedTradeProfit(account, start, end).mapNotNull { it.taxExecution }
             val canonicalDates = sales.map { it.date to it.symbol }.toSet()
-            val fills = fillsDeferred.await().mapNotNull { it.taxExecution }.filter { it.buy || (it.date to it.symbol) !in canonicalDates }
-            val bases = buildCapitalGainsBases(fills + sales, lastKnownUsdRate)
+            // Begin in the first sale year; expand only when FIFO quantities need older buys.
+            val fillStart = LocalDate.of(sales.minOfOrNull { it.date.year } ?: year, 1, 1)
+            val exchanges = OVERSEAS_MARKET_GROUPS.filter { group -> sales.any { it.currency == group.currencyCode } }.map { it.exchangeCode }
+            val rawFills = if (sales.isEmpty()) mutableListOf() else getOverseasTradeHistoryCcnl(account, fillStart.format(JSON_FORMAT), end, exchanges).mapNotNull { it.taxExecution }.toMutableList()
+            var olderEnd = fillStart.minusDays(1)
+            while (coverage.snapshot().isEmpty() && hasUncoveredTaxSales(rawFills.filter { it.buy || (it.date to it.symbol) !in canonicalDates } + sales, sales.map { it.key }.toSet()) && olderEnd.year >= 2000) {
+                val olderStart = olderEnd.withDayOfYear(1)
+                val older = getOverseasTradeHistoryCcnl(account, olderStart.format(JSON_FORMAT), olderEnd.format(JSON_FORMAT), exchanges).mapNotNull { it.taxExecution }
+                rawFills += older
+                olderEnd = olderStart.minusDays(1)
+            }
+            val fills = rawFills.filter { it.buy || (it.date to it.symbol) !in canonicalDates }
+            val inputs = hydrateCapitalGainsFx(fills + sales, start, end, preserveSaleRate = true)
+            val bases = buildCapitalGainsBases(inputs, lastKnownUsdRate)
+            val domestic = try { getDomesticTradeHistory(account, start, end) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { coverage.mark(HistoryIncompleteReason.UNAVAILABLE, "한투 국내 체결"); emptyList() }
             val rows = sales.map { sale -> TradeRow(
                 date = sale.date.format(JSON_FORMAT), market = sale.market, symbol = sale.symbol, name = sale.name,
                 side = "매도", currency = sale.currency, quantity = sale.quantity.toDouble(),
@@ -796,8 +842,8 @@ class KisRepository(
                 amountNative = sale.amount.toDouble(), amountKrw = 0.0, time = sale.time,
                 capitalGainsBasis = bases[sale.key],
             ) }
-            TradeHistoryLoadData(account, emptyList(), emptyList(), 0.0, domesticDeferred.await() + rows,
-                profitAvailable = true, profitEstimated = true, historyReasons = coverage.snapshot())
+            TradeHistoryLoadData(account, emptyList(), emptyList(), 0.0, domestic + rows,
+                profitAvailable = true, profitEstimated = true, historyReasons = coverage.snapshot(), historyParts = coverage.partSnapshot())
         } }
     }
 
@@ -915,7 +961,9 @@ class KisRepository(
             historyCompleteness = selectedAccounts.map { account ->
                 AccountHistoryCompleteness(account.id, account.label,
                     accountPayloads.find { it.account.id == account.id }?.historyReasons
-                        ?: setOf(HistoryIncompleteReason.UNAVAILABLE))
+                        ?: setOf(HistoryIncompleteReason.UNAVAILABLE),
+                    accountPayloads.find { it.account.id == account.id }?.historyParts?.takeIf { it.isNotEmpty() }
+                        ?: if (Broker.normalize(account.broker) == Broker.TOSS) setOf("토스 거래 이력") else setOf("한투 연간 거래"))
             },
         )
     }
@@ -1181,9 +1229,8 @@ class KisRepository(
         return getOverseasTradeHistoryCcnl(account, startDate, endDate)
     }
 
-    private suspend fun getOverseasTradeHistoryCcnl(account: AccountCredential, startDate: String, endDate: String): List<TradeRow> {
+    private suspend fun getOverseasTradeHistoryCcnl(account: AccountCredential, startDate: String, endDate: String, exchanges: List<String> = OVERSEAS_MARKET_GROUPS.map { it.exchangeCode }): List<TradeRow> {
         val token = requireToken(account) ?: throw IllegalStateException("KIS_TOKEN_FAILURE[trade-history:overseas-ccnl]")
-        val exchanges = OVERSEAS_MARKET_GROUPS.map { it.exchangeCode }
         return fetchExchangeRows(exchanges) { exchange ->
             runCatching {
                 val pages = paginatedJson(
@@ -1599,20 +1646,17 @@ class KisRepository(
         val request = requestBuilder.build()
 
         ensureActiveSession()
-        client.newCall(request).awaitTextResponse().let { response ->
+        kisRequestPacer.request(retryOnRateLimit) { client.newCall(request).awaitTextResponse() }.let { response ->
             ensureActiveSession()
             val bodyString = response.text
             val json = parseObject(bodyString) ?: JsonObject()
-            when (kisRetryAction(response.code, string(json, "msg_cd"), string(json, "msg1"), retryOnTokenError, retryOnRateLimit)) {
+            when (kisRetryAction(response.code, string(json, "msg_cd"), string(json, "msg1"), retryOnTokenError, 0)) {
                 KisRetryAction.REFRESH_TOKEN -> {
                     val refreshed = tokenCoordinator.refreshToken(account, token)
                         ?: throw IllegalStateException("KIS_TOKEN_REFRESH_FAILED[$trId] path=$path")
                     return getJson(account, path, trId, query, refreshed, extraHeaders, false, retryOnRateLimit)
                 }
-                KisRetryAction.RATE_LIMIT -> {
-                    delay((3 - retryOnRateLimit) * 400L + 400L)
-                    return getJson(account, path, trId, query, token, extraHeaders, retryOnTokenError, retryOnRateLimit - 1)
-                }
+                KisRetryAction.RATE_LIMIT -> Unit // Handled by the shared transport pacer.
                 KisRetryAction.NONE -> Unit
             }
             if (!response.isSuccessful) {
@@ -1640,39 +1684,13 @@ class KisRepository(
         nkField: String,
         maxPages: Int = 10,
     ): List<JsonObject> {
-        val results = mutableListOf<JsonObject>()
-        var currentQuery = LinkedHashMap(query)
-        val pagination = HistoryPagination(maxPages)
         val coverage = coroutineContext[HistoryCoverage]
-        var continuationHeader = ""
-        repeat(maxPages) {
-            val page = getJson(
-                account = account,
-                path = path,
-                trId = trId,
-                query = currentQuery,
-                token = token,
-                extraHeaders = if (continuationHeader.isBlank()) emptyMap() else mapOf("tr_cont" to continuationHeader),
-            ) ?: run { coverage?.mark(HistoryIncompleteReason.UNAVAILABLE); return results }
-            results += page
-            if (coverage != null && listOf("output", "output1").none { key ->
-                    page.get(key)?.let { it.isJsonArray || it.isJsonObject } == true
-                }) coverage.mark(HistoryIncompleteReason.MALFORMED_RESPONSE)
-            val trCont = string(page, "__tr_cont")
-            if (trCont !in setOf("F", "M")) {
-                return results
-            }
-            val nextFk = string(page, fkField)
-            val nextNk = string(page, nkField)
-            if (!pagination.advance(true, listOf(nextFk, nextNk).filter { it.isNotBlank() }.joinToString("|"), results.size)) {
-                pagination.reason?.let { coverage?.mark(it) }
-                return results
-            }
-            currentQuery[fkField.uppercase()] = nextFk
-            currentQuery[nkField.uppercase()] = nextNk
-            continuationHeader = "N"
+        val part = when (trId) { "TTTS3035R" -> "한투 해외 체결"; "TTTS3039R" -> "한투 해외 매도"; else -> "한투 국내 체결" }
+        return loadKisHistoryPages(if (coverage != null) TAX_HISTORY_MAX_PAGES else maxPages, query, fkField, nkField,
+            mark = { coverage?.mark(it, part) }, keepPartialOnFailure = coverage != null) { current, continuation ->
+            getJson(account, path, trId, current, token,
+                extraHeaders = if (continuation.isBlank()) emptyMap() else mapOf("tr_cont" to continuation))
         }
-        return results
     }
 
     private fun normalizeOverseasTradeRows(rows: List<JsonElement>, fallbackMarket: String): List<TradeRow> =
@@ -2022,6 +2040,7 @@ private data class TradeHistoryLoadData(
     val unpricedSellCount: Int = 0,
     val tossHistoryNotes: List<String> = emptyList(),
     val historyReasons: Set<HistoryIncompleteReason> = emptySet(),
+    val historyParts: Set<String> = emptySet(),
 )
 
 private data class TossTradeHistoryPayload(
@@ -2034,6 +2053,7 @@ private data class TossTradeHistoryPayload(
     val unpricedSellCount: Int,
     val historyNotes: List<String> = emptyList(),
     val historyReasons: Set<HistoryIncompleteReason> = emptySet(),
+    val historyParts: Set<String> = emptySet(),
 )
 
 private data class RealizedTradeProfitRow(

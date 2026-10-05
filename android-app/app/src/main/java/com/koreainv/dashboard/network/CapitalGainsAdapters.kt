@@ -118,7 +118,7 @@ internal fun taxFxExecutionKeys(executions: List<TaxExecution>, start: LocalDate
         val lots = positions.getOrPut(execution.symbol to execution.currency) { ArrayDeque() }
         if (execution.buy) lots.add(TaxLot(execution.quantity, execution))
         else {
-            val selected = execution.currency == "USD" && execution.date in start..end
+            val selected = execution.currency != "KRW" && execution.date in start..end
             if (selected) keys.add(execution.key)
             var remaining = execution.quantity
             while (remaining.signum() > 0 && lots.isNotEmpty()) {
@@ -228,4 +228,20 @@ private fun knownSettlementHoliday(date: LocalDate, japan: Boolean): Boolean {
         date == LocalDate.of(y, 5, 31).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) ||
         date == monday(9, 1) || date == monday(10, 2) ||
         date == LocalDate.of(y, 11, 1).with(TemporalAdjusters.dayOfWeekInMonth(4, DayOfWeek.THURSDAY))
+}
+
+/** Query earlier years only when the fetched FIFO quantities cannot cover a selected sale. */
+internal fun hasUncoveredTaxSales(executions: List<TaxExecution>, selectedKeys: Set<String> = executions.filter { !it.buy }.map { it.key }.toSet()): Boolean {
+    val quantities = mutableMapOf<Pair<String, String>, BigDecimal>()
+    var uncovered = false
+    executions.distinctBy { it.key }.sortedWith(compareBy<TaxExecution> { it.date }.thenBy { it.time }.thenBy { it.key }).forEach { row ->
+        val key = row.symbol to row.currency
+        val held = quantities[key] ?: BigDecimal.ZERO
+        if (row.buy) quantities[key] = held + row.quantity
+        else {
+            if (row.key in selectedKeys && held < row.quantity) uncovered = true
+            quantities[key] = (held - row.quantity).max(BigDecimal.ZERO)
+        }
+    }
+    return uncovered
 }

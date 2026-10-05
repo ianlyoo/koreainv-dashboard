@@ -60,6 +60,10 @@ data class CapitalGainsEstimate(
     val estimatedTaxKrw: BigDecimal? = taxableBaseKrw?.multiply(BigDecimal("0.22"))?.setScale(0, RoundingMode.DOWN)
     val totalOverseasCount: Int = rows.count { !it.exempt }
     val historyIncomplete: Boolean = accountErrors.isNotEmpty() || historyCompleteness.any { !it.complete }
+    val historyWarnings: List<String> get() = (historyCompleteness.filter { !it.complete }.flatMap { account ->
+        account.parts.ifEmpty { setOf(if (account.accountLabel.contains("토스")) "토스 거래 이력" else "한투 해외 체결") }.map { "$it 일부 미조회" }
+    } + accountErrors).distinct()
+    val fxSubstituted: Boolean get() = rows.any { it.reason.contains("환율 미확인") || it.reason.contains("환율 일부 대체") }
     val incomplete: Boolean = estimatedCount > 0 || historyIncomplete
     val filingPeriod: String = "${year + 1}년 5월 1일~31일 (휴일 시 다음 영업일)"
 }

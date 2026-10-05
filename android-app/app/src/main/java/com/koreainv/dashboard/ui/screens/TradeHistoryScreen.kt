@@ -286,16 +286,7 @@ fun TradeHistoryScreen(
                         }
 
                         item {
-                            PremiumListItem(onClick = { showTax = true }) {
-                                LedgerRowContent(
-                                    name = "양도소득세 계산",
-                                    identity = "한국투자 · 토스 합산 · 연간 결제일 기준",
-                                    detail = "해외주식 · 기본공제 250만원 · 세율 22%",
-                                    amount = "보기 ›",
-                                    secondary = null,
-                                    secondaryColor = TextSecondary,
-                                )
-                            }
+                            DashboardInlineButton(label = "양도소득세 계산", onClick = { showTax = true }, compact = true)
                         }
                         item {
                             FlowRow(

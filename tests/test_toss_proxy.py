@@ -28,7 +28,7 @@ class TossProxyRouteTests(unittest.TestCase):
                       "start_date": "2026-01-01", "end_date": "2026-10-05", "tax_estimate": True})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["result"]["tax_executions"], [])
-        get_trade_history.assert_called_once_with("fake-client", "fake-secret", "9", "2026-01-01", "2026-10-05", tax_estimate=True, cancel_event=ANY)
+        get_trade_history.assert_called_once_with("fake-client", "fake-secret", "9", "2026-01-01", "2026-10-05", tax_estimate=True, hydrate_tax_fx=True, cancel_event=ANY)
 
     def test_proxy_is_hidden_when_disabled(self):
         with patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_ENABLED", False):
@@ -48,6 +48,15 @@ class TossProxyRouteTests(unittest.TestCase):
                 json={"client_id": "client", "client_secret": "secret"},
             )
         self.assertEqual(response.status_code, 401)
+
+    @patch("app.routes.toss_proxy.toss_api_client.get_trade_history")
+    def test_daily_range_client_requests_native_lots_without_quote_hydration(self, get_trade_history):
+        get_trade_history.return_value = {"items": [], "tax_executions": []}
+        with patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_ENABLED", True), patch("app.routes.toss_proxy.config.TOSS_PROXY_SERVER_TOKEN", "fake"):
+            response = self.client.post("/api/toss-proxy/trade-history", headers={"Authorization": "Bearer fake"},
+                json={"client_id":"fake-client", "client_secret":"fake-secret", "account_seq":"9", "start_date":"2026-01-01", "end_date":"2026-10-05", "tax_estimate":True, "hydrate_tax_fx":False})
+        self.assertEqual(200, response.status_code)
+        get_trade_history.assert_called_once_with("fake-client", "fake-secret", "9", "2026-01-01", "2026-10-05", tax_estimate=True, hydrate_tax_fx=False, cancel_event=ANY)
 
     @patch("app.routes.toss_proxy.toss_api_client.get_accounts")
     def test_accounts_are_relayed_without_persisting_credentials(self, get_accounts):

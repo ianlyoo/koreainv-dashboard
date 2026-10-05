@@ -54,11 +54,11 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
         loading = true
         error = null
         try {
-            result = estimateCapitalGainsTax(year, repository.fetchCapitalGainsHistory(year))
+            result = estimateCapitalGainsTax(year, repository.fetchCapitalGainsHistory(year, forceRefresh = retry > 0))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            error = dashboardErrorMessage(failure)
+            error = "연간 거래 조회 중단 · 다시 시도해 주세요"
         } finally {
             loading = false
         }
@@ -82,6 +82,7 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
                         ScreenFilterMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                             (currentYear downTo 2000).forEach { option ->
                                 DropdownMenuItem(text = { Text("${option}년", color = TextPrimary) }, onClick = {
+                                    retry = 0
                                     year = option
                                     expanded = false
                                 })
@@ -98,7 +99,7 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall)
                 }
                 if (loading) item { DashboardLoadingState(message = "연간 거래를 불러오는 중입니다…") }
-                else if (error != null) item { DashboardErrorNotice(message = error.orEmpty(), onRetry = { retry++ }) }
+                else if (error != null) item { DashboardErrorNotice(title = "연간 거래 미조회", message = error.orEmpty(), onRetry = { retry++ }) }
                 else result?.let { estimate ->
                     item {
                         HeroTopSection {
@@ -117,8 +118,9 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
                         else "추정 자료가 포함된 참고 계산입니다.", color = TextSecondary,
                             style = MaterialTheme.typography.bodySmall)
                     }
+                    if (estimate.fxSubstituted) item { Text("환율 일부 대체 · 거래별 사유를 확인해 주세요", color = TextSecondary, style = MaterialTheme.typography.bodySmall) }
                     if (estimate.historyIncomplete) item {
-                        DashboardErrorNotice(message = "거래 이력 조회 미완료 · 누락 거래가 있을 수 있습니다", onRetry = { retry++ })
+                        DashboardErrorNotice(title = "거래 일부 미조회", message = estimate.historyWarnings.joinToString(" · "), onRetry = { retry++ })
                     }
                     item { TaxMetricRow("양도차익 합계", taxWon(estimate.netGainKrw), "해외주식 손익통산 · 환차손익 포함") }
                     item { TaxMetricRow("기본공제", taxWon(estimate.basicDeductionKrw), "1인당 연 250만원 · 두 증권사 합산 1회") }
