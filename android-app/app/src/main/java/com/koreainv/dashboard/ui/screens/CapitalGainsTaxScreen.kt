@@ -4,6 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -118,7 +121,13 @@ fun CapitalGainsTaxScreen(repository: DashboardDataSource, onBack: () -> Unit) {
                         else "추정 자료가 포함된 참고 계산입니다.", color = TextSecondary,
                             style = MaterialTheme.typography.bodySmall)
                     }
-                    if (estimate.fxSubstituted) item { Text("환율 일부 대체 · 거래별 사유를 확인해 주세요", color = TextSecondary, style = MaterialTheme.typography.bodySmall) }
+                    if (estimate.fxSubstituted) item {
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("환율 일부 대체", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            DashboardInlineButton(label = "환율 다시 조회", onClick = { retry++ }, compact = true)
+                        }
+                    }
                     if (estimate.historyIncomplete) item {
                         DashboardErrorNotice(title = "거래 일부 미조회", message = estimate.historyWarnings.joinToString(" · "), onRetry = { retry++ })
                     }

@@ -209,6 +209,8 @@ private fun previewMotionRoute(route: String?): String? = when (route) {
 
 /** All prices, accounts and transactions are fictional and deterministic. */
 internal class SyntheticDashboardSource(private val fixture: String) : DashboardDataSource {
+    private val reviewFxCache = TaxDailyFxCache()
+    private val reviewAnnualHistory = mutableMapOf<Int, TradeHistoryResponse>()
     companion object { const val SYNC = "2026-09-04T15:30:00+09:00" }
     val profile = AccountProfile(listOf(
         AccountCredential("demo-kis", "데모 한국투자", "", "", "00000000", "01"),
@@ -278,14 +280,31 @@ internal class SyntheticDashboardSource(private val fixture: String) : Dashboard
         check(fixture != "error" && fixture != "cached-error") { "합성 데이터 오류 — 실제 네트워크 요청 없음" }
     }
     override fun peekDashboard() = if (fixture in listOf("loading", "error")) null else dashboard
-    override suspend fun fetchCapitalGainsHistory(year: Int, forceRefresh: Boolean): TradeHistoryResponse {
+    override suspend fun fetchCapitalGainsHistory(year: Int, forceRefresh: Boolean): TradeHistoryResponse =
+        if (fixture == "tax-fx-recovery") loadAnnualTaxHistory(year, forceRefresh, reviewAnnualHistory[year], save = { result ->
+            if (result == null) reviewAnnualHistory.remove(year) else reviewAnnualHistory[year] = result
+        }) { syntheticTaxHistory(year, forceRefresh) }
+        else syntheticTaxHistory(year, forceRefresh)
+
+    private suspend fun syntheticTaxHistory(year: Int, forceRefresh: Boolean): TradeHistoryResponse {
         checkFixture()
         if (fixture in listOf("tax-missing", "tax-incomplete")) return trades(null)
         fun json(value: String) = com.google.gson.JsonParser.parseString(value).asJsonObject
         // Exercise production adapters with synthetic recorded field shapes, not precomputed tax bases.
         val kisSale = parseKisTaxSale(json("""{"trad_day":"${year}0810","ovrs_pdno":"AVGO","ovrs_item_name":"Broadcom Inc.","slcl_qty":"10","frcr_sll_amt_smtl1":"10000","pchs_avg_pric":"600","frcr_pchs_amt1":"6000","stck_sll_tlex":"0","frst_bltn_exrt":"1400"}"""), "NASD", "USD")!!
         val kisBuy = parseKisTaxFill(json("""{"ord_dt":"${year}0310","pdno":"AVGO","ccld_qty":"10","ft_ccld_amt3":"6000","sll_buy_dvsn_cd":"02","odno":"fake-kis-buy","crcy_cd":"USD","frst_bltn_exrt":"1300"}"""), "NASD")!!
-        val kisBases = buildCapitalGainsBases(listOf(kisBuy, kisSale), 1350.0)
+        val kisInputs = if (fixture == "tax-fx-recovery") {
+            val previousDay = kisBuy.date.minusDays(1)
+            reviewFxCache.hydrate(setOf(FxDate("USD", previousDay))) {
+                mapOf(previousDay to java.math.BigDecimal("1380"))
+            }
+            hydrateTaxExecutionFx(listOf(kisBuy.copy(fx = null), kisSale), java.time.LocalDate.of(year, 1, 1),
+                java.time.LocalDate.of(year, 12, 31), reviewFxCache, preserveSaleRate = true) {
+                // First load is an outage; the real screen's forceRefresh retry restores the exact date.
+                if (forceRefresh) mapOf(kisBuy.date to java.math.BigDecimal("1300")) else emptyMap()
+            }
+        } else listOf(kisBuy, kisSale)
+        val kisBases = buildCapitalGainsBases(kisInputs, 1350.0)
         val tossBuy = parseTossTaxExecution(json("""{"date":"${year - 1}1220","order_no":"fake-toss-buy","symbol":"NVDA","side":"매수","currency":"USD","quantity":"10","amount_native":"1300","commission_native":"0","tax_native":"0","tax_reference_fx":"1200"}"""))!!
         val tossSale = parseTossTaxExecution(json("""{"date":"${year}0903","order_no":"fake-toss-sell","symbol":"NVDA","side":"매도","currency":"USD","quantity":"10","amount_native":"1200","buy_amount_native":"1300","commission_native":"2","tax_native":"0","tax_reference_fx":"1400"}"""))!!
         val noCost = parseTossTaxExecution(json("""{"date":"${year}0901","order_no":"fake-no-cost","symbol":"MSFT","side":"매도","currency":"USD","quantity":"3","amount_native":"1260","commission_native":"0","tax_native":"0","tax_reference_fx":"1400"}"""))!!

@@ -1,0 +1,7 @@
+{
+  "note": "Synthetic values using the v1.9.11 tax_executions field shape; no real account values.",
+  "tax_executions": [
+    {"date":"20260203","filled_at":"2026-02-03T15:00:00Z","order_no":"fake-proxy-buy","symbol":"FAKE","side":"매수","currency":"USD","quantity":"1","amount_native":"10000","commission_native":"0","tax_native":"0","tax_reference_fx":"1200"},
+    {"date":"20260204","filled_at":"2026-02-04T15:00:00Z","order_no":"fake-proxy-sell","symbol":"FAKE","side":"매도","currency":"USD","quantity":"1","amount_native":"12000","buy_amount_native":"10000","commission_native":"2","tax_native":"0","tax_reference_fx":"1500","realized_profit_krw":"999999999"}
+  ]
+}

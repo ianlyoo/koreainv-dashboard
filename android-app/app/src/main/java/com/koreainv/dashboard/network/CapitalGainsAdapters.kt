@@ -167,6 +167,7 @@ internal fun buildCapitalGainsBases(executions: List<TaxExecution>, fallbackUsdR
             val lot = lots.first
             val covered = remaining.min(lot.quantity)
             if (unitCost != null) {
+                if (lot.execution.source.contains(TAX_FX_SUBSTITUTED)) reasons.add("취득 $TAX_FX_SUBSTITUTED")
                 val fx = lot.execution.fx ?: saleFx.also { reasons.add("취득환율 미확인(환차 미반영)") }
                 // With no acquisition FX, use the sale date for the explicit fallback payment.
                 val acquired = if (lot.execution.fx == null) date else estimatedSettlementDate(lot.execution.date, lot.execution.market)

@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal data class FxDate(val currency: String, val date: LocalDate)
+internal data class DailyTaxFxRate(val value: BigDecimal, val publicationDate: LocalDate)
 internal data class FxRange(val currency: String, val start: LocalDate, val end: LocalDate)
 
 /** Small calendar ranges cover lot dates; unavailable daily rows remain labelled fallbacks. */
@@ -52,7 +53,15 @@ internal class TaxDailyFxCache(
         budgetMillis: Long = TAX_FX_BUDGET_MILLIS,
         requestMillis: Long = TAX_FX_REQUEST_MILLIS,
         load: suspend (FxRange) -> Map<LocalDate, BigDecimal>,
-    ): Map<FxDate, BigDecimal> {
+    ): Map<FxDate, BigDecimal> = hydrateWithProvenance(wanted, budgetMillis, requestMillis, load).mapValues { it.value.value }
+
+    /** Value and publication date come from the same locked snapshot. */
+    suspend fun hydrateWithProvenance(
+        wanted: Set<FxDate>,
+        budgetMillis: Long = TAX_FX_BUDGET_MILLIS,
+        requestMillis: Long = TAX_FX_REQUEST_MILLIS,
+        load: suspend (FxRange) -> Map<LocalDate, BigDecimal>,
+    ): Map<FxDate, DailyTaxFxRate> {
         initializationMutex.withLock {
             if (!initialized) {
                 val persisted = try { loadPersisted() }
@@ -62,10 +71,13 @@ internal class TaxDailyFxCache(
                 initialized = true
             }
         }
-        fun lookup(key: FxDate): BigDecimal? = rates[key] ?: (1L..7L).firstNotNullOfOrNull { lag ->
-            rates[FxDate(key.currency, key.date.minusDays(lag))]
-        }
-        val missing = mutex.withLock { wanted.filter { lookup(it) == null }.toSet() }
+        fun lookup(key: FxDate): DailyTaxFxRate? = rates[key]?.let { DailyTaxFxRate(it, key.date) }
+            ?: (1L..7L).firstNotNullOfOrNull { lag ->
+                val published = key.date.minusDays(lag)
+                rates[FxDate(key.currency, published)]?.let { DailyTaxFxRate(it, published) }
+            }
+        // A nearby published rate may substitute only after trying the requested date.
+        val missing = mutex.withLock { wanted.filterNot { rates.containsKey(it) }.toSet() }
         withTimeoutOrNull(budgetMillis) {
             var failures = 0
             for (range in taxFxRanges(missing)) {
@@ -111,4 +123,41 @@ internal object TaxDailyFxCodec {
             addProperty("${key.currency}:${key.date}", value.toPlainString())
         }
     }.toString()
+}
+
+internal const val TAX_FX_SUBSTITUTED = "환율 일부 대체(직전 고시일)"
+private const val KIS_DAILY_FX_SOURCE = "한투 일별 참고환율"
+
+/** Shared by the real repository and recorded-shape/recovery fixtures. */
+internal suspend fun hydrateTaxExecutionFx(
+    inputs: List<TaxExecution>,
+    start: LocalDate,
+    end: LocalDate,
+    cache: TaxDailyFxCache,
+    preserveSaleRate: Boolean = false,
+    load: suspend (FxRange) -> Map<LocalDate, BigDecimal>,
+): List<TaxExecution> {
+    val fifoKeys = taxFxExecutionKeys(inputs, start, end)
+    val needed = inputs.filter {
+        it.key in fifoKeys && it.currency != "KRW" &&
+            (if (it.buy || preserveSaleRate) it.fx == null || it.source.contains(TAX_FX_SUBSTITUTED) else true)
+    }
+    val keys = needed.map { FxDate(it.currency, it.date) }.toSet()
+    val rates = cache.hydrateWithProvenance(keys, load = load)
+    val neededKeys = needed.map { it.key }.toSet()
+    return inputs.map { input ->
+        val replacement = rates[FxDate(input.currency, input.date)]
+        val originalValid = input.fx?.signum() == 1 && !input.source.contains(TAX_FX_SUBSTITUTED)
+        when {
+            input.key !in neededKeys || replacement == null -> input
+            replacement.publicationDate != input.date && originalValid -> input
+            else -> {
+                // Clear an earlier substitute label if a retry obtains the exact date.
+                val source = input.source.split(" · ").filterNot { it == KIS_DAILY_FX_SOURCE || it == TAX_FX_SUBSTITUTED }
+                    .joinToString(" · ")
+                input.copy(fx = replacement.value, source = listOfNotNull(source, KIS_DAILY_FX_SOURCE,
+                    TAX_FX_SUBSTITUTED.takeIf { replacement.publicationDate != input.date }).joinToString(" · "))
+            }
+        }
+    }
 }

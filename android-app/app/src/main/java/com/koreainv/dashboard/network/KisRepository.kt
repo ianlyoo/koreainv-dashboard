@@ -761,37 +761,37 @@ class KisRepository(
         withContext(Dispatchers.IO) {
             taxHistoryLoadMutex.withLock {
                 ensureActiveSession()
-                if (!forceRefresh) session.read()?.annualTax?.get(year)?.let { return@withLock it }
-                val resolved = capitalGainsQueryPeriod(year, OffsetDateTime.now(ZoneOffset.ofHours(9)).toLocalDate())
-                val start = resolved.first.format(JSON_FORMAT)
-                val end = resolved.second.format(JSON_FORMAT)
-                val results = coroutineScope {
-                    accounts.map { account -> async {
-                        taxAccountSemaphore.withPermit {
-                            account to runCatching {
-                                if (Broker.normalize(account.broker) == Broker.TOSS) loadTossTradeHistory(account, start, end, taxEstimate = true)
-                                else loadKisCapitalGainsHistory(account, start, end, year)
-                            }.onFailure { if (it is CancellationException) throw it }
-                        }
-                    } }.awaitAll()
+                loadAnnualTaxHistory(year, forceRefresh, session.read()?.annualTax?.get(year), save = { result ->
+                    session.update { it.copy(annualTax = if (result == null) it.annualTax - year else it.annualTax + (year to result)) }
+                }) {
+                    val resolved = capitalGainsQueryPeriod(year, OffsetDateTime.now(ZoneOffset.ofHours(9)).toLocalDate())
+                    val start = resolved.first.format(JSON_FORMAT)
+                    val end = resolved.second.format(JSON_FORMAT)
+                    val results = coroutineScope {
+                        accounts.map { account -> async {
+                            taxAccountSemaphore.withPermit {
+                                account to runCatching {
+                                    if (Broker.normalize(account.broker) == Broker.TOSS) loadTossTradeHistory(account, start, end, taxEstimate = true)
+                                    else loadKisCapitalGainsHistory(account, start, end, year)
+                                }.onFailure { if (it is CancellationException) throw it }
+                            }
+                        } }.awaitAll()
+                    }
+                    ensureActiveSession()
+                    val loaded = results.mapNotNull { it.second.getOrNull() }
+                    val built = buildTradeHistoryResponse(resolved, loaded, true,
+                        results.filter { it.second.isFailure }.map { if (Broker.normalize(it.first.broker) == Broker.TOSS) "토스 거래 이력 미조회" else "한투 연간 거래 미조회" }, accounts)
+                    built
                 }
-                ensureActiveSession()
-                val loaded = results.mapNotNull { it.second.getOrNull() }
-                val built = buildTradeHistoryResponse(resolved, loaded, true,
-                    results.filter { it.second.isFailure }.map { if (Broker.normalize(it.first.broker) == Broker.TOSS) "토스 거래 이력 미조회" else "한투 연간 거래 미조회" }, accounts)
-                session.update { it.copy(annualTax = it.annualTax + (year to built)) }
-                built
             }
         }
     }
 
     private suspend fun hydrateCapitalGainsFx(inputs: List<TaxExecution>, start: String, end: String, preserveSaleRate: Boolean = false): List<TaxExecution> {
-        val fifoKeys = taxFxExecutionKeys(inputs, LocalDate.parse(start, JSON_FORMAT), LocalDate.parse(end, JSON_FORMAT))
-        val needed = inputs.filter { it.key in fifoKeys && it.currency != "KRW" && (it.buy && it.fx == null || !it.buy && (!preserveSaleRate || it.fx == null)) }
-        val keys = needed.map { FxDate(it.currency, it.date) }.toSet()
         val account = primaryKisAccount ?: return inputs
-        val rates = taxDailyFxCache.hydrate(keys) { range ->
-            val token = requireToken(account) ?: return@hydrate emptyMap()
+        return hydrateTaxExecutionFx(inputs, LocalDate.parse(start, JSON_FORMAT), LocalDate.parse(end, JSON_FORMAT),
+            taxDailyFxCache, preserveSaleRate) { range ->
+            val token = requireToken(account) ?: return@hydrateTaxExecutionFx emptyMap()
             suspend fun series(symbol: String): Map<LocalDate, java.math.BigDecimal> {
                 val page = getJson(account, "/uapi/overseas-price/v1/quotations/inquire-daily-chartprice", "FHKST03030100",
                     mapOf("FID_COND_MRKT_DIV_CODE" to "X", "FID_INPUT_ISCD" to symbol,
@@ -804,12 +804,6 @@ class KisRepository(
                 val units = series("FX@${range.currency}")
                 usd.mapNotNull { (date, rate) -> units[date]?.let { date to nativeKrwCrossRate(rate, it) } }.toMap()
             }
-        }
-        val neededKeys = needed.map { it.key }.toSet()
-        return inputs.map { input ->
-            if (input.key in neededKeys) input.copy(fx = rates[FxDate(input.currency, input.date)],
-                source = input.source + " · 한투 일별 참고환율" +
-                    if (rates[FxDate(input.currency, input.date)] != null && !taxDailyFxCache.isExact(FxDate(input.currency, input.date))) " · 환율 일부 대체(직전 고시일)" else "") else input
         }
     }
 
