@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 requests
+httpx>=0.28,<0.29
 python-dotenv
 yfinance
 beautifulsoup4

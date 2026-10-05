@@ -48,8 +48,8 @@
 
 계좌별 `historyCompleteness`는 손익 계산 성공 여부와 별개입니다. Toss 응답 형식 오류·빈 미완료 응답·잘못된 cursor·100페이지 소진, KIS 연속 조회의 10페이지 한도·누락 cursor·응답 부재를 미완료로 전달합니다. 부분 거래는 유지하고 경고합니다. 매도가 없고 모든 이력이 완료된 경우에만 0원이며, 빈 미완료 이력은 미산출입니다. KIS 병렬 시장 조회의 상태는 계좌 조회 문맥 안에서 합칩니다.
 
-서버와 직접 Android의 연간 FX hydration은 계좌별 총 30초·최대 40회로 제한하고, 연속 두 실패에서 중단합니다. 서버의 실제 HTTP 재시도·토큰 요청도 40회 예산을 사용합니다. 직접 Android tax FX 요청은 자동 재시도를 하지 않습니다. 단일 조회는 최대 5초이며 서버 connect/read timeout에 각각 절반을 배정하고 남은 예산으로 더 줄입니다. 성공한 환율과 독립적인 외화 원가는 보존하고 나머지는 기존 표시 사유가 있는 참고환율 대체로 즉시 계산합니다.
+서버와 직접 Android의 연간 FX hydration은 계좌별 총 30초·최대 40회로 제한하고, 연속 두 실패에서 중단합니다. 서버의 실제 HTTP 재시도·토큰 요청도 40회 예산을 사용합니다. 직접 Android tax FX 요청은 자동 재시도를 하지 않습니다. 서버 단일 HTTP는 연결·헤더·본문 전체의 deadline 5초를 적용하고 남은 hydration 예산으로 줄입니다. 요청은 async stream으로 수행하며 deadline 또는 취소 시 transport를 취소하고 닫힘을 기다립니다. HTTPX를 서버 의존성에 명시했습니다. 성공한 환율과 독립적인 외화 원가는 보존하고 나머지는 기존 표시 사유가 있는 참고환율 대체로 즉시 계산합니다.
 
-Android 취소는 HTTP call을 취소합니다. 서버는 연결 종료/route 취소를 감지해 worker의 cancellation event를 설정하며, 다음 요청·재시도·throttling을 중단합니다. 이미 진행 중인 동기 HTTP 요청은 제한된 timeout까지 마무리될 수 있습니다(최대 5초). 세금 조회 mutex·계좌 동시조회 quota는 일반 조회와 분리하고 FX cache lock은 메모리 접근만 보호하며 일반 거래 요청은 tax network 작업 뒤에서 기다리지 않습니다. 서버 일반 조회의 기존 인증·재시도 동작은 유지합니다.
+Android 취소는 HTTP call을 취소합니다. 서버는 연결 종료/route 취소를 감지해 worker의 cancellation event를 설정하며, 다음 요청·재시도·throttling을 중단합니다. 20ms 간격의 watchdog이 진행 중 HTTP에도 취소를 전달합니다. 실 localhost slow-drip body·header·token 검사로 취소 지연과 전체 deadline을 검증합니다. OS DNS 조회를 기다리는 경우에도 transport 취소 후 늦은 HTTP 요청이 발생하지 않는지 검사합니다. 세금 조회 mutex·계좌 동시조회 quota는 일반 조회와 분리하고 FX cache lock은 메모리 접근만 보호하며 일반 거래 요청은 tax network 작업 뒤에서 기다리지 않습니다. 서버 일반 조회의 기존 인증·재시도 동작은 유지합니다. 토큰 network I/O는 전역 cache lock 밖에서 수행하며, 결과 저장 전 다시 cache를 확인해 다른 refresh의 최신 유효 토큰을 덮어쓰지 않습니다. 유효 cached token 조회는 진행 중 refresh를 기다리지 않습니다. [HTTPX async stream 정리](https://www.python-httpx.org/async/#streaming-responses), [asyncio task 취소](https://docs.python.org/3/library/asyncio-task.html#task-cancellation).
 
 Toss 외화 취득원가는 환율/표시 손익 검증 전에 실행 키별로 보관합니다. 연속 매도 중 한 건의 환율 실패가 다른 원가를 선택하게 만들지 않습니다. 가짜 $100·$200 매수와 두 번의 매도에서 총 배분 원가는 $300으로 유지됩니다.

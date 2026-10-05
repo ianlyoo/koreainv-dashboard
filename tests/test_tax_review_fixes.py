@@ -59,7 +59,7 @@ class TaxReviewFixesTests(unittest.TestCase):
         # 500 needed windows, clock advances by each actual transport timeout.
         clock = [0.0]
         def timeout(*args, **kwargs):
-            clock[0] += kwargs["timeout"]
+            clock[0] += kwargs["work"].begin_request()
             raise requests.Timeout("synthetic timeout")
         orders = []
         for n in range(250):
@@ -68,7 +68,7 @@ class TaxReviewFixesTests(unittest.TestCase):
                 row["symbol"] = f"FAKE{n}"
                 row["orderId"] = f"{n}-{row['side']}"
                 orders.append(row)
-        with patch.object(toss, "get_access_token", return_value="fake-token"), patch.object(toss.requests, "get", side_effect=timeout) as get, patch.object(toss.time, "monotonic", side_effect=lambda: clock[0]), patch.object(toss.FxBudget, "pause"):
+        with patch.object(toss, "get_access_token", return_value="fake-token"), patch.object(toss, "_bounded_request", side_effect=timeout) as get, patch.object(toss.time, "monotonic", side_effect=lambda: clock[0]), patch.object(toss.FxBudget, "pause"):
             result = self.annual(orders)
         self.assertEqual(get.call_count, 2)
         self.assertLessEqual(clock[0], toss.TAX_FX_SECONDS)
@@ -87,11 +87,12 @@ class TaxReviewFixesTests(unittest.TestCase):
                 row["execution"]["filledAt"] = timestamp[:11] + f"10:{n // 60:02}:{n % 60:02}" + timestamp[19:]
                 orders.append(row)
         def quote(*args, **kwargs):
+            kwargs["work"].begin_request()
             timestamp = kwargs["params"]["dateTime"]
             response = Mock(status_code=200)
             response.json.return_value = {"result": {"baseCurrency": "USD", "quoteCurrency": "KRW", "midRate": 1300, "validFrom": timestamp, "validUntil": "2099-01-01T00:00:00Z"}}
             return response
-        with patch.object(toss, "get_access_token", return_value="fake-token"), patch.object(toss.requests, "get", side_effect=quote) as get, patch.object(toss.FxBudget, "pause"):
+        with patch.object(toss, "get_access_token", return_value="fake-token"), patch.object(toss, "_bounded_request", side_effect=quote) as get, patch.object(toss.FxBudget, "pause"):
             result = self.annual(orders)
             self.assertEqual(get.call_count, toss.TAX_FX_REQUESTS)
             self.assertEqual(result["tax_fx_incomplete_reason"], "request_budget")
@@ -99,7 +100,7 @@ class TaxReviewFixesTests(unittest.TestCase):
         with patch.object(toss.time, "monotonic", side_effect=lambda: clock[0]):
             work = toss.FxBudget()
             clock[0] = toss.TAX_FX_SECONDS - 1
-            self.assertEqual(work.begin_request(), 0.5)
+            self.assertEqual(work.begin_request(), 1)
             clock[0] += 1
             self.assertFalse(work.allowed())
             self.assertEqual(work.reason, "time_budget")
@@ -109,7 +110,7 @@ class TaxReviewFixesTests(unittest.TestCase):
         def cancel(*args, **kwargs):
             event.set()
             raise requests.Timeout("cancelled fake request")
-        with patch.object(toss, "get_access_token", return_value="fake-token"), patch.object(toss.requests, "get", side_effect=cancel) as get, patch.object(toss.FxBudget, "pause"):
+        with patch.object(toss, "get_access_token", return_value="fake-token"), patch.object(toss, "_bounded_request", side_effect=cancel) as get, patch.object(toss.FxBudget, "pause"):
             work = toss.FxBudget(event)
             with self.assertRaises(toss.TaxWorkCancelled):
                 toss._get_historical_usd_mid_rate("c", "s", "2026-06-01T10:00:00Z", work=work)

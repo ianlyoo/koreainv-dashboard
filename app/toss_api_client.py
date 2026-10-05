@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 from collections import OrderedDict
-from contextlib import contextmanager
 import threading
 import time
 from collections.abc import Mapping
 import datetime
 
 import requests
+import httpx
 
 
 BASE_URL = "https://openapi.tossinvest.com"
@@ -90,13 +91,62 @@ class FxBudget:
         if not self.allowed():
             raise TimeoutError("Tax FX budget exhausted")
         self.requests += 1
-        # requests applies the timeout to connect and read phases separately.
-        return min(TAX_FX_REQUEST_SECONDS, self.remaining()) / 2
+        return min(TAX_FX_REQUEST_SECONDS, self.remaining())
 
     def record(self, rate):
         self.failures = 0 if rate > 0 else self.failures + 1
         if self.failures >= 2:
             self.reason = "repeated_failures"
+
+
+def _bounded_request(method: str, url: str, *, work: FxBudget, **kwargs):
+    """Cancel the transport, not just a worker future, and await socket cleanup.
+
+    The watchdog covers connect, headers and the entire body, including a peer
+    that never stops sending. One deadline is clipped to the hydration deadline.
+    This synchronous boundary runs only in the proxy's existing worker thread.
+    """
+    deadline = time.monotonic() + work.begin_request()
+
+    async def run():
+        async def fetch():
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(method, url, **kwargs) as response:
+                    await response.aread()
+                    return response
+
+        async def watch():
+            while True:
+                work.remaining()  # raises on cancellation; shared by retries
+                remaining = min(deadline, work.deadline) - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Tax HTTP total deadline exceeded")
+                await asyncio.sleep(min(0.02, remaining))
+
+        request = asyncio.create_task(fetch())
+        watchdog = asyncio.create_task(watch())
+        try:
+            done, _ = await asyncio.wait({request, watchdog}, return_when=asyncio.FIRST_COMPLETED)
+            if watchdog in done:
+                await watchdog
+            response = await request
+            work.remaining()
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Tax HTTP total deadline exceeded")
+            return response
+        finally:
+            request.cancel()
+            watchdog.cancel()
+            await asyncio.gather(request, watchdog, return_exceptions=True)
+
+    # Do not make request cancellation wait for an OS DNS lookup in the
+    # loop's executor. The cancelled transport cannot send a later HTTP request.
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(run())
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.close()
 
 
 def _get_historical_usd_mid_rate(client_id: str, client_secret: str, filled_at: str, *, work=None) -> float:
@@ -185,56 +235,46 @@ def clear_token_cache() -> None:
         _historical_fx_cache.clear()
 
 
-@contextmanager
-def _token_cache_lock(work):
-    if work:
-        while True:
-            if not work.allowed():
-                raise TimeoutError("Tax FX budget exhausted")
-            if _token_lock.acquire(timeout=min(0.05, work.remaining())):
-                break
-    else:
-        _token_lock.acquire()
-    try:
-        yield
-    finally:
-        _token_lock.release()
-
-
 def get_access_token(client_id: str, client_secret: str, force: bool = False, *, work=None) -> str:
     safe_id = str(client_id or "").strip()
     safe_secret = str(client_secret or "").strip()
     if not safe_id or not safe_secret:
         raise ValueError("Toss client_id and client_secret are required")
     scope = _scope_key(safe_id, safe_secret)
-    with _token_cache_lock(work):
+    if work:
+        work.remaining()
+    with _token_lock:
         cached = _token_cache.get(scope)
         if not force and cached and time.time() < cached[1] - _TOKEN_BUFFER_SECONDS:
             return cached[0]
 
-        response = requests.post(
-            f"{BASE_URL}/oauth2/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": safe_id,
-                "client_secret": safe_secret,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=work.begin_request() if work else 10,
-        )
-        try:
-            payload = response.json()
-        except ValueError:
-            payload = {}
-        if response.status_code != 200:
-            raise RuntimeError(f"Toss token request failed: {_error_detail(response, payload)}")
-        body = _as_mapping(payload)
-        token = str(body.get("access_token") or "").strip()
-        if not token:
-            raise RuntimeError("Toss token response did not contain access_token")
-        expires_in = max(int(_as_float(body.get("expires_in"))) or 86400, 120)
+    # Network I/O never holds the global cache lock, even on a forced refresh.
+    request_args = dict(
+        data={"grant_type": "client_credentials", "client_id": safe_id, "client_secret": safe_secret},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    response = (_bounded_request("POST", f"{BASE_URL}/oauth2/token", work=work, **request_args) if work
+                else requests.post(f"{BASE_URL}/oauth2/token", timeout=10, **request_args))
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code != 200:
+        raise RuntimeError(f"Toss token request failed: {_error_detail(response, payload)}")
+    body = _as_mapping(payload)
+    token = str(body.get("access_token") or "").strip()
+    if not token:
+        raise RuntimeError("Toss token response did not contain access_token")
+    expires_in = max(int(_as_float(body.get("expires_in"))) or 86400, 120)
+    if work:
+        work.remaining()
+    with _token_lock:
+        # Another request may have completed its refresh while this one waited.
+        current = _token_cache.get(scope)
+        if current != cached and current and time.time() < current[1] - _TOKEN_BUFFER_SECONDS:
+            return current[0]
         _token_cache[scope] = (token, time.time() + expires_in)
-        return token
+    return token
 
 
 def _authorized_get(
@@ -252,9 +292,9 @@ def _authorized_get(
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     if account_seq is not None:
         headers["X-Tossinvest-Account"] = str(account_seq).strip()
-    response = requests.get(
-        f"{BASE_URL}{path}", headers=headers, params=dict(params or {}), timeout=work.begin_request() if work else 15
-    )
+    request_args = dict(headers=headers, params=dict(params or {}))
+    response = (_bounded_request("GET", f"{BASE_URL}{path}", work=work, **request_args) if work
+                else requests.get(f"{BASE_URL}{path}", timeout=15, **request_args))
     try:
         payload = response.json()
     except ValueError:

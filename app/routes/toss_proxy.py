@@ -123,7 +123,7 @@ async def _run_tax_history(request: Request, load):
         return await worker
     finally:
         # Cancelling a thread future alone does not stop its work. The event also
-        # ends pagination/retries and FX hydration; in-flight I/O is capped at 5s.
+        # ends pagination/retries and FX hydration, cancelling in-flight transport.
         cancelled.set()
         watcher.cancel()
         worker.cancel()
