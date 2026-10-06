@@ -7,7 +7,7 @@
     <array><string>__PINNED_VENV_PYTHON__</string><string>-m</string><string>app.relay</string></array>
     <key>WorkingDirectory</key><string>__PINNED_CHECKOUT__</string>
     <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
     <key>ThrottleInterval</key><integer>30</integer>
     <key>Umask</key><integer>63</integer>
     <!-- The process mirrors sanitized stderr to ~/Library/Logs/KoreaInvSaveTickerRelay/access.log.

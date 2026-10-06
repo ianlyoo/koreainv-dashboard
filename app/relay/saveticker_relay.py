@@ -112,12 +112,15 @@ def create_app(token: str, service: SaveTickerService, *, host=HOST):
                     # a hit only when fetch actually returned that snapshot.
                     cache_hit = before is not None and before is after and snapshot == before[1]
                     upstream_snapshot = after is not None and snapshot == after[1]
+            section_status = {name: snapshot["section_status"][name] for name in snapshot["sections"]}
+            if any(state not in ("available", "error", "unavailable") for state in section_status.values()):
+                raise ValueError("Invalid section status")
             return {"schema": SCHEMA, "ticker": ticker, "status": snapshot["status"],
                     "fetched_at": snapshot["fetched_at"] if upstream_snapshot else None, "cache_hit": cache_hit,
-                    "sections": snapshot["sections"]}
+                    "sections": snapshot["sections"], "section_status": section_status}
         except Exception:
             # Never log or serialize arbitrary provider exception text.
             return JSONResponse({"schema": SCHEMA, "ticker": ticker, "status": "unavailable",
-                                 "fetched_at": None, "cache_hit": False, "sections": {}}, status_code=503)
+                                 "fetched_at": None, "cache_hit": False, "sections": {}, "section_status": {}}, status_code=503)
 
     return app

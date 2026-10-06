@@ -47,7 +47,9 @@ def main(argv=None):
         run()
     except RelayStartupError:
         print("Relay startup refused", file=sys.stderr)
-        return 1
+        # SuccessfulExit=false restarts crashes, but never a refused Keychain
+        # read. Do not let launchd repeatedly present an access prompt.
+        return 0
     return 0
 
 

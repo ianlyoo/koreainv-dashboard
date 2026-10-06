@@ -29,8 +29,13 @@ Only these GET routes exist; there are no docs/OpenAPI, static or CORS routes:
   passive configuration check, not an upstream availability check.
 - `/v1/saveticker/{ticker}`: strict uppercase US symbol `[A-Z][A-Z0-9.\-]{0,9}`;
   invalid symbols return 400. The response contains `schema`, `ticker`, `status`,
-  `fetched_at`, `cache_hit`, and `sections` exactly as sanitized by the existing
-  service. Schema is `koreainv.saveticker-relay.v1`. `fetched_at` is copied from the
+  `fetched_at`, `cache_hit`, `sections`, and the additive `section_status` map.
+  `sections` is exactly as sanitized by the existing service. `section_status`
+  has exactly the same keys, with only the service's own `available`, `error`,
+  or `unavailable` enum values. This preserves upstream errors separately from
+  null sections with no coverage. Schema stays `koreainv.saveticker-relay.v1`;
+  older responses without `section_status` remain compatible with the engine.
+  `fetched_at` is copied from the
   upstream service snapshot, preserving its UTC read timestamp on cache hits;
   it is never replaced with the relay response time. When disabled, cooling down
   without a cached snapshot, or failing login, no market read is established and
@@ -68,6 +73,27 @@ enabling unattended startup: a non-app Python executable reading the item the GU
 created may show an **allow access** prompt or be refused. This Linux/offline task
 cannot establish whether the existing GUI item's ACL already permits that binary.
 
+### Keychain prompt stop rule
+
+If **any macOS prompt** names `KoreaInvDashboard.SaveTicker.v1` or the relay token
+item `KoreaInvDashboard.SaveTickerRelay.v1`, click **Deny**, run:
+
+```bash
+launchctl bootout gui/$UID/company.koreainv.saveticker-relay
+```
+
+Then **report to the PM** and stop installation, activation or rotation. Never
+click **Always Allow**, never edit the ACL in **Keychain Access** or `security`,
+and never re-enter or re-save credentials from the relay interpreter to work
+around the prompt. This same stop rule applies to **Re-vet access**, including
+after moving the checkout, recreating the venv or upgrading Python. Do not
+continue to bootstrap or modify credential access after a refusal.
+
+The LaunchAgent uses `KeepAlive={SuccessfulExit: false}` and retains a 30-second
+`ThrottleInterval`. A refused start exits with code 0 after one fixed-text stderr
+line (`Relay startup refused`), so launchd does not relaunch it or re-prompt.
+Other unsuccessful exits retain launchd's throttled restart behavior.
+
 Pin the release checkout and interpreter. Create the venv with `--copies`, rather
 than a Homebrew shim or a symlink that resolves outside the pinned checkout:
 
@@ -82,8 +108,9 @@ cd "$relay_checkout"
 
 `create` refuses an existing token; use the rotation steps below to replace it.
 Keychain ACLs bind to the executable path. Recreating the venv, moving the checkout
-or upgrading Python may bring back the macOS allow access prompt. Re-vet access
-and regenerate the plist after such a change. Store SaveTicker credentials through
+or upgrading Python may bring back the macOS allow access prompt. **Re-vet access
+under the Keychain prompt stop rule above**, then regenerate the plist after a
+prompt-free check. Store SaveTicker credentials through
 the existing dashboard settings; never put any token/password in argv, shell
 variables, environment variables/dumps, source, logs or messages.
 
@@ -112,6 +139,20 @@ fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
 with os.fdopen(fd, "wb") as output:
     plistlib.dump(agent, output)
 RENDER_RELAY_AGENT
+```
+
+Before bootstrap, run the relay once **in the foreground** while watching for
+Keychain prompts:
+
+```bash
+"$relay_python" -m app.relay
+```
+
+After a prompt-free startup, verify authenticated health and stop with **Ctrl-C**.
+If any named prompt appears or startup is refused, follow the Keychain stop rule
+and do not continue. Only after the foreground check passes, bootstrap:
+
+```bash
 launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/company.koreainv.saveticker-relay.plist"
 launchctl kickstart "gui/$UID/company.koreainv.saveticker-relay"
 lsof -nP -iTCP -sTCP:LISTEN
@@ -133,6 +174,14 @@ tailscale serve --bg --https=8766 http://127.0.0.1:8766
 Retain the existing 6767 mapping. Apply the reviewed tailnet access policy and
 confirm the dedicated mapping on the actual installed Tailscale version before
 activation; no global `serve reset` is part of this procedure.
+
+### Activation check: GUI and relay sessions
+
+During the separately authorized activation read, run one GUI insight fetch and
+one relay fetch back to back and confirm both stay logged in. If either session
+is invalidated, do not use them concurrently; stop activation and report the
+result to the PM. The GUI and relay have independent SaveTicker sessions on the
+same account, and concurrent-session support is unverified offline.
 
 ## Token export and rotation
 
@@ -159,6 +208,10 @@ launchctl bootout gui/$UID/company.koreainv.saveticker-relay
 launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/company.koreainv.saveticker-relay.plist"
 lsof -nP -iTCP -sTCP:LISTEN
 ```
+
+After the authorized token handoff, **install the new credential on Oracle and restart `ticker-research`**
+using the PM's secure credential installation procedure, then confirm authenticated
+relay access. Never place the new credential in argv, environment dumps or logs.
 
 ## Uninstall
 

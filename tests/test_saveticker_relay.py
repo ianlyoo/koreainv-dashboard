@@ -105,11 +105,12 @@ def test_us_ticker_pattern_and_sanitized_contract(upstream, ticker):
         result = client.get("/v1/saveticker/" + ticker, headers=headers())
         assert result.status_code == 200
         data = result.json()
-        assert set(data) == {"schema", "ticker", "status", "fetched_at", "cache_hit", "sections"}
+        assert set(data) == {"schema", "ticker", "status", "fetched_at", "cache_hit", "sections", "section_status"}
         assert data["schema"] == SCHEMA and data["ticker"] == ticker and data["status"] == "available"
         assert data["cache_hit"] is False
         assert data["fetched_at"].endswith("+00:00")
         assert data["sections"] == service.fetch(ticker, "USA")["sections"]
+        assert data["section_status"] == dict.fromkeys(data["sections"], "available")
         assert session.get.call_count == 7 and session.post.call_count == 1
         assert all(value not in result.text for value in (EMAIL, PASSWORD, COOKIE, TOKEN))
 
@@ -125,6 +126,7 @@ def test_cache_hit_keeps_upstream_timestamp_and_expiry_refreshes(upstream, monke
         assert first["cache_hit"] is False and second["cache_hit"] is True
         assert first["fetched_at"] == second["fetched_at"] == service._cache["AAPL"][1]["fetched_at"]
         assert first["sections"] == second["sections"] and session.get.call_count == 7
+        assert first["section_status"] == second["section_status"]
         clock[0] += 1
         assert client.get("/v1/saveticker/AAPL", headers=headers()).json()["cache_hit"] is False
         assert session.get.call_count == 14
@@ -154,6 +156,39 @@ def test_expired_entry_is_not_a_cache_hit_when_refresh_login_fails(upstream, mon
         assert session.get.call_count == 7 and session.post.call_count == 2
 
 
+def test_section_status_preserves_partial_errors_and_missing_coverage_on_cache_hit(upstream):
+    service, session = upstream
+    original = session.get.side_effect
+    def partial(url, **kwargs):
+        if url.endswith("/key-metrics"):
+            return Mock(status_code=500)
+        if url.endswith("/revenue-trend"):
+            return Mock(status_code=404)
+        return original(url, **kwargs)
+    session.get.side_effect = partial
+    with TestClient(create_app(TOKEN, service)) as client:
+        first = client.get("/v1/saveticker/AAPL", headers=headers()).json()
+        cached = client.get("/v1/saveticker/AAPL", headers=headers()).json()
+        expected = {**dict.fromkeys(SECTIONS, "available"), "key_metrics": "error", "revenue": "unavailable"}
+        assert first["status"] == cached["status"] == "partial"
+        assert first["section_status"] == cached["section_status"] == expected
+        assert set(first["section_status"]) == set(first["sections"])
+        assert first["sections"]["key_metrics"] is None and first["sections"]["revenue"] is None
+        assert first["cache_hit"] is False and cached["cache_hit"] is True
+        assert session.get.call_count == 7
+
+
+def test_section_status_refuses_non_enum_values_without_echo(upstream, monkeypatch):
+    service, session = upstream
+    monkeypatch.setattr(service, "fetch", Mock(return_value={"status": "available", "fetched_at": None,
+        "sections": {"header": {"price": 1}}, "section_status": {"header": PASSWORD}}))
+    with TestClient(create_app(TOKEN, service)) as client:
+        response = client.get("/v1/saveticker/AAPL", headers=headers())
+        assert response.status_code == 503
+        assert response.json()["sections"] == response.json()["section_status"] == {}
+        assert PASSWORD not in response.text
+
+
 @pytest.mark.parametrize("code", [401, 403, 429])
 def test_upstream_failures_cooldown_and_reauthentication_are_unchanged(upstream, code):
     service, session = upstream
@@ -165,6 +200,9 @@ def test_upstream_failures_cooldown_and_reauthentication_are_unchanged(upstream,
         assert first["status"] == cached["status"] == other["status"] == "unavailable"
         assert first["cache_hit"] is False and cached["cache_hit"] is True and other["cache_hit"] is False
         assert first["fetched_at"] == cached["fetched_at"]
+        assert first["section_status"] == cached["section_status"] == {
+            **dict.fromkeys(SECTIONS, "unavailable"), "header": "error"}
+        assert other["section_status"] == dict.fromkeys(other["sections"], "unavailable")
         assert other["fetched_at"] is None
         assert session.post.call_count == (2 if code == 401 else 1)
         assert session.get.call_count == (2 if code == 401 else 1)
@@ -182,6 +220,7 @@ def test_logs_never_include_raw_paths_queries_tokens_or_provider_errors(upstream
         monkeypatch.setattr(service, "fetch", Mock(side_effect=RuntimeError(PASSWORD + COOKIE + TOKEN)))
         failed = client.get("/v1/saveticker/MSFT", headers=headers())
         assert failed.status_code == 503 and failed.json()["fetched_at"] is None
+        assert failed.json()["sections"] == failed.json()["section_status"] == {}
     records = [r for r in caplog.records if r.name == LOGGER_NAME]
     assert len(records) == 3
     assert all(len(r.getMessage().splitlines()) == 1 for r in records)
@@ -198,6 +237,7 @@ def test_health_unconfigured_and_shutdown_clears_memory():
         assert client.get("/v1/health", headers=headers()).json()["saveticker_configured"] is False
         result = client.get("/v1/saveticker/AAPL", headers=headers()).json()
         assert result["status"] == "disabled" and result["fetched_at"] is None
+        assert result["section_status"] == dict.fromkeys(result["sections"], "unavailable")
     assert service._credentials is None and service._session is None and service.enabled is False
 
 
@@ -215,13 +255,25 @@ def test_non_pinned_host_refuses_before_loading_secrets(host):
     reader.assert_not_called()
 
 
-def test_startup_keychain_failure_is_fixed_and_no_server_runs(monkeypatch, capsys):
-    monkeypatch.setattr(entrypoint, "read_token", Mock(side_effect=RelayTokenError()))
+@pytest.mark.parametrize("item", ["token", "saveticker"])
+def test_startup_keychain_refusal_exits_zero_without_relaunch_or_server(monkeypatch, capsys, item):
+    reader = Mock(return_value=TOKEN)
+    store = Mock()
+    store.read.side_effect = RuntimeError(PASSWORD + TOKEN)
+    if item == "token":
+        reader.side_effect = RelayTokenError()
+    monkeypatch.setattr(entrypoint, "read_token", reader)
+    monkeypatch.setattr(entrypoint, "credential_store", store)
     server = Mock()
     monkeypatch.setattr(entrypoint.uvicorn, "run", server)
-    assert entrypoint.main([]) == 1
+    assert entrypoint.main([]) == 0
     server.assert_not_called()
-    assert capsys.readouterr().err == "Relay startup refused\n"
+    assert reader.call_count == 1
+    assert store.read.call_count == (0 if item == "token" else 1)
+    store.write.assert_not_called()
+    store.migrate_env.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.err == "Relay startup refused\n" and captured.out == ""
 
 
 def test_headless_entrypoint_import_isolation_in_fresh_process(tmp_path):
@@ -238,9 +290,12 @@ access_log.configure_access_log = lambda *args: None
 def serve(app, **kwargs):
     assert kwargs["host"] == "127.0.0.1" and kwargs["port"] == 8766
     assert kwargs["access_log"] is False and kwargs["log_config"] is None
-    forbidden = ("app.main", "app.api_client", "app.toss", "app.session_store", "app.insight_context",
-                 "app.routes", "app.config", "app.auth", "central_server", "AppKit", "pystray")
-    assert not [name for name in sys.modules if any(name == prefix or name.startswith(prefix + ".") or prefix == "app.toss" and name.startswith(prefix) for prefix in forbidden)]
+    allowed = {"app", "app.credential_store", "app.relay", "app.relay.access_log",
+               "app.relay.saveticker_relay", "app.relay.token_store", "app.runtime_paths",
+               "app.services", "app.services.insight_schema", "app.services.saveticker_service", "app.version"}
+    loaded = {name for name in sys.modules if name == "app" or name.startswith("app.")}
+    assert loaded == allowed, (sorted(loaded - allowed), sorted(allowed - loaded))
+    assert "AppKit" not in sys.modules and "pystray" not in sys.modules and "central_server" not in sys.modules
     print("isolation_ok")
 uvicorn.run = serve
 sys.argv = ["app.relay"]
@@ -369,10 +424,27 @@ def test_launchagent_and_release_operations_contract():
     data = plistlib.loads(template)
     assert data["ProgramArguments"] == ["__PINNED_VENV_PYTHON__", "-m", "app.relay"]
     assert data["WorkingDirectory"] == "__PINNED_CHECKOUT__"
-    assert data["RunAtLoad"] and data["KeepAlive"] and data["Umask"] == 0o077
+    assert data["RunAtLoad"] and data["KeepAlive"] == {"SuccessfulExit": False} and data["Umask"] == 0o077
+    assert data["ThrottleInterval"] == 30
     assert data["StandardOutPath"] == data["StandardErrorPath"] == "/dev/null"
     docs = (ROOT / "docs/saveticker-relay.md").read_text()
     for text in ("--copies", "resolve(strict=True)", "launchctl bootout gui/$UID/company.koreainv.saveticker-relay",
                  "tailscale serve --https=8766 off", "6767", "lsof -nP -iTCP -sTCP:LISTEN", "rotate",
                  "allow access", "opt-in", "GUI is unchanged"):
         assert text in docs
+
+
+def test_runbook_stops_on_both_keychain_prompts_and_vets_before_bootstrap():
+    docs = (ROOT / "docs/saveticker-relay.md").read_text()
+    stop = docs.split("### Keychain prompt stop rule", 1)[1].split("\nPin the release", 1)[0]
+    for text in ("KoreaInvDashboard.SaveTicker.v1", "KoreaInvDashboard.SaveTickerRelay.v1",
+                 "**Deny**", "launchctl bootout gui/$UID/company.koreainv.saveticker-relay", "report to the PM",
+                 "Always Allow", "Keychain Access", "`security`", "re-enter", "re-save", "Re-vet access"):
+        assert text in stop
+    foreground = docs.index('"$relay_python" -m app.relay')
+    assert foreground < docs.index("launchctl bootstrap")
+    assert "Ctrl-C" in docs and "refused start exits with code 0" in docs
+    assert "one GUI insight fetch and one relay fetch back to back" in " ".join(docs.split())
+    assert "confirm both stay logged in" in docs and "do not use them concurrently" in docs
+    rotation = docs.split("To rotate,", 1)[1].split("## Uninstall", 1)[0]
+    assert "install the new credential on Oracle and restart `ticker-research`" in rotation
