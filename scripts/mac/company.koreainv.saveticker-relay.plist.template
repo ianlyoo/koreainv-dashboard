@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>company.koreainv.saveticker-relay</string>
+    <key>ProgramArguments</key>
+    <array><string>__PINNED_VENV_PYTHON__</string><string>-m</string><string>app.relay</string></array>
+    <key>WorkingDirectory</key><string>__PINNED_CHECKOUT__</string>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>30</integer>
+    <key>Umask</key><integer>63</integer>
+    <!-- The process mirrors sanitized stderr to ~/Library/Logs/KoreaInvSaveTickerRelay/access.log.
+         Only that in-process 0600 log rotates (1 MB x 3); launchd must not grow uncapped files. -->
+    <key>StandardOutPath</key><string>/dev/null</string>
+    <key>StandardErrorPath</key><string>/dev/null</string>
+</dict>
+</plist>
