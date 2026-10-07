@@ -436,11 +436,13 @@ def test_launchagent_and_release_operations_contract():
 
 def test_runbook_stops_on_both_keychain_prompts_and_vets_before_bootstrap():
     docs = (ROOT / "docs/saveticker-relay.md").read_text()
-    stop = docs.split("### Keychain prompt stop rule", 1)[1].split("\nPin the release", 1)[0]
+    stop = docs.split("### Keychain prompt rule", 1)[1].split("\nPin the release", 1)[0]
     for text in ("KoreaInvDashboard.SaveTicker.v1", "KoreaInvDashboard.SaveTickerRelay.v1",
-                 "**Deny**", "launchctl bootout gui/$UID/company.koreainv.saveticker-relay", "report to the PM",
+                 "**Deny**", "launchctl bootout gui/$UID/company.koreainv.saveticker-relay", "Report to the PM",
                  "Always Allow", "Keychain Access", "`security`", "re-enter", "re-save", "Re-vet access"):
         assert text in stop
+    # Exactly one owner-authorized grant: the pinned interpreter reading the SaveTicker item.
+    assert "$relay_checkout/.venv/bin/python" in stop and "new owner decision" in stop
     foreground = docs.index('"$relay_python" -m app.relay')
     assert foreground < docs.index("launchctl bootstrap")
     assert "Ctrl-C" in docs and "refused start exits with code 0" in docs

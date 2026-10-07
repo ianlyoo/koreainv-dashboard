@@ -73,21 +73,28 @@ enabling unattended startup: a non-app Python executable reading the item the GU
 created may show an **allow access** prompt or be refused. This Linux/offline task
 cannot establish whether the existing GUI item's ACL already permits that binary.
 
-### Keychain prompt stop rule
+### Keychain prompt rule
 
-If **any macOS prompt** names `KoreaInvDashboard.SaveTicker.v1` or the relay token
-item `KoreaInvDashboard.SaveTickerRelay.v1`, click **Deny**, run:
+The owner authorized (2026-10-07) exactly one Keychain grant: the pinned relay
+interpreter (`$relay_checkout/.venv/bin/python`) reading
+`KoreaInvDashboard.SaveTicker.v1`. When the macOS prompt names that item **and**
+that interpreter path, the owner clicks **Always Allow** once, during the
+foreground vetting run. The relay token item `KoreaInvDashboard.SaveTickerRelay.v1`
+is created by the same interpreter and should not prompt.
+
+Any other prompt is a stop. This includes a different item, a different
+executable (Homebrew shim, system Python, a moved checkout or a recreated venv),
+or a repeat prompt after Always Allow. In that case click **Deny**, then run:
 
 ```bash
 launchctl bootout gui/$UID/company.koreainv.saveticker-relay
 ```
 
-Then **report to the PM** and stop installation, activation or rotation. Never
-click **Always Allow**, never edit the ACL in **Keychain Access** or `security`,
-and never re-enter or re-save credentials from the relay interpreter to work
-around the prompt. This same stop rule applies to **Re-vet access**, including
-after moving the checkout, recreating the venv or upgrading Python. Do not
-continue to bootstrap or modify credential access after a refusal.
+Report to the PM and stop installation, activation or rotation. Never edit the
+ACL in **Keychain Access** or `security`, and never re-enter or re-save
+credentials from the relay interpreter to work around a prompt. The same rule
+applies to **Re-vet access** after moving the checkout, recreating the venv or
+upgrading Python: a new interpreter path needs a new owner decision.
 
 The LaunchAgent uses `KeepAlive={SuccessfulExit: false}` and retains a 30-second
 `ThrottleInterval`. A refused start exits with code 0 after one fixed-text stderr
@@ -109,7 +116,7 @@ cd "$relay_checkout"
 `create` refuses an existing token; use the rotation steps below to replace it.
 Keychain ACLs bind to the executable path. Recreating the venv, moving the checkout
 or upgrading Python may bring back the macOS allow access prompt. **Re-vet access
-under the Keychain prompt stop rule above**, then regenerate the plist after a
+under the Keychain prompt rule above**, then regenerate the plist after a
 prompt-free check. Store SaveTicker credentials through
 the existing dashboard settings; never put any token/password in argv, shell
 variables, environment variables/dumps, source, logs or messages.
@@ -149,8 +156,8 @@ Keychain prompts:
 ```
 
 After a prompt-free startup, verify authenticated health and stop with **Ctrl-C**.
-If any named prompt appears or startup is refused, follow the Keychain stop rule
-and do not continue. Only after the foreground check passes, bootstrap:
+Apart from the one authorized Always Allow above, if a prompt appears or startup
+is refused, follow the Keychain prompt rule and do not continue. Only after the foreground check passes, bootstrap:
 
 ```bash
 launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/company.koreainv.saveticker-relay.plist"
